@@ -58,6 +58,7 @@ $sharedDir = Join-Path (Split-Path (Split-Path $PSScriptRoot)) '_shared'
 . (Join-Path $sharedDir 'Invoke-AzRest.ps1')
 . "$PSScriptRoot/Constants.ps1"
 . "$PSScriptRoot/Get-DiagnosticSettings.ps1"
+. "$PSScriptRoot/Get-MonitorSignals.ps1"
 
 # Default -IncludeBaseline to $true when caller did not pass it explicitly.
 if (-not $PSBoundParameters.ContainsKey('IncludeBaseline')) {
@@ -273,6 +274,68 @@ try {
         exit 3
     }
 
+    # ═══════════════════════════════════════════════════
+    # Phase C — Query Azure Monitor (Epic 3)
+    # ═══════════════════════════════════════════════════
+    $signals = $null
+    $correlationResult = @()
+    if ($targets.sampled.Count -gt 0 -and $LogAnalyticsWorkspaceId -ne 'none') {
+        # Build per-action windows; actions without per-action timestamps
+        # inherit the overall run window.
+        $actionWindows = @()
+        foreach ($a in @($runBody.properties.scenarioRunSummary)) {
+            $aStart = if ($a.startedAt)   { $a.startedAt }   else { $runBody.properties.startedAt }
+            $aEnd   = if ($a.completedAt) { $a.completedAt } else { $runBody.properties.completedAt }
+            $aTargets = @()
+            foreach ($r in @($a.resources)) { if ($r -and $r.id) { $aTargets += $r.id } }
+            $actionWindows += @{
+                ActionName        = $a.actionName
+                Start             = $aStart
+                End               = $aEnd
+                TargetResourceIds = $aTargets
+            }
+        }
+
+        # Materialize the workspace map in the shape Get-MonitorSignals expects
+        # (resourceId.ToLower() → @{workspaceId; status; reason}); the diag-cache
+        # already matches that shape.
+        $signals = Get-MonitorSignals `
+            -ResourceIds     $targets.sampled `
+            -WorkspaceMap    $diagCache `
+            -ActionWindows   $actionWindows `
+            -Buffer          $Buffer `
+            -SubscriptionId  $context.subscriptionId `
+            -MaxRows         500
+
+        # ═══════════════════════════════════════════════
+        # Phase D — Correlate & classify (Epic 3)
+        # ═══════════════════════════════════════════════
+        $metricDefaultsPath = Join-Path (Split-Path $PSScriptRoot) 'templates/metrics/defaults.json'
+        $metricDefaults = if (Test-Path $metricDefaultsPath) {
+            Get-Content $metricDefaultsPath -Raw | ConvertFrom-Json
+        } else { $null }
+
+        $correlationResult = & "$PSScriptRoot/Build-ImpactCorrelation.ps1" `
+            -ScenarioRun     $runBody `
+            -Signals         $signals `
+            -Buffer          $Buffer `
+            -MetricDefaults  $metricDefaults
+
+        # Persist intermediate state for debugging / re-runs.
+        try {
+            $statePath = Join-Path (Resolve-ChaosImpactOutputDir -OutputDir $OutputDir) "impact-$($context.scenarioRunId).state.json"
+            @{
+                scenarioRunId   = $context.scenarioRunId
+                generatedAt     = (Get-Date).ToUniversalTime().ToString('o')
+                signals         = $signals
+                correlation     = $correlationResult
+            } | ConvertTo-Json -Depth 32 | Out-File -FilePath $statePath -Encoding utf8 -NoNewline
+            [Console]::Error.WriteLine("[chaos-impact] Wrote intermediate state $statePath")
+        } catch {
+            [Console]::Error.WriteLine("[chaos-impact] Warning: failed to write intermediate state: $($_.Exception.Message)")
+        }
+    }
+
     # ── Step 5 — Emit coverage skeleton ─────────────────
     $outDir = Resolve-ChaosImpactOutputDir -OutputDir $OutputDir
     $runShortId = $context.scenarioRunId
@@ -296,7 +359,7 @@ try {
             bufferIso   = $Buffer
             partial     = $false
         }
-        actions  = @()
+        actions  = @($correlationResult)
         coverage = [ordered]@{
             resourcesTotal        = $targets.all.Count
             resourcesSampled      = $targets.sampled.Count

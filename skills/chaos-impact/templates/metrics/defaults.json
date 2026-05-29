@@ -1,0 +1,38 @@
+{
+  "Microsoft.Compute/virtualMachines": {
+    "metrics": ["Percentage CPU", "Available Memory Bytes", "Disk Read Bytes", "Disk Write Bytes"],
+    "thresholds": { "Percentage CPU": 20 }
+  },
+  "Microsoft.Compute/virtualMachineScaleSets": {
+    "metrics": ["Percentage CPU", "VM Availability Metric", "Network In Total", "Network Out Total"],
+    "thresholds": { "Percentage CPU": 20, "VM Availability Metric": 0.1 }
+  },
+  "Microsoft.ContainerService/managedClusters": {
+    "metrics": ["node_cpu_usage_percentage", "node_memory_rss_percentage", "kube_pod_status_ready"],
+    "thresholds": { "node_cpu_usage_percentage": 20, "kube_pod_status_ready": 0.1 }
+  },
+  "Microsoft.Network/applicationGateways": {
+    "metrics": ["FailedRequests", "UnhealthyHostCount", "ResponseStatus", "Throughput"],
+    "thresholds": { "FailedRequests": 5, "UnhealthyHostCount": 1 }
+  },
+  "Microsoft.Sql/servers/databases": {
+    "metrics": ["cpu_percent", "dtu_consumption_percent", "connection_failed", "deadlock"],
+    "thresholds": { "cpu_percent": 20, "connection_failed": 5 }
+  },
+  "Microsoft.DocumentDB/databaseAccounts": {
+    "metrics": ["TotalRequests", "TotalRequestUnits", "Http 5xx", "ServiceAvailability"],
+    "thresholds": { "Http 5xx": 5, "ServiceAvailability": 0.99 }
+  },
+  "Microsoft.Storage/storageAccounts": {
+    "metrics": ["Availability", "Egress", "Ingress", "Transactions", "SuccessE2ELatency"],
+    "thresholds": { "Availability": 0.99 }
+  },
+  "Microsoft.KeyVault/vaults": {
+    "metrics": ["ServiceApiHit", "ServiceApiLatency", "Availability"],
+    "thresholds": { "Availability": 0.99 }
+  },
+  "Microsoft.ServiceBus/namespaces": {
+    "metrics": ["IncomingMessages", "OutgoingMessages", "ActiveMessages", "ServerErrors"],
+    "thresholds": { "ServerErrors": 5 }
+  }
+}

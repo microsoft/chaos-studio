@@ -748,7 +748,7 @@ can resolve a real run end-to-end and emit empty (correlation-less) artifacts.
 
 ---
 
-### Epic 3 — Query, correlation, classification
+### Epic 3 — Query, correlation, classification  **[DONE]**
 
 **Goal**: Implement the Monitor query fan-out, the correlation engine, and the
 classification heuristics.
@@ -757,15 +757,15 @@ classification heuristics.
 
 | Task ID | Type | Description | Files | Status |
 |---|---|---|---|---|
-| E3-T1 | IMPL | Implement `Get-MonitorSignals.ps1` — metrics fan-out, logs fan-out, activity log call, alerts call, service-health call. | `skills/chaos-impact/scripts/Get-MonitorSignals.ps1` | TO DO |
-| E3-T2 | IMPL | KQL templates + per-type metric defaults. | `skills/chaos-impact/templates/**` | TO DO |
-| E3-T3 | IMPL | Implement `Build-ImpactCorrelation.ps1` — windowing, target-overlap, magnitude/baseline test, classification, severity scoring. | `skills/chaos-impact/scripts/Build-ImpactCorrelation.ps1` | TO DO |
-| E3-T4 | IMPL | Wire phases C+D into `Invoke-ChaosImpact.ps1`. | `skills/chaos-impact/scripts/Invoke-ChaosImpact.ps1` | TO DO |
-| E3-T5 | TEST | Pester unit tests for `Build-ImpactCorrelation.ps1` covering: chaos-attributed hit, baseline-only noise, unexplained signal, mixed. | `skills/chaos-impact/tests/Build-ImpactCorrelation.Tests.ps1` | TO DO |
+| E3-T1 | IMPL | Implement `Get-MonitorSignals.ps1` — metrics fan-out, logs fan-out, activity log call, alerts call, service-health call. | `skills/chaos-impact/scripts/Get-MonitorSignals.ps1` | DONE |
+| E3-T2 | IMPL | KQL templates + per-type metric defaults. | `skills/chaos-impact/templates/**` | DONE |
+| E3-T3 | IMPL | Implement `Build-ImpactCorrelation.ps1` — windowing, target-overlap, magnitude/baseline test, classification, severity scoring. | `skills/chaos-impact/scripts/Build-ImpactCorrelation.ps1` | DONE |
+| E3-T4 | IMPL | Wire phases C+D into `Invoke-ChaosImpact.ps1`. | `skills/chaos-impact/scripts/Invoke-ChaosImpact.ps1` | DONE |
+| E3-T5 | TEST | Pester unit tests for `Build-ImpactCorrelation.ps1` covering: chaos-attributed hit, baseline-only noise, unexplained signal, mixed; plus Get-MonitorSignals helper coverage. | `skills/chaos-impact/tests/Build-ImpactCorrelation.Tests.ps1`, `skills/chaos-impact/tests/Get-MonitorSignals.Tests.ps1` | DONE |
 
 **Acceptance Criteria**:
-- [ ] Correlation suite covers all 3 classification buckets.
-- [ ] Severity buckets validated against fixture data.
+- [x] Correlation suite covers all 3 classification buckets (+ new `platformEvent` bucket).
+- [x] Severity buckets validated against fixture data (including exact-boundary tests).
 
 ---
 

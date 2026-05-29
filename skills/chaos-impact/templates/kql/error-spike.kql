@@ -1,0 +1,16 @@
+let ids = dynamic({resourceIdsJson});
+let tStart = datetime({tStart});
+let tEnd = datetime({tEnd});
+let baseStart = datetime({baseStart});
+let baseEnd = datetime({baseEnd});
+let baseline = AzureDiagnostics
+| where TimeGenerated between (baseStart .. baseEnd)
+| where _ResourceId in (ids) and Level == "Error"
+| summarize baseCount = count() by _ResourceId;
+AzureDiagnostics
+| where TimeGenerated between (tStart .. tEnd)
+| where _ResourceId in (ids) and Level == "Error"
+| summarize runCount = count() by _ResourceId
+| join kind=leftouter baseline on _ResourceId
+| project _ResourceId, runCount, baseCount=coalesce(baseCount, 0), ratio = todouble(runCount) / max_of(todouble(coalesce(baseCount, 1)), 1.0)
+| where ratio > 2.0

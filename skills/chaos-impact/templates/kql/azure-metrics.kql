@@ -1,0 +1,5 @@
+let ids = dynamic({resourceIdsJson});
+AzureMetrics
+| where TimeGenerated between (datetime({tStart}) .. datetime({tEnd}))
+| where _ResourceId in (ids)
+| summarize avg(Average), max(Maximum) by MetricName, _ResourceId, bin(TimeGenerated, 1m)
