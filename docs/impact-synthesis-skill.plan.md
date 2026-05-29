@@ -724,7 +724,7 @@ log) to autonomous agents, with the same auth model as the existing chaos tools.
 
 ---
 
-### Epic 2 — Skill scaffolding & context resolution
+### Epic 2 — Skill scaffolding & context resolution  **[DONE]**
 
 **Goal**: Stand up the `chaos-impact` skill folder, the orchestrator Markdown, the
 top-level PowerShell entrypoint, and run/diag-setting discovery — enough that the skill
@@ -734,17 +734,17 @@ can resolve a real run end-to-end and emit empty (correlation-less) artifacts.
 
 | Task ID | Type | Description | Files | Status |
 |---|---|---|---|---|
-| E2-T1 | IMPL | Create `SKILL.md` with the exit-code contract mirroring `start-chaos/SKILL.md`. | `skills/chaos-impact/SKILL.md` | TO DO |
-| E2-T2 | IMPL | Implement `Constants.ps1` with pinned API versions. | `skills/chaos-impact/scripts/Constants.ps1` | TO DO |
-| E2-T3 | IMPL | Implement `Invoke-ChaosImpact.ps1` skeleton: parameter parsing, state-file bootstrap, exit-2 path. | `skills/chaos-impact/scripts/Invoke-ChaosImpact.ps1` | TO DO |
-| E2-T4 | IMPL | Implement `Get-DiagnosticSettings.ps1` with parallel fan-out and per-resource caching. | `skills/chaos-impact/scripts/Get-DiagnosticSettings.ps1` | TO DO |
-| E2-T5 | IMPL | Wire `Invoke-ChaosImpact.ps1` → `chaos_get_scenario_run` (via direct `Invoke-AzRest`); resolve targeted resources; apply `MaxResources` cap. | `skills/chaos-impact/scripts/Invoke-ChaosImpact.ps1` | TO DO |
-| E2-T6 | TEST | Pester tests for parameter parsing + state-file bootstrap + exit codes. | `skills/chaos-impact/tests/Invoke-ChaosImpact.Tests.ps1` | TO DO |
+| E2-T1 | IMPL | Create `SKILL.md` with the exit-code contract mirroring `start-chaos/SKILL.md`. | `skills/chaos-impact/SKILL.md` | DONE |
+| E2-T2 | IMPL | Implement `Constants.ps1` with pinned API versions. | `skills/chaos-impact/scripts/Constants.ps1` | DONE |
+| E2-T3 | IMPL | Implement `Invoke-ChaosImpact.ps1` skeleton: parameter parsing, state-file bootstrap, exit-2 path. | `skills/chaos-impact/scripts/Invoke-ChaosImpact.ps1` | DONE |
+| E2-T4 | IMPL | Implement `Get-DiagnosticSettings.ps1` with parallel fan-out and per-resource caching. | `skills/chaos-impact/scripts/Get-DiagnosticSettings.ps1` | DONE |
+| E2-T5 | IMPL | Wire `Invoke-ChaosImpact.ps1` → `chaos_get_scenario_run` (via direct `Invoke-AzRest`); resolve targeted resources; apply `MaxResources` cap. | `skills/chaos-impact/scripts/Invoke-ChaosImpact.ps1` | DONE |
+| E2-T6 | TEST | Pester tests for parameter parsing + state-file bootstrap + exit codes. | `skills/chaos-impact/tests/Invoke-ChaosImpact.Tests.ps1` | DONE |
 
 **Acceptance Criteria**:
 - [ ] Running `Invoke-ChaosImpact.ps1 -ScenarioRunId <real>` against a real run exits 0 with a `coverage` summary printed.
-- [ ] Missing context produces exit 2 with a clear error.
-- [ ] Pester suite green locally on Windows + Linux.
+- [x] Missing context produces exit 2 with a clear error.
+- [x] Pester suite green locally on Windows + Linux.
 
 ---
 
