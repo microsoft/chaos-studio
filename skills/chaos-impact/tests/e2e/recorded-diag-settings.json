@@ -1,0 +1,13 @@
+{
+  "_comment": "Hermetic fixture: returns a diagnostic setting with NO workspaceId so the Log Analytics path (which bypasses Invoke-AzRest and shells out to `az rest`) is skipped. LA query semantics are covered by unit tests; the hermetic E2E exercises run resolution, diag discovery, metrics fan-out, activity log, alerts, service health, correlation, and rendering — all routed through the stubbed Invoke-AzRest.",
+  "value": [
+    {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/hermetic-rg/providers/Microsoft.Compute/virtualMachineScaleSets/hermetic-vmss/providers/Microsoft.Insights/diagnosticSettings/hermetic-diag",
+      "name": "hermetic-diag",
+      "type": "Microsoft.Insights/diagnosticSettings",
+      "properties": {
+        "logs": [{ "category": "VMInstanceHealth", "enabled": true }]
+      }
+    }
+  ]
+}

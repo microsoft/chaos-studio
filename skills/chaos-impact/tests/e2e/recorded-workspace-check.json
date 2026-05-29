@@ -1,0 +1,6 @@
+{
+  "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/hermetic-rg/providers/Microsoft.OperationalInsights/workspaces/hermetic-law",
+  "name": "hermetic-law",
+  "type": "Microsoft.OperationalInsights/workspaces",
+  "properties": { "customerId": "hermetic-law-workspace-id" }
+}

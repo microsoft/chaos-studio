@@ -1,0 +1,27 @@
+{
+  "_note": "Golden values for the hermetic E2E. Run-Hermetic.ps1 only asserts the structural invariants captured here (not a byte-exact diff), because the correlation engine output contains a generatedAt timestamp and PSCustomObject ordering may vary. The chaosAttributedCount is the expected number of chaos-attributed signals after correlating recorded-metrics.json (which has a CPU drop from ~65% to ~13% inside the action window) against the action's resource and the Percentage CPU threshold of 20 from templates/metrics/defaults.json.",
+  "impactReportSchemaVersion": 1,
+  "scenarioRunId": "hermetic-run-001",
+  "workspace": {
+    "subscriptionId": "00000000-0000-0000-0000-000000000001",
+    "resourceGroup": "hermetic-rg",
+    "name": "hermetic-ws"
+  },
+  "scenario": { "name": "hermetic-scenario" },
+  "window": {
+    "startedAt": "2026-05-01T10:00:00Z",
+    "completedAt": "2026-05-01T10:20:00Z",
+    "bufferIso": "PT5M",
+    "partial": false
+  },
+  "expectations": {
+    "actionsCount": 1,
+    "actionName": "stopInstances",
+    "windowSource": "action",
+    "targetedResourceCount": 1,
+    "chaosAttributedCountMin": 1,
+    "platformEventCount": 0,
+    "logsAvailableCount": 0,
+    "logsUnavailableCount": 1
+  }
+}

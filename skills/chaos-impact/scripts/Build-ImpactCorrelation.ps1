@@ -223,7 +223,13 @@ function Test-TimestampInWindow {
     )
     if (-not $Timestamp) { return $false }
     try {
-        $ts = if ($Timestamp -is [DateTime]) { $Timestamp.ToUniversalTime() }
+        $ts = if ($Timestamp -is [DateTime]) {
+                if ($Timestamp.Kind -eq [System.DateTimeKind]::Unspecified) {
+                    [DateTime]::SpecifyKind($Timestamp, [System.DateTimeKind]::Utc)
+                } else {
+                    $Timestamp.ToUniversalTime()
+                }
+              }
               else { [DateTime]::Parse($Timestamp, $null, [System.Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime() }
     } catch { return $false }
     return ($ts -ge $Start -and $ts -le $End)
@@ -286,12 +292,29 @@ function Build-ImpactCorrelation {
 
     $bufferSpan = ConvertFrom-IsoDuration -Iso $Buffer
 
+    # Helper: coerce a string/DateTime input to a UTC DateTime. Necessary
+    # because ConvertFrom-Json eagerly converts ISO-8601 strings to
+    # [DateTime] (Kind=Utc), and [DateTime]::Parse(DateTime,...) round-trips
+    # through a culture-formatted string that loses the Utc kind — making
+    # the subsequent .ToUniversalTime() shift by the local UTC offset.
+    $toUtc = {
+        param($v)
+        if ($null -eq $v) { return $null }
+        if ($v -is [DateTime]) {
+            if ($v.Kind -eq [System.DateTimeKind]::Unspecified) {
+                return [DateTime]::SpecifyKind($v, [System.DateTimeKind]::Utc)
+            }
+            return $v.ToUniversalTime()
+        }
+        return [DateTime]::Parse($v, $null, [System.Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
+    }
+
     # ── Resolve overall run window (used as fallback for action timing) ──
     $runStartedAt   = $null
     $runCompletedAt = $null
     if ($ScenarioRun -and $ScenarioRun.properties) {
-        if ($ScenarioRun.properties.startedAt)   { $runStartedAt   = [DateTime]::Parse($ScenarioRun.properties.startedAt,   $null, [System.Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime() }
-        if ($ScenarioRun.properties.completedAt) { $runCompletedAt = [DateTime]::Parse($ScenarioRun.properties.completedAt, $null, [System.Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime() }
+        if ($ScenarioRun.properties.startedAt)   { $runStartedAt   = & $toUtc $ScenarioRun.properties.startedAt }
+        if ($ScenarioRun.properties.completedAt) { $runCompletedAt = & $toUtc $ScenarioRun.properties.completedAt }
     }
 
     $actions = @()
@@ -307,8 +330,8 @@ function Build-ImpactCorrelation {
         $aStart = $null; $aEnd = $null
         if ($action.startedAt -and $action.completedAt) {
             try {
-                $aStart = [DateTime]::Parse($action.startedAt,   $null, [System.Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
-                $aEnd   = [DateTime]::Parse($action.completedAt, $null, [System.Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
+                $aStart = & $toUtc $action.startedAt
+                $aEnd   = & $toUtc $action.completedAt
             } catch { $aStart = $null; $aEnd = $null }
         }
         if (-not $aStart -or -not $aEnd) {

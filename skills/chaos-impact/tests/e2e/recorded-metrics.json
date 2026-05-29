@@ -1,0 +1,27 @@
+{
+  "cost": 1,
+  "timespan": "2026-05-01T09:55:00Z/2026-05-01T10:25:00Z",
+  "interval": "PT1M",
+  "value": [
+    {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/hermetic-rg/providers/Microsoft.Compute/virtualMachineScaleSets/hermetic-vmss/providers/Microsoft.Insights/metrics/Percentage%20CPU",
+      "type": "Microsoft.Insights/metrics",
+      "name": { "value": "Percentage CPU", "localizedValue": "Percentage CPU" },
+      "unit": "Percent",
+      "timeseries": [
+        {
+          "data": [
+            { "timeStamp": "2026-05-01T09:55:00Z", "average": 65.0, "maximum": 72.0 },
+            { "timeStamp": "2026-05-01T09:56:00Z", "average": 63.0, "maximum": 68.0 },
+            { "timeStamp": "2026-05-01T09:57:00Z", "average": 64.0, "maximum": 70.0 },
+            { "timeStamp": "2026-05-01T09:58:00Z", "average": 66.0, "maximum": 71.0 },
+            { "timeStamp": "2026-05-01T10:00:00Z", "average": 15.0, "maximum": 18.0 },
+            { "timeStamp": "2026-05-01T10:05:00Z", "average": 12.0, "maximum": 14.0 },
+            { "timeStamp": "2026-05-01T10:10:00Z", "average": 14.0, "maximum": 16.0 },
+            { "timeStamp": "2026-05-01T10:15:00Z", "average": 62.0, "maximum": 70.0 }
+          ]
+        }
+      ]
+    }
+  ]
+}
