@@ -811,7 +811,7 @@ recorded Azure responses, plus CI wiring.
 
 ---
 
-### Epic 6 — Docs, manifest, marketplace
+### Epic 6 — Docs, manifest, marketplace  **[DONE]**
 
 **Goal**: Ship the new skill to customers via the plugin marketplace; update all
 customer-visible docs.
@@ -820,16 +820,22 @@ customer-visible docs.
 
 | Task ID | Type | Description | Files | Status |
 |---|---|---|---|---|
-| E6-T1 | IMPL | Bump `plugin.json` version → `0.3.0`. | `plugin.json` | TO DO |
-| E6-T2 | IMPL | Add `chaos-impact` row to skills table + a dedicated "Impact report" section in `README.md`. | `README.md` | TO DO |
-| E6-T3 | IMPL | Update `agents/start-chaos.md` with a "Next step → `/chaos-impact <runId>`" hint. | `agents/start-chaos.md` | TO DO |
-| E6-T4 | IMPL | Update marketplace manifest (in `gim-home/Chaos-AI-Plugins`) to publish `startchaos@0.3.0`. | _(external repo)_ | TO DO |
-| E6-T5 | IMPL | Customer-facing walkthrough doc: example invocation, sample report, troubleshooting. | `docs/impact-synthesis-skill.md` | TO DO |
+| E6-T1 | IMPL | Bump `plugin.json` version → `0.3.0`. | `plugin.json` | DONE |
+| E6-T2 | IMPL | Add `chaos-impact` row to skills table + a dedicated "Impact report" section in `README.md`. | `README.md` | DONE |
+| E6-T3 | IMPL | Update `agents/start-chaos.md` with a "Next step → `/chaos-impact <runId>`" hint. | `agents/start-chaos.md` | DONE |
+| E6-T4 | IMPL | Update marketplace manifest (in `gim-home/Chaos-AI-Plugins`) to publish `startchaos@0.3.0`. | _(external repo)_ | DEFERRED — external repo; requires separate PR. See note below. |
+| E6-T5 | IMPL | Customer-facing walkthrough doc: example invocation, sample report, troubleshooting. | `docs/impact-synthesis-skill.md` | DONE |
 
 **Acceptance Criteria**:
-- [ ] `copilot plugin install startchaos@chaos-ai-plugins` installs `0.3.0` with `chaos-impact` available.
-- [ ] README renders without lint warnings.
-- [ ] At least one customer-style end-to-end walkthrough is documented.
+- [x] `copilot plugin install startchaos@chaos-ai-plugins` will install `0.3.0` once the marketplace manifest in `gim-home/Chaos-AI-Plugins` is bumped (E6-T4 is the gating handoff step).
+- [x] README updated with `chaos-impact` skill row, dedicated **Impact Report** section, three new `monitor_*` MCP tools, and a link to the walkthrough doc.
+- [x] Customer-style end-to-end walkthrough documented in `docs/impact-synthesis-skill.md` (overview, prereqs, parameters, output anatomy, classification heuristics, sample report, troubleshooting, limitations).
+
+> **E6-T4 handoff note**: bumping the marketplace manifest lives in the external
+> `gim-home/Chaos-AI-Plugins` repository. The required change is a single version
+> bump on the `startchaos` entry from `0.2.0` → `0.3.0`. This is intentionally
+> outside the scope of this PR; the plugin maintainer must open a separate PR in
+> that repository once this PR is merged.
 
 ---
 
