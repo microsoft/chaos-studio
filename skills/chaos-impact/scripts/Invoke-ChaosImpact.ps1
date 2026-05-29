@@ -336,78 +336,58 @@ try {
         }
     }
 
-    # ── Step 5 — Emit coverage skeleton ─────────────────
+    # ── Step 5 — Render artifacts via New-ImpactReport (Epic 4) ─────────
     $outDir = Resolve-ChaosImpactOutputDir -OutputDir $OutputDir
-    $runShortId = $context.scenarioRunId
-    $baseName = "chaos-impact-$runShortId"
 
-    $report = [ordered]@{
-        impactReportSchemaVersion = 1
-        generatedAt   = (Get-Date).ToUniversalTime().ToString('o')
-        scenarioRunId = $context.scenarioRunId
-        workspace = [ordered]@{
-            subscriptionId = $context.subscriptionId
-            resourceGroup  = $context.resourceGroup
-            name           = $context.workspaceName
-        }
-        scenario = [ordered]@{
-            name = $context.scenarioName
-        }
-        window = [ordered]@{
-            startedAt   = $runBody.properties.startedAt
-            completedAt = $runBody.properties.completedAt
-            bufferIso   = $Buffer
-            partial     = $false
-        }
-        actions  = @($correlationResult)
-        coverage = [ordered]@{
-            resourcesTotal        = $targets.all.Count
-            resourcesSampled      = $targets.sampled.Count
-            skippedDueToCap       = $targets.skippedDueToCap
-            maxResources          = $MaxResources
-            logsAvailableFor      = $logsAvailable
-            logsUnavailableFor    = $logsUnavailable
-            logsUnavailableReason = $logsUnavailableReason
-        }
-        queries = [ordered]@{ kql = @(); metrics = @() }
-        errors  = @()
+    # Build the coverage object in the shape New-ImpactReport expects.
+    $coverageForRender = [ordered]@{
+        resourcesTotal        = $targets.all.Count
+        resourcesSampled      = $targets.sampled.Count
+        skippedDueToCap       = $targets.skippedDueToCap
+        maxResources          = $MaxResources
+        logsAvailableFor      = $logsAvailable
+        logsUnavailableFor    = $logsUnavailable
+        logsUnavailableReason = $logsUnavailableReason
     }
 
-    if ($Format -in @('json', 'both')) {
-        $jsonPath = Join-Path $outDir "$baseName.json"
-        $report | ConvertTo-Json -Depth 32 | Out-File -FilePath $jsonPath -Encoding utf8 -NoNewline
-        [Console]::Error.WriteLine("[chaos-impact] Wrote $jsonPath")
-    }
-    if ($Format -in @('markdown', 'both')) {
-        $mdPath = Join-Path $outDir "$baseName.md"
-        $md = @()
-        $md += "# Chaos Impact Report — $($context.scenarioName) / run $($context.scenarioRunId)"
-        $md += ''
-        $md += "**Run window**: $($report.window.startedAt) → $($report.window.completedAt) (buffer $Buffer)"
-        $md += "**Workspace**: $($context.resourceGroup)/$($context.workspaceName)    **Resources targeted**: $($targets.all.Count)"
-        $md += ''
-        $md += '## Coverage / Caveats'
-        $md += "- Resources sampled: $($targets.sampled.Count) / $($targets.all.Count) (cap: $MaxResources)"
-        if ($targets.skippedDueToCap.Count -gt 0) {
-            $md += "- $($targets.skippedDueToCap.Count) resource(s) exceeded MaxResources and were not sampled."
-        }
-        $md += "- Log signals available for $($logsAvailable.Count) / $($targets.sampled.Count) sampled resources."
-        if ($logsUnavailable.Count -gt 0) {
-            $md += "- $($logsUnavailable.Count) resource(s) without usable diagnostic settings — metrics-only correlation."
-        }
-        $md += ''
-        $md += '*Correlation engine arrives in Epic 3; this card reflects the resolved coverage only.*'
-        ($md -join "`n") | Out-File -FilePath $mdPath -Encoding utf8 -NoNewline
-        [Console]::Error.WriteLine("[chaos-impact] Wrote $mdPath")
+    # Queries metadata: pass the per-workspace KQL results + per-resource
+    # metric responses so the JSON sidecar can carry the query trail.
+    $queriesForRender = [ordered]@{
+        kql     = if ($signals -and $signals.logs)    { @($signals.logs) }    else { @() }
+        metrics = if ($signals -and $signals.metrics) { @($signals.metrics) } else { @() }
     }
 
-    Write-Card -Title 'Chaos Impact — Coverage' -Status '✅ Resolved' -Properties ([ordered]@{
+    $workspaceContext = [ordered]@{
+        subscriptionId = $context.subscriptionId
+        resourceGroup  = $context.resourceGroup
+        name           = $context.workspaceName
+    }
+    $scenarioContext = [ordered]@{
+        name = $context.scenarioName
+    }
+
+    # Phase E — delegate JSON + Markdown emission to New-ImpactReport.ps1.
+    $renderResult = & "$PSScriptRoot/New-ImpactReport.ps1" `
+        -CorrelationResult $correlationResult `
+        -ScenarioRunId     $context.scenarioRunId `
+        -ScenarioRun       $runBody `
+        -Coverage          $coverageForRender `
+        -Queries           $queriesForRender `
+        -Errors            @() `
+        -OutputDir         $outDir `
+        -Format            $Format `
+        -Buffer            $Buffer `
+        -WorkspaceContext  $workspaceContext `
+        -ScenarioContext   $scenarioContext
+
+    Write-Card -Title 'Chaos Impact — Report' -Status '✅ Rendered' -Properties ([ordered]@{
         'Run ID'              = $context.scenarioRunId
-        'Window'              = "$($report.window.startedAt) → $($report.window.completedAt)"
+        'Window'              = "$($runBody.properties.startedAt) → $($runBody.properties.completedAt)"
         'Resources (total)'   = $targets.all.Count
         'Resources (sampled)' = $targets.sampled.Count
         'Logs available'      = "$($logsAvailable.Count) / $($targets.sampled.Count)"
-        'Output dir'          = $outDir
+        'Markdown'            = $renderResult.markdownPath
+        'JSON sidecar'        = $renderResult.jsonPath
     })
 
     exit 0

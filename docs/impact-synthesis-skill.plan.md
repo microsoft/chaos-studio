@@ -769,7 +769,7 @@ classification heuristics.
 
 ---
 
-### Epic 4 — Renderer, JSON schema, artifacts
+### Epic 4 — Renderer, JSON schema, artifacts  **[DONE]**
 
 **Goal**: Produce the Markdown report card and the JSON sidecar; ship a stable JSON
 schema.
@@ -778,15 +778,15 @@ schema.
 
 | Task ID | Type | Description | Files | Status |
 |---|---|---|---|---|
-| E4-T1 | IMPL | Author `impact-report.schema.json` (JSON Schema draft-07, `impactReportSchemaVersion: 1`). | `skills/chaos-impact/schema/impact-report.schema.json` | TO DO |
-| E4-T2 | IMPL | Implement `New-ImpactReport.ps1` — JSON emitter + Markdown emitter from a shared in-memory model. | `skills/chaos-impact/scripts/New-ImpactReport.ps1`, `templates/report.md.tmpl` | TO DO |
-| E4-T3 | IMPL | Atomic file writes (temp + rename) for both artifacts, mirroring `State.ps1` discipline. | `skills/chaos-impact/scripts/New-ImpactReport.ps1` | TO DO |
-| E4-T4 | TEST | Round-trip test: build sample model → render JSON → validate against schema. | `skills/chaos-impact/tests/New-ImpactReport.Tests.ps1` | TO DO |
+| E4-T1 | IMPL | Author `impact-report.schema.json` (JSON Schema draft-07, `impactReportSchemaVersion: 1`). | `skills/chaos-impact/schema/impact-report.schema.json` | DONE |
+| E4-T2 | IMPL | Implement `New-ImpactReport.ps1` — JSON emitter + Markdown emitter from a shared in-memory model. | `skills/chaos-impact/scripts/New-ImpactReport.ps1`, `templates/report.md.tmpl` | DONE |
+| E4-T3 | IMPL | Atomic file writes (temp + rename) for both artifacts, mirroring `State.ps1` discipline. | `skills/chaos-impact/scripts/New-ImpactReport.ps1` | DONE |
+| E4-T4 | TEST | Round-trip test: build sample model → render JSON → validate against schema. | `skills/chaos-impact/tests/New-ImpactReport.Tests.ps1` | DONE |
 
 **Acceptance Criteria**:
-- [ ] JSON sidecar validates against the schema for every fixture.
-- [ ] Markdown report renders cleanly in GitHub's Markdown preview.
-- [ ] Re-running with same `scenarioRunId` overwrites artifacts atomically.
+- [x] JSON sidecar validates against the schema for every fixture.
+- [x] Markdown report renders cleanly in GitHub's Markdown preview.
+- [x] Re-running with same `scenarioRunId` overwrites artifacts atomically.
 
 ---
 

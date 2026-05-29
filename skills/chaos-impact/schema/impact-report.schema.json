@@ -1,0 +1,110 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "impact-report.schema.json",
+  "title": "ChaosImpactReport",
+  "type": "object",
+  "required": [
+    "impactReportSchemaVersion",
+    "scenarioRunId",
+    "workspace",
+    "scenario",
+    "window",
+    "actions",
+    "coverage",
+    "queries",
+    "errors"
+  ],
+  "properties": {
+    "impactReportSchemaVersion": { "type": "integer", "const": 1 },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "scenarioRunId": { "type": "string" },
+    "workspace": {
+      "type": "object",
+      "required": ["subscriptionId", "resourceGroup", "name"],
+      "properties": {
+        "subscriptionId": { "type": "string" },
+        "resourceGroup":  { "type": "string" },
+        "name":           { "type": "string" }
+      }
+    },
+    "scenario": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name":    { "type": "string" },
+        "version": { "type": "string" }
+      }
+    },
+    "window": {
+      "type": "object",
+      "required": ["startedAt", "completedAt", "bufferIso", "partial"],
+      "properties": {
+        "startedAt":   { "type": ["string", "null"], "format": "date-time" },
+        "completedAt": { "type": ["string", "null"], "format": "date-time" },
+        "bufferIso":   { "type": "string" },
+        "partial":     { "type": "boolean" }
+      }
+    },
+    "actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "targetedResources", "signals"],
+        "properties": {
+          "name":             { "type": "string" },
+          "startedAt":        { "type": ["string", "null"], "format": "date-time" },
+          "completedAt":      { "type": ["string", "null"], "format": "date-time" },
+          "windowSource":     { "type": "string", "enum": ["action", "run", "unknown"] },
+          "targetedResources": { "type": "array", "items": { "type": "string" } },
+          "signals": {
+            "type": "object",
+            "required": ["chaosAttributed", "baseline", "unexplained"],
+            "properties": {
+              "chaosAttributed": { "type": "array", "items": { "$ref": "#/definitions/Signal" } },
+              "baseline":        { "type": "array", "items": { "$ref": "#/definitions/Signal" } },
+              "unexplained":     { "type": "array", "items": { "$ref": "#/definitions/Signal" } },
+              "platformEvent":   { "type": "array", "items": { "$ref": "#/definitions/Signal" } }
+            }
+          }
+        }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "required": ["resourcesTotal", "resourcesSampled", "logsAvailableFor", "logsUnavailableFor"],
+      "properties": {
+        "resourcesTotal":        { "type": "integer" },
+        "resourcesSampled":      { "type": "integer" },
+        "skippedDueToCap":       { "type": "array", "items": { "type": "string" } },
+        "maxResources":          { "type": "integer" },
+        "logsAvailableFor":      { "type": "array", "items": { "type": "string" } },
+        "logsUnavailableFor":    { "type": "array", "items": { "type": "string" } },
+        "logsUnavailableReason": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    },
+    "queries": {
+      "type": "object",
+      "properties": {
+        "kql":     { "type": "array", "items": { "type": "object" } },
+        "metrics": { "type": "array", "items": { "type": "object" } }
+      }
+    },
+    "errors": { "type": "array", "items": { "type": ["object", "string"] } }
+  },
+  "definitions": {
+    "Signal": {
+      "type": "object",
+      "required": ["resourceId", "signalType", "name", "timestamp", "severity"],
+      "properties": {
+        "resourceId":  { "type": ["string", "null"] },
+        "signalType":  { "type": "string", "enum": ["metric", "log", "activity", "alert", "servicehealth", "platformEvent"] },
+        "name":        { "type": "string" },
+        "timestamp":   { "type": ["string", "null"], "format": "date-time" },
+        "value":       {},
+        "severity":    { "type": "string", "enum": ["info", "low", "med", "high", "crit"] },
+        "actionName":  { "type": ["string", "null"] },
+        "rationale":   { "type": ["string", "null"] }
+      }
+    }
+  }
+}

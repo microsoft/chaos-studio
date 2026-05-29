@@ -395,8 +395,17 @@ Describe 'Exit-code contract (subprocess)' {
         New-Item -ItemType Directory -Path $scripts, $shared -Force | Out-Null
 
         try {
-            foreach ($f in 'Constants.ps1','Get-DiagnosticSettings.ps1','Invoke-ChaosImpact.ps1') {
+            foreach ($f in 'Constants.ps1','Get-DiagnosticSettings.ps1','Get-MonitorSignals.ps1','Build-ImpactCorrelation.ps1','New-ImpactReport.ps1','Invoke-ChaosImpact.ps1') {
                 Copy-Item (Join-Path $script:ScriptsDir $f) (Join-Path $scripts $f)
+            }
+            # Copy templates + schema (renderer + correlation engine read them).
+            $templatesSrc = Join-Path $script:SkillRoot 'templates'
+            $schemaSrc    = Join-Path $script:SkillRoot 'schema'
+            if (Test-Path $templatesSrc) {
+                Copy-Item $templatesSrc (Join-Path $root 'skills/chaos-impact/templates') -Recurse -Force
+            }
+            if (Test-Path $schemaSrc) {
+                Copy-Item $schemaSrc (Join-Path $root 'skills/chaos-impact/schema') -Recurse -Force
             }
             # Real State.ps1 is fine — Read-State just returns null when the
             # file does not exist.
