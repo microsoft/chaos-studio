@@ -642,7 +642,7 @@ Backward compatibility: full. Plugin consumers on `0.2.x` continue to work; upgr
 | **P2 — Skill scaffolding + diag-settings discovery** | `Invoke-ChaosImpact.ps1` resolves a run + workspace map end-to-end against a real workspace; exit codes 0/1/2/3 wired up; SKILL.md drafted. |
 | **P3 — Query + correlation engine** | All Monitor surfaces queried; correlation produces correct classification on at least 2 hand-crafted scenarios (1 hit, 1 baseline-noise-only). |
 | **P4 — Renderer + JSON schema** | Both Markdown and JSON artifacts produced; JSON validates against `impact-report.schema.json`; round-trip test passes. |
-| **P5 — Tests** | Hermetic E2E from recorded fixtures green in CI; ≥ 80 % line coverage on PS modules; pytest green on MCP tools. |
+| **P5 — Tests** | Offline-replay E2E from recorded fixtures green in CI; ≥ 80 % line coverage on PS modules; pytest green on MCP tools. |
 | **P6 — Docs + manifest** | README updates merged; plugin.json + marketplace.json updated; plugin version bumped to `0.3.0`. |
 
 ---
@@ -670,8 +670,8 @@ Backward compatibility: full. Plugin consumers on `0.2.x` continue to work; upgr
 | `skills/chaos-impact/tests/Build-ImpactCorrelation.Tests.ps1` | Correlation engine unit tests. |
 | `skills/chaos-impact/tests/e2e/recorded-run.json` | Recorded ScenarioRun fixture. |
 | `skills/chaos-impact/tests/e2e/recorded-metrics.json` | Recorded Monitor responses fixture. |
-| `skills/chaos-impact/tests/e2e/expected-impact.json` | Golden output for hermetic E2E. |
-| `skills/chaos-impact/tests/e2e/Run-Hermetic.ps1` | Hermetic test driver. |
+| `skills/chaos-impact/tests/e2e/expected-impact.json` | Golden output for offline-replay E2E. |
+| `skills/chaos-impact/tests/e2e/Run-OfflineReplay.ps1` | Offline-replay test driver (hermetic in the no-network sense; does not validate live ARM contract — see follow-up issue). |
 | `mcp/chaos_mcp/monitor.py` | Module hosting the three new Monitor MCP tools + thin HTTP helpers. |
 | `mcp/tests/test_monitor_tools.py` | Pytest unit tests for the Monitor tools. |
 | `docs/impact-synthesis-skill.plan.md` | This document. |
@@ -790,7 +790,7 @@ schema.
 
 ---
 
-### Epic 5 — Hermetic E2E + CI integration  **[DONE]**
+### Epic 5 — Offline-replay E2E + CI integration  **[DONE]**
 
 **Goal**: A repeatable, offline E2E test that exercises the full skill against
 recorded Azure responses, plus CI wiring.
@@ -801,11 +801,11 @@ recorded Azure responses, plus CI wiring.
 |---|---|---|---|---|
 | E5-T0 | IMPL | **Prerequisite:** stand up a minimal CI workflow for `chaos-ai-plugins/startchaos/` (no workflow currently exists under `chaos-ai-plugins/.github/workflows/`). Decide with maintainers whether to (a) extend the parent `azure-rest-api-specs` workflows or (b) add a self-contained workflow under `chaos-ai-plugins/.github/workflows/startchaos-ci.yml` that runs `Invoke-Pester` + `pytest`. | `.github/workflows/startchaos-ci.yml` (NEW) or parent repo | DONE |
 | E5-T1 | TEST | Record a real ScenarioRun + Monitor response set (sanitised) into `tests/e2e/`. | `skills/chaos-impact/tests/e2e/*.json` | DONE |
-| E5-T2 | TEST | Implement `Run-Hermetic.ps1` — stub `Invoke-AzRest` to serve fixtures, run the full skill, diff against `expected-impact.json`. | `skills/chaos-impact/tests/e2e/Run-Hermetic.ps1` | DONE |
-| E5-T3 | TEST | Wire Pester + pytest + hermetic E2E into the CI workflow stood up in E5-T0. | `.github/workflows/startchaos-ci.yml` | DONE |
+| E5-T2 | TEST | Implement `Run-OfflineReplay.ps1` — stub `Invoke-AzRest` to serve fixtures, run the full skill, diff against `expected-impact.json`. | `skills/chaos-impact/tests/e2e/Run-OfflineReplay.ps1` | DONE |
+| E5-T3 | TEST | Wire Pester + pytest + offline-replay E2E into the CI workflow stood up in E5-T0. | `.github/workflows/startchaos-ci.yml` | DONE |
 
 **Acceptance Criteria**:
-- [x] Hermetic E2E runs in < 30 s offline. *(observed: ~2s locally)*
+- [x] Offline-replay E2E runs in < 30 s offline. *(observed: ~2s locally)*
 - [x] CI green on Windows + Linux runners. *(matrix configured in workflow; Pester 5 tests pass locally on Windows)*
 - [x] Fixture files contain no real subscription/tenant IDs. *(all fixtures use `00000000-0000-0000-0000-000000000001` + `hermetic-*` names)*
 
