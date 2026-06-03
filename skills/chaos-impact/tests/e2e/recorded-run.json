@@ -1,0 +1,21 @@
+{
+  "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/hermetic-rg/providers/Microsoft.Chaos/workspaces/hermetic-ws/scenarios/hermetic-scenario/runs/hermetic-run-001",
+  "type": "Microsoft.Chaos/workspaces/scenarios/runs",
+  "name": "hermetic-run-001",
+  "properties": {
+    "status": "Succeeded",
+    "startedAt": "2026-05-01T10:00:00Z",
+    "completedAt": "2026-05-01T10:20:00Z",
+    "scenarioRunSummary": [
+      {
+        "actionName": "stopInstances",
+        "state": "Completed",
+        "startedAt": "2026-05-01T10:01:00Z",
+        "completedAt": "2026-05-01T10:10:00Z",
+        "resources": [
+          { "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/hermetic-rg/providers/Microsoft.Compute/virtualMachineScaleSets/hermetic-vmss" }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,270 @@
+#!/usr/bin/env pwsh
+<#
+.SYNOPSIS
+    Offline-replay E2E driver for the chaos-impact skill. Runs the full
+    Invoke-ChaosImpact.ps1 pipeline offline against recorded fixture
+    JSON, then asserts the rendered artifacts against expected-impact.json.
+
+.DESCRIPTION
+    Approach (mirrors the existing subprocess test in
+    Invoke-ChaosImpact.Tests.ps1):
+
+      1. Stage a temp tree that contains the real chaos-impact scripts
+         and templates / schema, but replaces
+         `skills/_shared/Invoke-AzRest.ps1` with a stub that serves
+         fixtures from -FixtureDir based on URI pattern matching.
+      2. Invoke `Invoke-ChaosImpact.ps1` as a child `pwsh` process so the
+         stubbed Invoke-AzRest is the only one in scope (this avoids the
+         dot-source-overwrites-parent-stub trap PowerShell has when
+         multiple files redefine the same function name).
+      3. Parse the rendered `impact-<runId>.json` and `impact-<runId>.md`
+         and assert against `expected-impact.json`. Structural assertions
+         only — `generatedAt` and other non-deterministic fields are
+         excluded.
+
+    Exit codes:
+      0  PASS — pipeline ran, artifacts written, all assertions held.
+      1  FAIL — non-zero exit from the pipeline, missing artifact, or a
+         failed assertion. Detail printed on stderr.
+
+.NOTES
+    Scope: this is an *offline-replay* E2E. It is hermetic in the strict
+    sense (sealed, deterministic, no network), but does NOT validate the
+    live ARM/Monitor response contract — fixtures are frozen and a real
+    API change would not fail this suite. A separate contract-drift test
+    and an opt-in live E2E are tracked as follow-ups.
+
+    The Log Analytics POST in Get-MonitorSignals bypasses Invoke-AzRest
+    and shells out to `az rest` directly so it can use a Log-Analytics
+    -scoped token. This driver intentionally drives the fixtures so that
+    no workspace mapping is discovered (recorded-diag-settings.json
+    deliberately omits `properties.workspaceId`). The LA path is covered
+    by Get-MonitorSignals.Tests.ps1.
+
+    Fixture identifiers (e.g. `hermetic-rg`, `hermetic-ws`) are legacy
+    placeholder names retained so expected-impact.json assertions stay
+    stable; they have no semantic meaning beyond "test data".
+#>
+[CmdletBinding()]
+param(
+    [Parameter()][string]$FixtureDir = $PSScriptRoot,
+
+    [Parameter()][string]$OutputDir,
+
+    # When set, leaves the staged temp tree on disk for debugging.
+    [Parameter()][switch]$KeepTemp
+)
+
+$ErrorActionPreference = 'Stop'
+$startTime = Get-Date
+
+# ── Resolve plugin layout ────────────────────────────────
+$skillRoot    = Split-Path (Split-Path $FixtureDir -Parent) -Parent
+$scriptsDir   = Join-Path $skillRoot 'scripts'
+# Root-level scripts/ holds cross-skill utilities (Invoke-AzRest, State, Render, ...).
+$sharedSrc    = Join-Path (Split-Path (Split-Path $skillRoot -Parent) -Parent) 'scripts'
+$schemaSrc    = Join-Path $skillRoot 'schema'
+$templatesSrc = Join-Path $skillRoot 'templates'
+
+foreach ($req in @($scriptsDir, $sharedSrc, $FixtureDir)) {
+    if (-not (Test-Path $req)) { throw "Run-OfflineReplay: required path missing: $req" }
+}
+
+# ── Stage temp tree ──────────────────────────────────────
+$tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) "chaos-impact-offline-replay-$([guid]::NewGuid())"
+$tempScripts = Join-Path $tempRoot 'skills/chaos-impact/scripts'
+$tempShared  = Join-Path $tempRoot 'scripts'
+$tempOut     = if ($OutputDir) { $OutputDir } else { Join-Path $tempRoot 'out' }
+New-Item -ItemType Directory -Path $tempScripts, $tempShared, $tempOut -Force | Out-Null
+
+try {
+    # Copy chaos-impact scripts.
+    foreach ($f in @(
+        'Constants.ps1',
+        'Get-DiagnosticSettings.ps1',
+        'Get-MonitorSignals.ps1',
+        'Build-ImpactCorrelation.ps1',
+        'New-ImpactReport.ps1',
+        'Invoke-ChaosImpact.ps1'
+    )) {
+        Copy-Item (Join-Path $scriptsDir $f) (Join-Path $tempScripts $f)
+    }
+    # Copy templates + schema (renderer + correlation engine read them).
+    if (Test-Path $templatesSrc) {
+        Copy-Item $templatesSrc (Join-Path $tempRoot 'skills/chaos-impact/templates') -Recurse -Force
+    }
+    if (Test-Path $schemaSrc) {
+        Copy-Item $schemaSrc (Join-Path $tempRoot 'skills/chaos-impact/schema') -Recurse -Force
+    }
+    # Copy real State.ps1 (no ARM dependency).
+    Copy-Item (Join-Path $sharedSrc 'State.ps1') (Join-Path $tempShared 'State.ps1')
+
+    # ── Stub Render.ps1 (no-op cards on stderr) ──────────
+    $renderStub = @'
+function Write-Card       { param($Title,$Status,$Body,$Properties,$JsonPreview,$Details) [Console]::Error.WriteLine("[card] $Title $Status") }
+function Write-Error-Card { param($Title,$ErrorMessage,$RemediationCommand,$Details)       [Console]::Error.WriteLine("[err]  $Title :: $ErrorMessage") }
+'@
+    Set-Content -LiteralPath (Join-Path $tempShared 'Render.ps1') -Value $renderStub -Encoding utf8
+
+    # ── Stub Invoke-AzRest.ps1: fixture router ──────────
+    # The fixture dir is captured at stub-generation time via string
+    # interpolation so the child pwsh process can resolve it without env vars.
+    $fixtureDirEsc = $FixtureDir.Replace("'", "''")
+    $azStub = @"
+# Offline-replay stub generated by Run-OfflineReplay.ps1
+function Invoke-AzRest {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]`$Method,
+        [Parameter(Mandatory)][string]`$Uri,
+        [Parameter()]`$Body,
+        [Parameter()][string]`$ApiVersion
+    )
+    `$fixtureDir = '$fixtureDirEsc'
+    [Console]::Error.WriteLine("[stub] `$Method `$Uri")
+
+    function _LoadFixture([string]`$Name) {
+        `$path = Join-Path `$fixtureDir `$Name
+        if (-not (Test-Path `$path)) { throw "Offline-replay stub: fixture missing: `$path" }
+        return (Get-Content `$path -Raw | ConvertFrom-Json)
+    }
+
+    # Route by URI substring (order matters: more specific first).
+    if (`$Uri -match '/scenarios/[^/]+/runs/') {
+        return [pscustomobject]@{ body = (_LoadFixture 'recorded-run.json'); headers = @{} }
+    }
+    if (`$Uri -match 'Microsoft\.Insights/diagnosticSettings') {
+        return [pscustomobject]@{ body = (_LoadFixture 'recorded-diag-settings.json'); headers = @{} }
+    }
+    if (`$Uri -match 'Microsoft\.Insights/metrics') {
+        return [pscustomobject]@{ body = (_LoadFixture 'recorded-metrics.json'); headers = @{} }
+    }
+    if (`$Uri -match '/eventtypes/management/values') {
+        return [pscustomobject]@{ body = (_LoadFixture 'recorded-activity.json'); headers = @{} }
+    }
+    if (`$Uri -match 'Microsoft\.AlertsManagement/alerts') {
+        return [pscustomobject]@{ body = (_LoadFixture 'recorded-alerts.json'); headers = @{} }
+    }
+    if (`$Uri -match 'Microsoft\.ResourceHealth/events') {
+        return [pscustomobject]@{ body = (_LoadFixture 'recorded-health.json'); headers = @{} }
+    }
+    if (`$Uri -match 'Microsoft\.OperationalInsights/workspaces') {
+        return [pscustomobject]@{ body = (_LoadFixture 'recorded-workspace-check.json'); headers = @{} }
+    }
+    throw "Offline-replay stub: unmatched URI '`$Uri' (method=`$Method)"
+}
+"@
+    Set-Content -LiteralPath (Join-Path $tempShared 'Invoke-AzRest.ps1') -Value $azStub -Encoding utf8
+
+    # ── Drive the pipeline in a fresh child pwsh ────────
+    $entry = Join-Path $tempScripts 'Invoke-ChaosImpact.ps1'
+    # STARTCHAOS_STATE_PATH → non-existent → forces param-only context.
+    $stateFile = Join-Path $tempRoot 'nonexistent-state.json'
+    $envOriginal = $env:STARTCHAOS_STATE_PATH
+    $env:STARTCHAOS_STATE_PATH = $stateFile
+    try {
+        # Pass -LogAnalyticsWorkspaceId 'none' on the *Phase B → C boundary*
+        # would skip both diag-discovery and Monitor fan-out. We instead
+        # pass a fake workspace ID so the exit-3 path (diag-unavailable +
+        # no override) is bypassed but the Monitor pipeline still runs.
+        $cmd = @(
+            "& '$entry'"
+            "-SubscriptionId '00000000-0000-0000-0000-000000000001'"
+            "-ResourceGroup 'hermetic-rg'"
+            "-WorkspaceName 'hermetic-ws'"
+            "-ScenarioName 'hermetic-scenario'"
+            "-ScenarioRunId 'hermetic-run-001'"
+            "-Buffer 'PT5M'"
+            "-LogAnalyticsWorkspaceId '/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/hermetic-rg/providers/Microsoft.OperationalInsights/workspaces/hermetic-law'"
+            "-OutputDir '$tempOut'"
+            "-Format 'both'"
+            '; exit $LASTEXITCODE'
+        ) -join ' '
+
+        $stdoutLog = Join-Path $tempRoot 'pipeline.stdout.log'
+        $stderrLog = Join-Path $tempRoot 'pipeline.stderr.log'
+        $proc = Start-Process -FilePath 'pwsh' `
+            -ArgumentList @('-NoProfile', '-NonInteractive', '-Command', $cmd) `
+            -NoNewWindow -Wait -PassThru `
+            -RedirectStandardOutput $stdoutLog `
+            -RedirectStandardError  $stderrLog
+        $exitCode = $proc.ExitCode
+    } finally {
+        if ($null -ne $envOriginal) { $env:STARTCHAOS_STATE_PATH = $envOriginal }
+        else { Remove-Item env:STARTCHAOS_STATE_PATH -ErrorAction SilentlyContinue }
+    }
+
+    if ($exitCode -ne 0) {
+        [Console]::Error.WriteLine("[offline-replay] Pipeline exited with code $exitCode")
+        if (Test-Path $stderrLog) { [Console]::Error.WriteLine((Get-Content $stderrLog -Raw)) }
+        if (Test-Path $stdoutLog) { [Console]::Error.WriteLine((Get-Content $stdoutLog -Raw)) }
+        exit 1
+    }
+
+    # ── Assert artifacts + structural invariants ────────
+    $actualJsonPath = Join-Path $tempOut 'impact-hermetic-run-001.json'
+    $actualMdPath   = Join-Path $tempOut 'impact-hermetic-run-001.md'
+    $expectedPath   = Join-Path $FixtureDir 'expected-impact.json'
+
+    $pass = $true
+    function _Fail($msg) { $script:pass = $false; [Console]::Error.WriteLine("[offline-replay] FAIL: $msg") }
+
+    if (-not (Test-Path $actualJsonPath)) { _Fail "JSON artifact missing at $actualJsonPath" }
+    if (-not (Test-Path $actualMdPath))   { _Fail "Markdown artifact missing at $actualMdPath" }
+    if (-not (Test-Path $expectedPath))   { _Fail "Golden file missing at $expectedPath" }
+
+    if ($pass) {
+        $actual   = Get-Content $actualJsonPath -Raw | ConvertFrom-Json
+        $expected = Get-Content $expectedPath   -Raw | ConvertFrom-Json
+        $exp = $expected.expectations
+
+        # Top-level identity assertions (deterministic).
+        if ($actual.impactReportSchemaVersion -ne $expected.impactReportSchemaVersion) { _Fail "impactReportSchemaVersion mismatch (got $($actual.impactReportSchemaVersion))" }
+        if ($actual.scenarioRunId             -ne $expected.scenarioRunId)             { _Fail "scenarioRunId mismatch (got $($actual.scenarioRunId))" }
+        if ($actual.workspace.subscriptionId  -ne $expected.workspace.subscriptionId)  { _Fail "workspace.subscriptionId mismatch" }
+        if ($actual.workspace.resourceGroup   -ne $expected.workspace.resourceGroup)   { _Fail "workspace.resourceGroup mismatch" }
+        if ($actual.workspace.name            -ne $expected.workspace.name)            { _Fail "workspace.name mismatch" }
+        if ($actual.scenario.name             -ne $expected.scenario.name)             { _Fail "scenario.name mismatch" }
+        if ($actual.window.startedAt          -ne $expected.window.startedAt)          { _Fail "window.startedAt mismatch" }
+        if ($actual.window.completedAt        -ne $expected.window.completedAt)        { _Fail "window.completedAt mismatch" }
+        if ($actual.window.bufferIso          -ne $expected.window.bufferIso)          { _Fail "window.bufferIso mismatch" }
+        if ($actual.window.partial            -ne $expected.window.partial)            { _Fail "window.partial mismatch (got $($actual.window.partial))" }
+
+        # Action / signal assertions (driven by expectations block).
+        if (@($actual.actions).Count -ne [int]$exp.actionsCount) { _Fail "actions count = $(@($actual.actions).Count), expected $($exp.actionsCount)" }
+        $a0 = $actual.actions[0]
+        if ($a0) {
+            if ($a0.name         -ne $exp.actionName)   { _Fail "actions[0].name = $($a0.name), expected $($exp.actionName)" }
+            if ($a0.windowSource -ne $exp.windowSource) { _Fail "actions[0].windowSource = $($a0.windowSource), expected $($exp.windowSource)" }
+            if (@($a0.targetedResources).Count -ne [int]$exp.targetedResourceCount) { _Fail "targetedResources count = $(@($a0.targetedResources).Count), expected $($exp.targetedResourceCount)" }
+            $chaosCount = @($a0.signals.chaosAttributed).Count
+            if ($chaosCount -lt [int]$exp.chaosAttributedCountMin) { _Fail "chaosAttributed count = $chaosCount, expected >= $($exp.chaosAttributedCountMin)" }
+        }
+
+        # Coverage assertions.
+        if (@($actual.coverage.logsAvailableFor).Count   -ne [int]$exp.logsAvailableCount)   { _Fail "logsAvailableFor   count = $(@($actual.coverage.logsAvailableFor).Count), expected $($exp.logsAvailableCount)" }
+        if (@($actual.coverage.logsUnavailableFor).Count -ne [int]$exp.logsUnavailableCount) { _Fail "logsUnavailableFor count = $(@($actual.coverage.logsUnavailableFor).Count), expected $($exp.logsUnavailableCount)" }
+
+        # Markdown sanity.
+        $md = Get-Content $actualMdPath -Raw
+        if ($md -notmatch '(?m)^# Chaos Impact Report') { _Fail 'Markdown missing # header' }
+        if ($md -notmatch 'hermetic-scenario')          { _Fail 'Markdown missing scenario name' }
+        if ($md -notmatch 'stopInstances')              { _Fail 'Markdown missing action name' }
+    }
+
+    $elapsed = ((Get-Date) - $startTime).TotalSeconds
+    if ($pass) {
+        Write-Host ("[offline-replay] PASS ({0:N2}s)" -f $elapsed)
+        exit 0
+    } else {
+        Write-Host ("[offline-replay] FAIL ({0:N2}s)" -f $elapsed)
+        exit 1
+    }
+
+} finally {
+    if (-not $KeepTemp -and (Test-Path $tempRoot)) {
+        Remove-Item $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    } elseif ($KeepTemp) {
+        Write-Host "[offline-replay] Temp tree retained: $tempRoot"
+    }
+}

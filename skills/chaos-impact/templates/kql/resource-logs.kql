@@ -1,0 +1,8 @@
+let ids = dynamic({resourceIdsJson});
+let tStart = datetime({tStart});
+let tEnd = datetime({tEnd});
+AzureDiagnostics
+| where TimeGenerated between (tStart .. tEnd)
+| where _ResourceId in (ids)
+| summarize count() by Category, Level, _ResourceId, bin(TimeGenerated, 1m)
+| take 500
