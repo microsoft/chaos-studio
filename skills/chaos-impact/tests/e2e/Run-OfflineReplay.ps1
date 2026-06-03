@@ -61,7 +61,8 @@ $startTime = Get-Date
 # ── Resolve plugin layout ────────────────────────────────
 $skillRoot    = Split-Path (Split-Path $FixtureDir -Parent) -Parent
 $scriptsDir   = Join-Path $skillRoot 'scripts'
-$sharedSrc    = Join-Path (Split-Path $skillRoot -Parent) '_shared'
+# Root-level scripts/ holds cross-skill utilities (Invoke-AzRest, State, Render, ...).
+$sharedSrc    = Join-Path (Split-Path (Split-Path $skillRoot -Parent) -Parent) 'scripts'
 $schemaSrc    = Join-Path $skillRoot 'schema'
 $templatesSrc = Join-Path $skillRoot 'templates'
 
@@ -72,7 +73,7 @@ foreach ($req in @($scriptsDir, $sharedSrc, $FixtureDir)) {
 # ── Stage temp tree ──────────────────────────────────────
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) "chaos-impact-offline-replay-$([guid]::NewGuid())"
 $tempScripts = Join-Path $tempRoot 'skills/chaos-impact/scripts'
-$tempShared  = Join-Path $tempRoot 'skills/_shared'
+$tempShared  = Join-Path $tempRoot 'scripts'
 $tempOut     = if ($OutputDir) { $OutputDir } else { Join-Path $tempRoot 'out' }
 New-Item -ItemType Directory -Path $tempScripts, $tempShared, $tempOut -Force | Out-Null
 

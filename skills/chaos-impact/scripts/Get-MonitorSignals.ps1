@@ -245,7 +245,7 @@ function Get-MonitorSignals {
     )
 
     . "$PSScriptRoot/Constants.ps1"
-    $sharedDir = Join-Path (Split-Path (Split-Path $PSScriptRoot)) '_shared'
+    $sharedDir = Join-Path (Split-Path (Split-Path (Split-Path $PSScriptRoot))) 'scripts'
     . (Join-Path $sharedDir 'Invoke-AzRest.ps1')
 
     if (-not $PSBoundParameters.ContainsKey('ThrottleLimit')) {

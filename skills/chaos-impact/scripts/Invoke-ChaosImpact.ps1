@@ -52,7 +52,7 @@ param(
 )
 
 # ── Load shared + local scripts ─────────────────────────
-$sharedDir = Join-Path (Split-Path (Split-Path $PSScriptRoot)) '_shared'
+$sharedDir = Join-Path (Split-Path (Split-Path (Split-Path $PSScriptRoot))) 'scripts'
 . (Join-Path $sharedDir 'State.ps1')
 . (Join-Path $sharedDir 'Render.ps1')
 . (Join-Path $sharedDir 'Invoke-AzRest.ps1')
