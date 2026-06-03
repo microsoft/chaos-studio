@@ -1,0 +1,92 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  pester:
+    name: Pester (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Pester
+        shell: pwsh
+        run: |
+          Install-Module -Name Pester -MinimumVersion 5.5.0 -Force -Scope CurrentUser -SkipPublisherCheck
+
+      - name: Run Pester
+        shell: pwsh
+        run: |
+          $config = New-PesterConfiguration
+          $config.Run.Path = './skills'
+          $config.Run.Exit = $true
+          $config.TestResult.Enabled = $true
+          $config.TestResult.OutputPath = 'pester-results.xml'
+          $config.Output.Verbosity = 'Detailed'
+          Invoke-Pester -Configuration $config
+
+      - name: Upload Pester results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pester-results-${{ matrix.os }}
+          path: pester-results.xml
+
+  pytest:
+    name: pytest (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10', '3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install package + test deps
+        working-directory: mcp
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pytest pytest-cov httpx
+
+      - name: Run pytest
+        working-directory: mcp
+        run: |
+          python -m pytest -q --cov=chaos_mcp --cov-report=xml
+
+      - name: Upload coverage
+        if: matrix.python == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: mcp/coverage.xml
+
+  lint-python:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install
+        run: pip install ruff
+      - name: ruff
+        working-directory: mcp
+        run: ruff check chaos_mcp tests
