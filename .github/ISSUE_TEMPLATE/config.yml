@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://msrc.microsoft.com/create-report
+    about: Report security issues to the Microsoft Security Response Center, not GitHub issues. See SECURITY.md.
+  - name: Azure Chaos Studio documentation
+    url: https://learn.microsoft.com/azure/chaos-studio/
+    about: How-tos and reference for the Chaos Studio service itself (not this plugin).
