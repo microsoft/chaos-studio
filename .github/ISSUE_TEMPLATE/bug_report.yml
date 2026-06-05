@@ -1,0 +1,66 @@
+name: Bug report
+description: Something is broken or behaving unexpectedly.
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Clear description of the problem and what you expected instead.
+      placeholder: When I run `/chaos-impact <runId>`, ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      description: Minimal steps to reproduce. Include the exact command line.
+      placeholder: |
+        1. `az login`
+        2. `copilot` → `/start-chaos`
+        3. ...
+    validations:
+      required: true
+
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Plugin version
+      description: From `plugin.json` or `copilot plugin list`.
+      placeholder: "0.3.0"
+    validations:
+      required: true
+
+  - type: input
+    id: mcp-version
+    attributes:
+      label: chaos-mcp version (if applicable)
+      placeholder: "0.3.0"
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      options:
+        - Windows
+        - macOS
+        - Linux
+    validations:
+      required: true
+
+  - type: textarea
+    id: env
+    attributes:
+      label: Tool versions
+      description: Run `pwsh -v`, `az version`, `python --version`, `copilot --version`.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Paste relevant output. Redact any subscription/tenant IDs.
+      render: text
