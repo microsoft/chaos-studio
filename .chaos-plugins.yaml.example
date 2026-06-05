@@ -1,0 +1,26 @@
+# .chaos-plugins.yaml — Optional per-repo overrides for the startchaos plugin
+#
+# Copy this file to your repository root as `.chaos-plugins.yaml` and
+# uncomment / adjust the settings you need. All values shown below are
+# the defaults used when no override is present.
+
+# ── Start Chaos Plugin ─────────────────────────────────
+startchaos:
+  # Azure API version for all Chaos Studio ARM calls
+  # api_version: "2026-05-01-preview"
+
+  # Polling configuration for long-running operations
+  # polling:
+  #   interval_seconds: 10        # Default interval between LRO polls
+  #   lro_timeout_minutes: 30     # Maximum time to wait for any single LRO
+
+  # Default workspace settings (override per invocation via prompts)
+  # workspace:
+  #   location: "westus2"
+  #   identity_type: "SystemAssigned"   # or "UserAssigned"
+
+  # State file path (absolute or relative to session directory)
+  # state_path: "startchaos-state.json"
+
+  # Non-interactive mode — skip all confirmation prompts
+  # noninteractive: false

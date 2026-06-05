@@ -1,0 +1,57 @@
+# Chaos Impact Report — {scenarioName} / run {scenarioRunId}
+
+> Visual specification for the Markdown report rendered by `New-ImpactReport.ps1`.
+> This file is NOT a string-interpolated template — the renderer builds Markdown
+> programmatically. Use this file as a reference for section order, headings,
+> and the shape of each table when modifying the renderer.
+
+**Run window**: {startedAt} → {completedAt}   (Δ {duration}, ±{buffer} buffer)
+**Workspace**: {resourceGroup}/{workspaceName}    **Status**: {runStatus}    **Resources targeted**: {resourceCount}
+
+> ⚠️ Partial report — the run was still in progress at generation time. Re-run after completion for a final view.
+
+## Summary
+
+- **{n}** action(s); {stateSummary}.
+- **{n}** chaos-attributed signal(s) across **{n}** resource(s).
+- **{n}** baseline signal(s) (suppressed from per-action sections).
+- **{n}** unexplained signal(s) — review recommended.
+- **{n}** platform event(s) (Azure Service Health).
+
+## Action 1 — {actionName} ({startedAt} → {completedAt})
+
+**Targeted resources** ({n}):
+- `{resourceId}`
+
+### Chaos-attributed signals
+
+| Resource | Signal | Type | Δ / Value | Severity | Rationale |
+|---|---|---|---|---|---|
+| `{resourceIdShort}` | {signalName} | metric | {value} | **{severity}** | {rationale} |
+
+*No chaos-attributed signals detected for this action.*  ← shown when bucket is empty
+
+### Unexplained signals (this action's window)
+
+| Resource | Signal | Type | Value | Severity |
+|---|---|---|---|---|
+
+## Unexplained Signals (cross-action summary)
+
+Aggregated list of signals not attributable to any action target.
+
+## Platform Events
+
+Azure Service Health events active during the run window — attributed to the platform, not chaos.
+
+## Coverage / Caveats
+
+- Resources sampled: {sampled} / {total} (cap: {maxResources}).
+- Log signals available for {n}/{m} sampled resources.
+- {n} resource(s) without usable diagnostic settings — metrics-only correlation:
+  - `{resourceId}` — reason: {reason}
+- {n} resource(s) exceeded MaxResources and were not sampled.
+
+## Errors
+
+{errorList — empty when no errors recorded}
