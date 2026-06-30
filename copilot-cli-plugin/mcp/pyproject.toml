@@ -41,8 +41,8 @@ classifiers = [
 [project.urls]
 Homepage = "https://learn.microsoft.com/azure/chaos-studio/"
 Documentation = "https://learn.microsoft.com/azure/chaos-studio/"
-Repository = "https://github.com/Azure/azure-rest-api-specs"
-Issues = "https://github.com/Azure/azure-rest-api-specs/issues"
+Repository = "https://github.com/microsoft/chaos-studio"
+Issues = "https://github.com/microsoft/chaos-studio/issues"
 
 [project.scripts]
 chaos-mcp = "chaos_mcp.server:main"
