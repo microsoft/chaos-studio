@@ -1,0 +1,22 @@
+name: 💡 Product feedback (preview)
+description: Share feedback, friction, or ideas about Azure Chaos Studio (Workspaces, Scenarios, reports).
+title: "[Feedback]: "
+labels: ["feedback", "preview"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What's your feedback?
+      description: What were you trying to do, and what would make it better?
+    validations:
+      required: true
+  - type: input
+    id: area
+    attributes:
+      label: Area
+      placeholder: Workspaces / Scenarios / Reports / Scenario designer / API / Plugin
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else?
+      description: Repro steps, screenshots, subscription region — whatever helps. No secrets or real IDs.

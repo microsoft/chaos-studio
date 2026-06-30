@@ -1,0 +1,23 @@
+{
+  "name": "chaos-studio",
+  "owner": {
+    "name": "Azure Chaos Studio"
+  },
+  "metadata": {
+    "description": "Plugins for Azure Chaos Studio — managed resilience testing for Azure.",
+    "version": "0.3.0"
+  },
+  "plugins": [
+    {
+      "name": "startchaos",
+      "source": "./copilot-cli-plugin",
+      "description": "Guide Azure customers through the end-to-end Chaos Studio v2 Workspace experience: provision a workspace, configure scenarios, run experiments, and analyze impact with Azure Monitor correlation. Ships interactive skills and an MCP server for autonomous agents.",
+      "version": "0.3.0",
+      "author": { "name": "Azure Chaos Studio" },
+      "homepage": "https://learn.microsoft.com/azure/chaos-studio/",
+      "repository": "https://github.com/microsoft/chaos-studio",
+      "license": "MIT",
+      "keywords": ["azure", "chaos", "chaos-studio", "workspace", "scenario", "reliability", "mcp"]
+    }
+  ]
+}

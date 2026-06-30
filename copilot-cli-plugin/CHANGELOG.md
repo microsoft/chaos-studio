@@ -9,6 +9,8 @@ the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ### Changed
 
+- Repository renamed to `microsoft/chaos-studio` and restructured as a monorepo;
+  the Copilot CLI plugin and MCP server now live under `copilot-cli-plugin/`.
 - Repository extracted from `azure-rest-api-specs` to its own home. No
   user-visible behavior change.
 
@@ -51,7 +53,7 @@ the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 - Initial release: `start-chaos`, `create-workspace`, `setup-scenario`,
   `run-scenario` skills targeting `Microsoft.Chaos` `2026-05-01-preview`.
 
-[Unreleased]: https://github.com/Azure/chaos-studio-copilot-plugin/compare/v0.3.0...HEAD
-[0.3.0]: https://github.com/Azure/chaos-studio-copilot-plugin/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/Azure/chaos-studio-copilot-plugin/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/Azure/chaos-studio-copilot-plugin/releases/tag/v0.1.0
+[Unreleased]: https://github.com/microsoft/chaos-studio/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/microsoft/chaos-studio/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/microsoft/chaos-studio/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/microsoft/chaos-studio/releases/tag/v0.1.0

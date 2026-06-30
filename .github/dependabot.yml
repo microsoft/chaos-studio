@@ -1,7 +1,7 @@
 version: 2
 updates:
   - package-ecosystem: pip
-    directory: /mcp
+    directory: /copilot-cli-plugin/mcp
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
