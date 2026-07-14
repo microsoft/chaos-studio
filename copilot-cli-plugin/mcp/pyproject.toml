@@ -59,5 +59,4 @@ include = [
     "chaos_mcp",
     "README.md",
     "LICENSE",
-    "smithery.yaml",
 ]

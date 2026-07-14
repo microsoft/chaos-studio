@@ -23,7 +23,7 @@ BeforeAll {
 
     # Dot-source dependencies + the entry script (guarded so its main body
     # does not execute under dot-source).
-    . (Join-Path (Join-Path $script:PluginRoot 'skills/_shared') 'State.ps1')
+    . (Join-Path (Join-Path $script:PluginRoot 'scripts') 'State.ps1')
     . (Join-Path $script:ScriptsDir 'Constants.ps1')
     . $script:EntryScript
 
@@ -232,7 +232,7 @@ Describe 'Get-DiagnosticSettings' {
         # cannot reach into those runspaces.
         $script:DiagRoot      = Join-Path ([System.IO.Path]::GetTempPath()) "chaos-impact-diag-$([guid]::NewGuid())"
         $script:DiagScripts   = Join-Path $script:DiagRoot 'skills/chaos-impact/scripts'
-        $script:DiagShared    = Join-Path $script:DiagRoot 'skills/_shared'
+        $script:DiagShared    = Join-Path $script:DiagRoot 'scripts'
         New-Item -ItemType Directory -Path $script:DiagScripts, $script:DiagShared -Force | Out-Null
 
         Copy-Item (Join-Path $script:ScriptsDir 'Constants.ps1')             (Join-Path $script:DiagScripts 'Constants.ps1')
@@ -383,7 +383,7 @@ Describe 'Exit-code contract (subprocess)' {
     }
 
     It 'does not exit 3 (or attempt diag-settings discovery) when -LogAnalyticsWorkspaceId is "none"' {
-        # Stage a temp tree with the real entry script + stubbed _shared so we
+        # Stage a temp tree with the real entry script + stubbed shared scripts so we
         # can drive the script end-to-end without an Azure tenant. Verifies:
         #   (a) Get-DiagnosticSettings is never invoked (no requests for
         #       /diagnosticSettings recorded in the stub log)
@@ -391,7 +391,7 @@ Describe 'Exit-code contract (subprocess)' {
         #   (c) coverage block reports the sampled resources as having no logs
         $root    = Join-Path ([System.IO.Path]::GetTempPath()) "chaos-impact-none-$([guid]::NewGuid())"
         $scripts = Join-Path $root 'skills/chaos-impact/scripts'
-        $shared  = Join-Path $root 'skills/_shared'
+        $shared  = Join-Path $root 'scripts'
         New-Item -ItemType Directory -Path $scripts, $shared -Force | Out-Null
 
         try {
@@ -409,7 +409,7 @@ Describe 'Exit-code contract (subprocess)' {
             }
             # Real State.ps1 is fine — Read-State just returns null when the
             # file does not exist.
-            Copy-Item (Join-Path (Join-Path $script:PluginRoot 'skills/_shared') 'State.ps1') (Join-Path $shared 'State.ps1')
+            Copy-Item (Join-Path (Join-Path $script:PluginRoot 'scripts') 'State.ps1') (Join-Path $shared 'State.ps1')
 
             $callLog = Join-Path $root 'calls.log'
             $runBodyFile = Join-Path $root 'run-body.json'

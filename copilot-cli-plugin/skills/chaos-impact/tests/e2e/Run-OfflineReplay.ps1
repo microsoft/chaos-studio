@@ -11,7 +11,7 @@
 
       1. Stage a temp tree that contains the real chaos-impact scripts
          and templates / schema, but replaces
-         `skills/_shared/Invoke-AzRest.ps1` with a stub that serves
+         root-level `scripts/Invoke-AzRest.ps1` with a stub that serves
          fixtures from -FixtureDir based on URI pattern matching.
       2. Invoke `Invoke-ChaosImpact.ps1` as a child `pwsh` process so the
          stubbed Invoke-AzRest is the only one in scope (this avoids the

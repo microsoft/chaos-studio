@@ -29,7 +29,7 @@ Invoke the `/start-chaos` skill. The agent runs the four-phase pipeline automati
 ## Workflow
 
 ### Phase 0 — Auth Pre-flight
-1. Dot-source and invoke `Ensure-AzLogin` from `skills/_shared/Ensure-AzLogin.ps1`
+1. Dot-source and invoke `Ensure-AzLogin` from `scripts/Ensure-AzLogin.ps1`
 2. If auth fails, show the error and STOP
 3. Collect workspace inputs from user: resource group, workspace name, location, identity type, scopes
 

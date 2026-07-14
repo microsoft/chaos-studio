@@ -93,7 +93,7 @@ function Write-AtomicFile {
     <#
     .SYNOPSIS
         Atomically writes $Content to $Path using the same temp + rename
-        pattern as Save-State (skills/_shared/State.ps1). Leaves no .tmp
+        pattern as Save-State (scripts/State.ps1). Leaves no .tmp
         files behind on failure.
     #>
     [CmdletBinding()]
