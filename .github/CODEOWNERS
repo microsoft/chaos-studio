@@ -1,0 +1,4 @@
+# Default owners for all files in this repository.
+# One of these owners must approve every pull request into main
+# (enforced by the "require review from Code Owners" branch protection rule).
+* @nikhilkaul1234 @brrusino @abhiajm
