@@ -7,6 +7,16 @@ the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Fixed
+
+- Restored the `chaos-mcp` server implementation (`chaos_mcp/server.py`,
+  `chaos_mcp/monitor.py`): the 0.2.0/0.3.0 releases documented and tested the
+  13 MCP tools, but the implementation modules were never committed to the
+  repository. Reconstructed from the pytest specification, the README tool
+  table, and the PowerShell skills' ARM call flows.
+- `chaos-mcp` packaging metadata referenced `README.md`/`LICENSE` files that
+  did not exist in the package directory, breaking `pip install`.
+
 ### Changed
 
 - Repository renamed to `microsoft/chaos-studio` and restructured as a monorepo;

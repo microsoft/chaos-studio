@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "chaos-studio": {
+      "command": "chaos-mcp"
+    }
+  }
+}
