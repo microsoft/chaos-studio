@@ -82,6 +82,46 @@ def _grant_reader(scope: str, principal_id: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+def chaos_set_auth_mode(
+    mode: str,
+    msi_client_id: str | None = None,
+) -> dict[str, Any]:
+    """Choose how the Chaos Studio tools authenticate to Azure, for the rest of
+    this session.
+
+    Call this when the customer wants the tools to act as an Azure **Managed
+    Identity** instead of their signed-in **user principal** (the default), or
+    to switch back. The choice is applied immediately to every subsequent tool
+    call and persists for the life of this MCP session — no config edit or
+    server restart needed.
+
+    Args:
+        mode: 'cli' to use the local `az login` session (the user principal), or
+            'managed-identity' to use an Azure Managed Identity (aliases 'msi',
+            'mi' are accepted).
+        msi_client_id: Optional client id of a user-assigned managed identity to
+            use when mode is 'managed-identity'. Omit to use the system-assigned
+            identity. Ignored in 'cli' mode.
+
+    Returns the effective auth configuration ({mode, msiClientId, source}).
+    """
+    try:
+        return _ok(az.set_auth_mode(mode, msi_client_id))
+    except az.AzureError as e:
+        return _err(e)
+
+
+@mcp.tool()
+def chaos_get_auth_mode() -> dict[str, Any]:
+    """Report how the Chaos Studio tools are currently authenticating.
+
+    Returns {mode, msiClientId, source} where `source` is 'override' (set this
+    session via chaos_set_auth_mode), 'env' (from CHAOS_MCP_AUTH_MODE), or
+    'default' (the built-in `cli` / user-principal default)."""
+    return _ok(az.get_auth_config())
+
+
+@mcp.tool()
 def chaos_create_workspace(
     subscription_id: str,
     resource_group: str,

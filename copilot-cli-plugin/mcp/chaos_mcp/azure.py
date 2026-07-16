@@ -32,18 +32,28 @@ _TEST_TRANSPORT: Any = None
 # -----------------------------------------------------------------------------
 # Authentication mode (the "user principal vs managed identity" lever)
 # -----------------------------------------------------------------------------
-# By default the server borrows the operator's local `az login` session (the
-# user principal). Set CHAOS_MCP_AUTH_MODE=managed-identity to instead acquire
-# tokens from an Azure Managed Identity, so the skills can run unattended (CI,
-# containers, AKS, VMs) with no `az` session. CHAOS_MCP_MSI_CLIENT_ID optionally
-# pins a specific user-assigned identity by client id (omit it to use the
-# system-assigned identity).
+# The server can authenticate either as the operator's local `az login` session
+# (the user principal, default) or as an Azure Managed Identity — so the tools
+# can run unattended (CI, containers, AKS, VMs) with no `az` session.
+#
+# The mode is chosen at three levels, highest precedence first:
+#   1. A runtime override set *during the session* via `set_auth_mode(...)`
+#      (surfaced to agents as the `chaos_set_auth_mode` MCP tool). This lets the
+#      customer flip between user principal and MI mid-conversation, no config
+#      edit or server restart required.
+#   2. The CHAOS_MCP_AUTH_MODE / CHAOS_MCP_MSI_CLIENT_ID env vars (a startup
+#      default, e.g. for headless deployments).
+#   3. The built-in default: `cli` (user principal).
 AUTH_MODE_ENV = "CHAOS_MCP_AUTH_MODE"
 MSI_CLIENT_ID_ENV = "CHAOS_MCP_MSI_CLIENT_ID"
+
+AUTH_MODE_CLI = "cli"
+AUTH_MODE_MANAGED_IDENTITY = "managed-identity"
 
 _MANAGED_IDENTITY_ALIASES = frozenset(
     {"managed-identity", "managed_identity", "managedidentity", "msi", "mi", "identity"}
 )
+_CLI_ALIASES = frozenset({"cli", "az", "user", "user-principal", "userprincipal", "default"})
 
 # IMDS token endpoint (VMs, VMSS, AKS).
 IMDS_TOKEN_ENDPOINT = "http://169.254.169.254/metadata/identity/oauth2/token"
@@ -52,11 +62,87 @@ IMDS_API_VERSION = "2018-02-01"
 # IDENTITY_HEADER instead of exposing IMDS.
 APP_SERVICE_IDENTITY_API_VERSION = "2019-08-01"
 
+# Session-scoped runtime override (set via the chaos_set_auth_mode tool). None
+# means "not overridden — fall back to env / default". This is process-global
+# in-memory state: it lives for the life of the MCP server process (i.e. the
+# customer's session) and is never persisted to disk.
+_auth_mode_override: str | None = None
+_msi_client_id_override: str | None = None
+
+
+def _normalize_mode(value: str) -> str:
+    """Map a user-supplied mode string to a canonical mode, or raise.
+
+    Accepts the managed-identity aliases (managed-identity/msi/mi/...) and the
+    cli aliases (cli/az/user-principal/...).
+    """
+    raw = (value or "").strip().lower()
+    if raw in _MANAGED_IDENTITY_ALIASES:
+        return AUTH_MODE_MANAGED_IDENTITY
+    if raw in _CLI_ALIASES:
+        return AUTH_MODE_CLI
+    raise AzureError(
+        f"Unknown auth mode '{value}'. Use 'cli' (user principal) or "
+        "'managed-identity'."
+    )
+
+
+def set_auth_mode(mode: str, msi_client_id: str | None = None) -> dict:
+    """Set the session-scoped auth mode override and return the effective config.
+
+    `mode` is 'cli' (user principal) or 'managed-identity' (aliases accepted).
+    `msi_client_id` optionally pins a user-assigned identity when mode is
+    managed-identity; pass None/empty to use the system-assigned identity.
+    """
+    global _auth_mode_override, _msi_client_id_override
+    normalized = _normalize_mode(mode)
+    _auth_mode_override = normalized
+    if normalized == AUTH_MODE_MANAGED_IDENTITY:
+        _msi_client_id_override = (msi_client_id or "").strip() or None
+    else:
+        _msi_client_id_override = None
+    return get_auth_config()
+
+
+def reset_auth_mode() -> dict:
+    """Clear the runtime override so mode falls back to env vars / default."""
+    global _auth_mode_override, _msi_client_id_override
+    _auth_mode_override = None
+    _msi_client_id_override = None
+    return get_auth_config()
+
+
+def get_auth_config() -> dict:
+    """Return the effective auth configuration and where it came from."""
+    source = "override" if _auth_mode_override is not None else (
+        "env" if os.environ.get(AUTH_MODE_ENV) else "default"
+    )
+    return {
+        "mode": _auth_mode(),
+        "msiClientId": _msi_client_id(),
+        "source": source,
+    }
+
 
 def _auth_mode() -> str:
-    """Return the configured auth mode: 'managed-identity' or 'cli' (default)."""
+    """Return the effective auth mode: 'managed-identity' or 'cli' (default).
+
+    Precedence: runtime override > CHAOS_MCP_AUTH_MODE env var > 'cli'.
+    """
+    if _auth_mode_override is not None:
+        return _auth_mode_override
     raw = (os.environ.get(AUTH_MODE_ENV) or "cli").strip().lower()
-    return "managed-identity" if raw in _MANAGED_IDENTITY_ALIASES else "cli"
+    return AUTH_MODE_MANAGED_IDENTITY if raw in _MANAGED_IDENTITY_ALIASES else AUTH_MODE_CLI
+
+
+def _msi_client_id() -> str | None:
+    """Return the effective user-assigned MI client id, or None.
+
+    Precedence: runtime override > CHAOS_MCP_MSI_CLIENT_ID env var > None.
+    """
+    if _auth_mode_override is not None:
+        return _msi_client_id_override
+    return (os.environ.get(MSI_CLIENT_ID_ENV) or "").strip() or None
 
 
 class AzureError(RuntimeError):
@@ -132,10 +218,11 @@ def _get_token_via_managed_identity(resource: str) -> str:
 
     Honors the App Service / Container Apps / Functions identity endpoint
     (``IDENTITY_ENDPOINT`` + ``IDENTITY_HEADER``) when present, otherwise falls
-    back to the IMDS endpoint used by VMs, VMSS and AKS. Set
-    ``CHAOS_MCP_MSI_CLIENT_ID`` to target a specific user-assigned identity.
+    back to the IMDS endpoint used by VMs, VMSS and AKS. The user-assigned
+    identity (if any) comes from the runtime override or
+    ``CHAOS_MCP_MSI_CLIENT_ID``.
     """
-    client_id = (os.environ.get(MSI_CLIENT_ID_ENV) or "").strip() or None
+    client_id = _msi_client_id()
     identity_endpoint = os.environ.get("IDENTITY_ENDPOINT")
     identity_header = os.environ.get("IDENTITY_HEADER")
 
