@@ -1,12 +1,16 @@
 """Thin wrappers around `az` CLI + ARM REST calls.
 
-The MCP server intentionally relies on the user's local `az` session for auth
+By default the MCP server relies on the operator's local `az` session for auth
 rather than managing tokens itself. This matches the skill's auth model and
-keeps the server stateless.
+keeps the server stateless. Setting ``CHAOS_MCP_AUTH_MODE=managed-identity``
+flips a lever so the server instead acquires tokens from an Azure Managed
+Identity — letting the skills run unattended (CI, containers, AKS, VMs) with
+no interactive `az login`.
 """
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import time
@@ -24,6 +28,35 @@ DEFAULT_LRO_INTERVAL_S = 5
 # Test-only hook: when set, all new monitor helpers route through this transport.
 # Production callers leave it None; pytest sets it to an httpx.MockTransport.
 _TEST_TRANSPORT: Any = None
+
+# -----------------------------------------------------------------------------
+# Authentication mode (the "user principal vs managed identity" lever)
+# -----------------------------------------------------------------------------
+# By default the server borrows the operator's local `az login` session (the
+# user principal). Set CHAOS_MCP_AUTH_MODE=managed-identity to instead acquire
+# tokens from an Azure Managed Identity, so the skills can run unattended (CI,
+# containers, AKS, VMs) with no `az` session. CHAOS_MCP_MSI_CLIENT_ID optionally
+# pins a specific user-assigned identity by client id (omit it to use the
+# system-assigned identity).
+AUTH_MODE_ENV = "CHAOS_MCP_AUTH_MODE"
+MSI_CLIENT_ID_ENV = "CHAOS_MCP_MSI_CLIENT_ID"
+
+_MANAGED_IDENTITY_ALIASES = frozenset(
+    {"managed-identity", "managed_identity", "managedidentity", "msi", "mi", "identity"}
+)
+
+# IMDS token endpoint (VMs, VMSS, AKS).
+IMDS_TOKEN_ENDPOINT = "http://169.254.169.254/metadata/identity/oauth2/token"
+IMDS_API_VERSION = "2018-02-01"
+# App Service / Container Apps / Functions inject IDENTITY_ENDPOINT +
+# IDENTITY_HEADER instead of exposing IMDS.
+APP_SERVICE_IDENTITY_API_VERSION = "2019-08-01"
+
+
+def _auth_mode() -> str:
+    """Return the configured auth mode: 'managed-identity' or 'cli' (default)."""
+    raw = (os.environ.get(AUTH_MODE_ENV) or "cli").strip().lower()
+    return "managed-identity" if raw in _MANAGED_IDENTITY_ALIASES else "cli"
 
 
 class AzureError(RuntimeError):
@@ -65,12 +98,23 @@ def az_show_account() -> AzContext:
 
 
 def _get_token(resource: str = ARM_ENDPOINT) -> str:
-    """Acquire an access token for the given audience via the local `az` session.
+    """Acquire an access token for the given audience.
 
     `resource` is the token audience URL (e.g., `https://management.azure.com`
     for ARM or `https://api.loganalytics.io` for Log Analytics queries).
-    Tokens are not cached — each call invokes `az account get-access-token`.
+
+    Uses the local `az` session (user principal) by default; when
+    ``CHAOS_MCP_AUTH_MODE`` selects a managed identity, tokens come from the
+    Azure identity endpoint instead. Tokens are not cached — each call acquires
+    a fresh token.
     """
+    if _auth_mode() == "managed-identity":
+        return _get_token_via_managed_identity(resource)
+    return _get_token_via_cli(resource)
+
+
+def _get_token_via_cli(resource: str) -> str:
+    """Acquire a token from the local `az` session (the user principal)."""
     proc = subprocess.run(
         [_az_path(), "account", "get-access-token", "--resource", resource, "-o", "json"],
         capture_output=True,
@@ -81,6 +125,59 @@ def _get_token(resource: str = ARM_ENDPOINT) -> str:
             f"Failed to acquire access token for {resource}: {proc.stderr.strip()}"
         )
     return json.loads(proc.stdout)["accessToken"]
+
+
+def _get_token_via_managed_identity(resource: str) -> str:
+    """Acquire a token from an Azure Managed Identity (no `az` session needed).
+
+    Honors the App Service / Container Apps / Functions identity endpoint
+    (``IDENTITY_ENDPOINT`` + ``IDENTITY_HEADER``) when present, otherwise falls
+    back to the IMDS endpoint used by VMs, VMSS and AKS. Set
+    ``CHAOS_MCP_MSI_CLIENT_ID`` to target a specific user-assigned identity.
+    """
+    client_id = (os.environ.get(MSI_CLIENT_ID_ENV) or "").strip() or None
+    identity_endpoint = os.environ.get("IDENTITY_ENDPOINT")
+    identity_header = os.environ.get("IDENTITY_HEADER")
+
+    if identity_endpoint and identity_header:
+        url = identity_endpoint
+        params: dict[str, str] = {
+            "resource": resource,
+            "api-version": APP_SERVICE_IDENTITY_API_VERSION,
+        }
+        headers = {"X-IDENTITY-HEADER": identity_header}
+    else:
+        url = IMDS_TOKEN_ENDPOINT
+        params = {"resource": resource, "api-version": IMDS_API_VERSION}
+        headers = {"Metadata": "true"}
+    if client_id:
+        params["client_id"] = client_id
+
+    try:
+        resp = httpx.get(url, params=params, headers=headers, timeout=10.0)
+    except httpx.HTTPError as e:
+        raise AzureError(
+            f"Failed to reach the managed-identity token endpoint for {resource}: {e}. "
+            "Is a managed identity available on this host?"
+        ) from e
+
+    if resp.status_code != 200:
+        raise AzureError(
+            f"Managed-identity token request for {resource} failed with HTTP "
+            f"{resp.status_code}: {resp.text.strip()}"
+        )
+
+    try:
+        token = resp.json().get("access_token")
+    except Exception as e:  # noqa: BLE001
+        raise AzureError(
+            f"Malformed managed-identity token response for {resource}: {resp.text.strip()}"
+        ) from e
+    if not token:
+        raise AzureError(
+            f"Managed-identity token response for {resource} contained no access_token."
+        )
+    return token
 
 
 def az_get_arm_token() -> str:
