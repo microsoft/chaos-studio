@@ -138,9 +138,15 @@ def _auth_mode() -> str:
 def _msi_client_id() -> str | None:
     """Return the effective user-assigned MI client id, or None.
 
-    Precedence: runtime override > CHAOS_MCP_MSI_CLIENT_ID env var > None.
+    Only meaningful in managed-identity mode (returns None otherwise). Within MI
+    mode the precedence is: explicit runtime override > CHAOS_MCP_MSI_CLIENT_ID
+    env var > None (the system-assigned identity). A mode switch that doesn't
+    name a client id therefore keeps any env-pinned identity rather than
+    silently dropping it.
     """
-    if _auth_mode_override is not None:
+    if _auth_mode() != AUTH_MODE_MANAGED_IDENTITY:
+        return None
+    if _msi_client_id_override is not None:
         return _msi_client_id_override
     return (os.environ.get(MSI_CLIENT_ID_ENV) or "").strip() or None
 
@@ -241,7 +247,11 @@ def _get_token_via_managed_identity(resource: str) -> str:
         params["client_id"] = client_id
 
     try:
-        resp = httpx.get(url, params=params, headers=headers, timeout=10.0)
+        # trust_env=False: never route the IMDS / identity-endpoint request
+        # through HTTP(S)_PROXY. 169.254.169.254 must be reached directly, and
+        # proxying would also leak the App Service X-IDENTITY-HEADER secret. The
+        # Azure SDKs bypass proxies for IMDS for the same reasons.
+        resp = httpx.get(url, params=params, headers=headers, timeout=10.0, trust_env=False)
     except httpx.HTTPError as e:
         raise AzureError(
             f"Failed to reach the managed-identity token endpoint for {resource}: {e}. "

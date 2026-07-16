@@ -26,6 +26,8 @@ tool call for the life of the session.
 | `chaos_set_auth_mode(mode, msi_client_id?)` | `mode` = `cli` (user principal) or `managed-identity` (aliases `msi`/`mi`); `msi_client_id` optionally pins a user-assigned identity. |
 | `chaos_get_auth_mode()` | Report the effective `{mode, msiClientId, source}`. |
 
+> **Attribution & approval.** In managed-identity mode every ARM action — including the Reader role assignments made during workspace creation — is recorded in the Azure activity log as the **identity**, not the human operator. Review your audit/attribution requirements before switching. Because `chaos_set_auth_mode` is agent-callable, your MCP client's tool-approval prompt is the control that stops a session from being silently flipped onto a privileged host identity — do **not** blanket-auto-approve this tool.
+
 ### Startup default (optional env vars)
 
 For unattended hosts (CI, containers, AKS, VMs) you can also set the initial

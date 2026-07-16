@@ -37,10 +37,11 @@ def _clear_auth_env(monkeypatch):
 
 
 def _fake_get(recorder: dict):
-    def fake_get(url, params=None, headers=None, timeout=None):
+    def fake_get(url, params=None, headers=None, timeout=None, **kwargs):
         recorder["url"] = url
         recorder["params"] = dict(params or {})
         recorder["headers"] = dict(headers or {})
+        recorder["kwargs"] = dict(kwargs)
         return httpx.Response(200, json={"access_token": "mi-token", "expires_in": "3600"})
 
     return fake_get
@@ -93,6 +94,8 @@ def test_managed_identity_uses_imds(monkeypatch):
     assert rec["params"]["resource"] == az.ARM_ENDPOINT
     assert rec["params"]["api-version"] == az.IMDS_API_VERSION
     assert "client_id" not in rec["params"]
+    # Must bypass any HTTP(S)_PROXY when talking to IMDS.
+    assert rec["kwargs"]["trust_env"] is False
 
 
 def test_managed_identity_pins_user_assigned_client_id(monkeypatch):
@@ -191,6 +194,28 @@ def test_runtime_override_beats_env(monkeypatch):
     # cli mode drops any user-assigned client id.
     assert az._msi_client_id() is None
     assert az.get_auth_config()["source"] == "override"
+
+
+def test_runtime_switch_to_mi_without_client_id_keeps_env_pin(monkeypatch):
+    """Switching to MI without naming a client id must NOT drop an env pin."""
+    monkeypatch.setenv(az.MSI_CLIENT_ID_ENV, "env-pinned-uami")
+    az.set_auth_mode("managed-identity")  # no client id supplied
+    assert az._auth_mode() == "managed-identity"
+    assert az._msi_client_id() == "env-pinned-uami"
+    assert az.get_auth_config()["msiClientId"] == "env-pinned-uami"
+
+
+def test_runtime_switch_to_mi_explicit_client_id_overrides_env(monkeypatch):
+    monkeypatch.setenv(az.MSI_CLIENT_ID_ENV, "env-pinned-uami")
+    az.set_auth_mode("managed-identity", "explicit-uami")
+    assert az._msi_client_id() == "explicit-uami"
+
+
+def test_cli_mode_reports_no_client_id_even_with_env(monkeypatch):
+    monkeypatch.setenv(az.MSI_CLIENT_ID_ENV, "env-pinned-uami")
+    assert az._auth_mode() == "cli"
+    assert az._msi_client_id() is None
+    assert az.get_auth_config()["msiClientId"] is None
 
 
 def test_runtime_reset_falls_back_to_env(monkeypatch):

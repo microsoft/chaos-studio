@@ -100,8 +100,9 @@ def chaos_set_auth_mode(
             'managed-identity' to use an Azure Managed Identity (aliases 'msi',
             'mi' are accepted).
         msi_client_id: Optional client id of a user-assigned managed identity to
-            use when mode is 'managed-identity'. Omit to use the system-assigned
-            identity. Ignored in 'cli' mode.
+            use when mode is 'managed-identity'. Omit to keep any identity pinned
+            by CHAOS_MCP_MSI_CLIENT_ID, or to fall back to the system-assigned
+            identity when none is pinned. Ignored in 'cli' mode.
 
     Returns the effective auth configuration ({mode, msiClientId, source}).
     """
