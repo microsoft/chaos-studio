@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Unit tests for the three Azure Monitor MCP tools.
 
 Uses httpx.MockTransport — no network, no `az` shell-outs (token acquisition

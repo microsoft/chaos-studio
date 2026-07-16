@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Thin wrappers around `az` CLI + ARM REST calls.
 
 By default the MCP server relies on the operator's local `az` session for auth

@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Unit tests for the auth-mode lever (`az` user principal vs managed identity).
 
 No network, no `az` shell-outs: `httpx.get` is monkeypatched and the managed
