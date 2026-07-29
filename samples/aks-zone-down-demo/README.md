@@ -1,12 +1,15 @@
 # AKS zone-down demo
 
-A ~30-minute end-to-end demo of Azure Chaos Studio Workspaces: deploy a sample
-retail app to a zone-redundant AKS cluster, take down an availability zone, and
-watch the app survive.
+A ~45-minute end-to-end demo of Azure Chaos Studio Workspaces with a
+break-fix-prove arc: deploy a sample retail app to a zone-redundant AKS
+cluster, take down an availability zone and watch the storefront **actually go
+down**, then fix the deployment, rerun the same scenario, and watch it survive.
 
-This is the fastest way to see Chaos Studio disrupt a live application — good as
-a first hands-on experience, a customer demo, or a workshop exercise. It reuses
-the [AKS store demo](https://github.com/Azure-Samples/aks-store-demo) sample
+A demo where something visibly breaks teaches more than one where nothing
+happens — and the sample app's default single-replica deployment provides the
+breakage for free. Good as a first hands-on experience, a customer demo, or a
+workshop exercise. It reuses the
+[AKS store demo](https://github.com/Azure-Samples/aks-store-demo) sample
 application (public container images, no registry or build steps).
 
 The full written walkthrough lives on Microsoft Learn:
@@ -16,14 +19,20 @@ interesting part.
 
 ## What the demo shows
 
-1. A storefront app running across three availability zones on AKS.
+1. A zone-redundant AKS cluster running a storefront app that *isn't* zone
+   redundant: every component is a single replica.
 2. A Chaos Studio **Workspace** that discovers the cluster's node
    infrastructure.
-3. The **Compute Zone Down** scenario shutting down every node in one zone.
-4. The app staying reachable while Kubernetes reschedules around the outage —
-   and the single-replica queue briefly degrading, which is exactly the kind of
-   finding chaos testing exists to surface.
-5. A **Scenario report** documenting what ran, when, and against what.
+3. **Run 1 — break it.** The **Compute Zone Down** scenario shuts down the
+   node in the storefront's zone. The store goes unreachable for several
+   minutes (Kubernetes waits ~5 minutes by default before rescheduling pods
+   off an unreachable node). That downtime is the finding.
+4. **The fix.** Scale the front end to one replica per zone — one command.
+5. **Run 2 — prove it.** Same scenario, same zone. A node still dies, but the
+   store keeps serving from the surviving zones.
+6. Two **Scenario reports** that both say `Succeeded` — the teaching moment
+   that a run succeeding measures the disruption delivered, not app health.
+   The before/after difference lives in your monitoring.
 
 ## Prerequisites
 
@@ -46,11 +55,12 @@ Cluster creation takes a few minutes, so run this ahead of time:
 The script creates a resource group (`chaos-demo-rg` in `eastus2` by default —
 override with the `RESOURCE_GROUP`, `LOCATION`, and `CLUSTER_NAME` environment
 variables), creates a 3-node AKS cluster spread across zones 1–3, deploys the
-store app, scales the front end to one replica per zone, and prints:
+store app with its default single-replica deployments, and prints:
 
 - the storefront URL — open it and confirm the store loads
 - the cluster's **infrastructure resource group** (`MC_...`) — the workspace
   scope for the next step
+- the **zone the storefront pod is running in** — the zone to target
 
 ## Run the demo
 
@@ -61,18 +71,32 @@ In short:
 1. In the portal, create a **Workspace** scoped to the infrastructure resource
    group printed by `deploy.sh` (system-assigned identity, automatic role
    assignment on). Discovery finds the node VM scale set.
-2. Open the **Compute Zone Down** scenario, target zone `1`, save, and **Run**.
-3. While it runs (5–10 minutes), split the screen: the storefront in a browser,
-   and in a terminal:
+2. Set up the view before injecting anything — split the screen: the
+   storefront in a browser, the cluster's **Monitoring → Metrics** blade
+   charting CPU per node, and a terminal running:
 
    ```bash
-   kubectl get nodes -w
+   kubectl get pods -o wide -w
    ```
 
-   The zone's node goes `NotReady`, pods reschedule, and the storefront keeps
-   serving. Refresh it liberally.
-4. When the run completes, open **Run history** → the run → **Generate report**
-   and walk through what executed.
+3. **Run 1:** open the **Compute Zone Down** scenario, target the zone
+   `deploy.sh` printed (the number after the region name), save, and **Run**
+   (5–10 minutes). The node goes `NotReady`, its metrics flatline, and the
+   storefront stops loading. Let the downtime sink in — note how long it
+   lasts.
+4. **The fix:**
+
+   ```bash
+   kubectl scale deployment store-front --replicas=3
+   kubectl get pods -l app=store-front -o wide   # confirm one per node
+   ```
+
+5. **Run 2:** rerun the same scenario against the same zone. The storefront
+   keeps serving while the node dies. Refresh it liberally.
+6. Open **Run history** → **Generate report** for both runs. Both say
+   `Succeeded`; the report proves the disruption delivered, while the app's
+   fate shows up in the metrics chart and the browser. That pairing is the
+   product pitch.
 
 > [!NOTE]
 > Chaos Studio Workspaces are in public preview. Run this demo in a

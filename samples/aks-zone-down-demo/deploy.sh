@@ -23,11 +23,8 @@ az aks create \
 echo "==> Connecting kubectl"
 az aks get-credentials --resource-group "$RESOURCE_GROUP" --name "$CLUSTER_NAME" --overwrite-existing
 
-echo "==> Deploying the AKS store demo app"
+echo "==> Deploying the AKS store demo app (default single-replica deployments -- that's the point)"
 kubectl apply -f "$MANIFEST_URL"
-
-echo "==> Scaling store-front to one replica per zone"
-kubectl scale deployment store-front --replicas=3
 
 echo "==> Waiting for the storefront public IP (can take a couple of minutes)"
 STORE_IP=""
@@ -39,6 +36,12 @@ done
 
 NODE_RG="$(az aks show --resource-group "$RESOURCE_GROUP" --name "$CLUSTER_NAME" --query nodeResourceGroup -o tsv)"
 
+STORE_NODE="$(kubectl get pods -l app=store-front -o jsonpath='{.items[0].spec.nodeName}' 2>/dev/null || true)"
+STORE_ZONE=""
+if [ -n "$STORE_NODE" ]; then
+  STORE_ZONE="$(kubectl get node "$STORE_NODE" -o jsonpath='{.metadata.labels.topology\.kubernetes\.io/zone}' 2>/dev/null || true)"
+fi
+
 echo
 echo "Done."
 echo
@@ -48,7 +51,12 @@ else
   echo "  Storefront IP still pending -- check with: kubectl get service store-front"
 fi
 echo "  Infrastructure resource group: $NODE_RG"
+if [ -n "$STORE_ZONE" ]; then
+  echo "  store-front pod zone:          $STORE_ZONE  <- target this zone (the number after the region) to break the app"
+else
+  echo "  store-front pod zone:          check with: kubectl get pods -l app=store-front -o wide"
+fi
 echo
 echo "Next: create a Chaos Studio Workspace scoped to '$NODE_RG' and run the"
-echo "Compute Zone Down scenario:"
+echo "Compute Zone Down scenario against the store-front zone:"
 echo "https://learn.microsoft.com/azure/chaos-studio/chaos-studio-tutorial-sample-app#create-a-workspace-scoped-to-the-infrastructure-resource-group"
