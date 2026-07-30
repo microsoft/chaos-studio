@@ -69,8 +69,17 @@ Follow the walkthrough from the
 In short:
 
 1. In the portal, create a **Workspace** scoped to the infrastructure resource
-   group printed by `deploy.sh` (system-assigned identity, automatic role
-   assignment on). Discovery finds the node VM scale set.
+   group printed by `deploy.sh`, with a system-assigned identity. Discovery
+   finds the node VM scale set. Then grant the identity its permissions
+   (you need Owner or User Access Administrator on that resource group):
+   - If the workspace shows a banner that the identity is missing read
+     permissions on the scope, select **Assign the Reader role over the
+     Workspace Scope**.
+   - Give the identity **Virtual Machine Contributor** on the infrastructure
+     resource group (its **Access control (IAM)** → **Add role assignment** →
+     member type **Managed identity**) so the scenario can shut nodes down.
+     A missing role doesn't block the run — the shutdown actions just fail
+     with a permissions error in the report.
 2. Set up the view before injecting anything — split the screen: the
    storefront in a browser, the cluster's **Monitoring → Metrics** blade
    charting CPU per node, and a terminal running:
@@ -84,10 +93,11 @@ In short:
    (5–10 minutes). The node goes `NotReady`, its metrics flatline, and the
    storefront stops loading. Let the downtime sink in — note how long it
    lasts.
-4. **The fix:**
+4. **The fix:** one replica per zone, and a spread constraint so the
+   scheduler guarantees the "per zone" part (replicas alone can co-locate):
 
    ```bash
-   kubectl scale deployment store-front --replicas=3
+   kubectl patch deployment store-front --patch '{"spec":{"replicas":3,"template":{"spec":{"topologySpreadConstraints":[{"maxSkew":1,"topologyKey":"topology.kubernetes.io/zone","whenUnsatisfiable":"ScheduleAnyway","labelSelector":{"matchLabels":{"app":"store-front"}}}]}}}}'
    kubectl get pods -l app=store-front -o wide   # confirm one per node
    ```
 

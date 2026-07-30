@@ -6,10 +6,12 @@ set -euo pipefail
 RESOURCE_GROUP="${RESOURCE_GROUP:-chaos-demo-rg}"
 LOCATION="${LOCATION:-eastus2}"
 CLUSTER_NAME="${CLUSTER_NAME:-chaos-demo-aks}"
-MANIFEST_URL="https://raw.githubusercontent.com/Azure-Samples/aks-store-demo/main/aks-store-quickstart.yaml"
+# Pinned to a release so the demo doesn't drift with upstream main; override if needed.
+MANIFEST_URL="${MANIFEST_URL:-https://raw.githubusercontent.com/Azure-Samples/aks-store-demo/2.2.0/aks-store-quickstart.yaml}"
 
 echo "==> Creating resource group '$RESOURCE_GROUP' in $LOCATION"
-az group create --name "$RESOURCE_GROUP" --location "$LOCATION" --output none
+az group create --name "$RESOURCE_GROUP" --location "$LOCATION" \
+  --tags chaos-demo=aks-zone-down-demo --output none
 
 echo "==> Creating AKS cluster '$CLUSTER_NAME' (3 nodes across zones 1-3; takes a few minutes)"
 az aks create \
@@ -25,6 +27,9 @@ az aks get-credentials --resource-group "$RESOURCE_GROUP" --name "$CLUSTER_NAME"
 
 echo "==> Deploying the AKS store demo app (default single-replica deployments -- that's the point)"
 kubectl apply -f "$MANIFEST_URL"
+
+echo "==> Waiting for the storefront rollout"
+kubectl rollout status deployment/store-front --timeout=300s
 
 echo "==> Waiting for the storefront public IP (can take a couple of minutes)"
 STORE_IP=""
