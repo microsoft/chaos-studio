@@ -70,17 +70,17 @@ In short:
 
 1. In the portal, create a **Workspace** scoped to the infrastructure resource
    group printed by `deploy.sh`, with a system-assigned identity. Discovery
-   finds the node VM scale set. Then grant the identity its permissions
-   (you need Owner or User Access Administrator on that resource group):
-   - If the workspace shows a banner that the identity is missing read
-     permissions on the scope, select **Assign the Reader role over the
-     Workspace Scope**.
-   - Give the identity **Virtual Machine Contributor** on the infrastructure
-     resource group (its **Access control (IAM)** → **Add role assignment** →
-     member type **Managed identity**) so the scenario can shut nodes down.
-     A missing role doesn't block the run — the shutdown actions just fail
-     with a permissions error in the report.
-2. Set up the view before injecting anything — split the screen: the
+   finds the node VM scale set. If the workspace shows a banner that the
+   identity is missing read permissions on the scope, select **Assign the
+   Reader role over the Workspace Scope**. (Creating role assignments needs
+   Owner or User Access Administrator on that resource group.)
+2. Open the **Compute Zone Down** scenario, target the zone `deploy.sh`
+   printed (the number after the region name), and save the configuration.
+   If validation flags missing permissions, select **Fix Permissions** to
+   grant the identity the recommended built-in roles. Strict least-privilege
+   shop? Build a [custom role from the validation output](https://learn.microsoft.com/azure/chaos-studio/chaos-studio-workspaces-least-privilege-roles)
+   instead.
+3. Set up the view before injecting anything — split the screen: the
    storefront in a browser, the cluster's **Monitoring → Metrics** blade
    charting CPU per node, and a terminal running:
 
@@ -88,12 +88,10 @@ In short:
    kubectl get pods -o wide -w
    ```
 
-3. **Run 1:** open the **Compute Zone Down** scenario, target the zone
-   `deploy.sh` printed (the number after the region name), save, and **Run**
-   (5–10 minutes). The node goes `NotReady`, its metrics flatline, and the
-   storefront stops loading. Let the downtime sink in — note how long it
-   lasts.
-4. **The fix:** one replica per zone, and a spread constraint so the
+4. **Run 1:** select **Run** (5–10 minutes). The node goes `NotReady`, its
+   metrics flatline, and the storefront stops loading. Let the downtime sink
+   in — note how long it lasts.
+5. **The fix:** one replica per zone, and a spread constraint so the
    scheduler guarantees the "per zone" part (replicas alone can co-locate):
 
    ```bash
@@ -101,12 +99,25 @@ In short:
    kubectl get pods -l app=store-front -o wide   # confirm one per node
    ```
 
-5. **Run 2:** rerun the same scenario against the same zone. The storefront
+6. **Run 2:** rerun the same scenario against the same zone. The storefront
    keeps serving while the node dies. Refresh it liberally.
-6. Open **Run history** → **Generate report** for both runs. Both say
+7. Open **Run history** → **Generate report** for both runs. Both say
    `Succeeded`; the report proves the disruption delivered, while the app's
    fate shows up in the metrics chart and the browser. That pairing is the
    product pitch.
+
+## Prefer to drive it with Copilot?
+
+This repo ships a [Copilot CLI plugin and MCP server](../../copilot-cli-plugin/)
+that can create workspaces, configure scenarios, run them, and analyze the
+results conversationally. With the plugin set up, try a prompt like:
+
+> Deploy the aks-zone-down-demo sample from the chaos-studio repo, then help
+> me run the Compute Zone Down scenario against the zone the storefront is
+> running in. When the run finishes, summarize the scenario report.
+
+[`AGENTS.md`](AGENTS.md) in this folder gives coding agents the context and
+ground rules they need to run the demo end to end.
 
 > [!NOTE]
 > Chaos Studio Workspaces are in public preview. Run this demo in a
