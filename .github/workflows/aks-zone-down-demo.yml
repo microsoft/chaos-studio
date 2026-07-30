@@ -1,0 +1,68 @@
+name: AKS zone-down demo
+
+# Push-button deploy/cleanup for samples/aks-zone-down-demo.
+# One-time setup (in your fork): configure OIDC federated credentials for
+# azure/login and set the AZURE_CLIENT_ID, AZURE_TENANT_ID, and
+# AZURE_SUBSCRIPTION_ID secrets. See the sample README for details.
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: What to run
+        type: choice
+        options:
+          - deploy
+          - cleanup
+        default: deploy
+      resource_group:
+        description: Resource group for the demo
+        default: chaos-demo-rg
+      location:
+        description: Azure region (needs availability zones)
+        default: eastus2
+      cluster_name:
+        description: AKS cluster name
+        default: chaos-demo-aks
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    environment: aks-zone-down-demo
+    env:
+      RESOURCE_GROUP: ${{ inputs.resource_group }}
+      LOCATION: ${{ inputs.location }}
+      CLUSTER_NAME: ${{ inputs.cluster_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy the demo
+        if: inputs.operation == 'deploy'
+        working-directory: samples/aks-zone-down-demo
+        run: |
+          ./deploy.sh 2>&1 | tee /tmp/deploy.log
+          {
+            echo "## Demo deployed"
+            echo '```'
+            tail -n 12 /tmp/deploy.log
+            echo '```'
+            echo "Next: create the Workspace and run the scenario - see the [sample README](../../samples/aks-zone-down-demo/README.md)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Clean up the demo
+        if: inputs.operation == 'cleanup'
+        working-directory: samples/aks-zone-down-demo
+        run: |
+          FORCE=1 ./cleanup.sh
+          echo "Resource group deletion started for '$RESOURCE_GROUP'." >> "$GITHUB_STEP_SUMMARY"

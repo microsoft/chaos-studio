@@ -62,6 +62,23 @@ store app with its default single-replica deployments, and prints:
   scope for the next step
 - the **zone the storefront pod is running in** — the zone to target
 
+### Push-button deploy with GitHub Actions
+
+If your team already connects GitHub to Azure with OIDC, you can run the setup
+from the Actions tab instead of a terminal:
+
+1. Fork this repo.
+2. [Configure OIDC federated credentials for `azure/login`](https://learn.microsoft.com/azure/developer/github/connect-from-azure-openid-connect)
+   and add the `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and
+   `AZURE_SUBSCRIPTION_ID` secrets (the workflow uses an
+   `aks-zone-down-demo` environment, so you can gate it with approvals).
+3. Run the **AKS zone-down demo** workflow with the `deploy` operation. The
+   job summary shows the storefront URL, the infrastructure resource group,
+   and the zone to target. Run it again with `cleanup` when you're done.
+
+No OIDC set up yet? The Cloud Shell path above is faster - the one-time
+federated-credential setup only pays off if you'll run this repeatedly.
+
 ## Run the demo
 
 Follow the walkthrough from the
