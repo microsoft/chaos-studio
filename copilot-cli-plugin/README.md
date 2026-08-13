@@ -94,7 +94,8 @@ Per-client config snippets (Claude Desktop, Cursor, Codex CLI) are in
 | `chaos_validate_scenario_configuration` | Validate configuration |
 | `chaos_fix_resource_permissions` | Auto-grant scenario target roles |
 | `chaos_execute_scenario` | Kick off a run, return `scenarioRunId` |
-| `chaos_get_scenario_run` | Single status snapshot |
+| `chaos_list_scenario_runs` | Rediscover compact summaries of durable prior runs, with optional configuration/status/resource filters |
+| `chaos_get_scenario_run` | Fetch current state and, after completion, the full durable run report |
 | `chaos_cancel_scenario_run` | Best-effort cancel |
 | `monitor_query_metrics` | Query Azure Monitor metrics for a resource over a time window |
 | `monitor_query_logs` | Run a KQL query against a Log Analytics workspace |
@@ -102,6 +103,14 @@ Per-client config snippets (Claude Desktop, Cursor, Codex CLI) are in
 
 See `mcp/README.md` for the full agent integration guide and publishing
 instructions (PyPI + Smithery).
+
+### Continue after the agent session ends
+
+The MCP server does not keep conversational state. Chaos Studio does keep the
+authoritative run records. A fresh agent session can call
+`chaos_list_scenario_runs`, select the relevant run, and then call
+`chaos_get_scenario_run` to recover its targets, timing, action results, and
+errors. This keeps continuity in the service rather than in one model context.
 
 ## Usage
 

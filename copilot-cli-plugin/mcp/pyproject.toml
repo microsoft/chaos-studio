@@ -1,7 +1,6 @@
 [project]
 name = "chaos-mcp"
-# Skips 0.2.0 — epic target was 0.3.0 (Monitor tools epic).
-version = "0.3.0"
+version = "0.4.0"
 description = "MCP server exposing Azure Chaos Studio v2 operations as agent-callable tools."
 readme = "README.md"
 license = { file = "LICENSE" }
