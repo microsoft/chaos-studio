@@ -1,0 +1,59 @@
+{
+  "schemaVersion": "chaos-loop-gate/v1",
+  "runId": "5e9aa5cf-15e6-4511-9025-9340c89d0d96",
+  "expectedStateRevision": 6,
+  "changes": [
+    {
+      "changeId": "C1",
+      "prUrl": "https://github.com/contoso/orders/pull/42",
+      "mergeCommit": "0123456789abcdef0123456789abcdef01234567",
+      "targetEnv": "staging",
+      "expectedBuildId": "build-8421",
+      "observedBuildId": "build-8421",
+      "expectedArtifact": "sha256:abc123",
+      "observedArtifact": "sha256:abc123",
+      "expectedDeploymentId": "deploy-771",
+      "observedDeploymentId": "deploy-771",
+      "expectedRevision": "orders--000042",
+      "observedRevision": "orders--000042",
+      "live": true,
+      "evidence": [
+        {
+          "stage": "merge",
+          "name": "PR merge commit",
+          "source": "GitHub pull request 42",
+          "observedAt": "2026-08-13T20:00:00Z",
+          "value": "0123456789abcdef0123456789abcdef01234567"
+        },
+        {
+          "stage": "build",
+          "name": "Build source version",
+          "source": "Azure Pipelines build 8421",
+          "observedAt": "2026-08-13T20:05:00Z",
+          "value": "build-8421 source 0123456789abcdef0123456789abcdef01234567"
+        },
+        {
+          "stage": "artifact",
+          "name": "Published artifact digest",
+          "source": "Container registry manifest",
+          "observedAt": "2026-08-13T20:07:00Z",
+          "value": "sha256:abc123"
+        },
+        {
+          "stage": "deployment",
+          "name": "Deployment artifact",
+          "source": "Deployment deploy-771",
+          "observedAt": "2026-08-13T20:12:00Z",
+          "value": "deploy-771 -> sha256:abc123"
+        },
+        {
+          "stage": "serving-revision",
+          "name": "Live serving revision",
+          "source": "Container Apps revision list",
+          "observedAt": "2026-08-13T20:14:00Z",
+          "value": "orders--000042"
+        }
+      ]
+    }
+  ]
+}

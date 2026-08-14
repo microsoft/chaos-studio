@@ -343,6 +343,34 @@ def arm_get(path: str, **kw) -> dict:
     return resp.json() if resp.content else {}
 
 
+def arm_list(path: str, *, max_pages: int = 100, **kw) -> list[dict]:
+    """GET an ARM collection endpoint and follow `nextLink` until exhausted.
+
+    Returns the concatenated `value` arrays. `nextLink` is an absolute URL that
+    already carries its own `api-version`, so it is passed through unchanged.
+    `max_pages` bounds a server that returns a self-referential `nextLink`.
+    """
+    items: list[dict] = []
+    seen: set[str] = set()
+    next_path: str | None = path
+    for _ in range(max_pages):
+        if next_path is None:
+            return items
+        body = arm_get(next_path, **kw)
+        value = body.get("value", [])
+        if not isinstance(value, list):
+            raise AzureError(f"ARM collection response 'value' is not an array: {next_path}")
+        items.extend(item for item in value if isinstance(item, dict))
+        link = body.get("nextLink") or None
+        if link is None:
+            return items
+        if not isinstance(link, str) or link in seen:
+            raise AzureError(f"ARM collection returned an invalid or repeated nextLink: {link!r}")
+        seen.add(link)
+        next_path = link
+    raise AzureError(f"ARM collection exceeded {max_pages} pages: {path}")
+
+
 def arm_put(path: str, body: Mapping[str, Any], **kw) -> httpx.Response:
     resp = arm_request("PUT", path, body=body, **kw)
     _raise_for_arm(resp)

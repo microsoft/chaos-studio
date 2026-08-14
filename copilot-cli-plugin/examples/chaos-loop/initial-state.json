@@ -1,0 +1,118 @@
+{
+  "schemaVersion": "chaos-loop-state/v1",
+  "contractVersion": "chaos-loop-contract/v1",
+  "policyVersion": "chaos-loop-policy/v2",
+  "runId": "5e9aa5cf-15e6-4511-9025-9340c89d0d96",
+  "faultId": null,
+  "stateRevision": 0,
+  "entryMode": "start",
+  "phase": "resilience-analysis",
+  "iteration": 0,
+  "maxIterations": 3,
+  "verdict": "in-progress",
+  "terminationReason": null,
+  "workspace": {
+    "status": "pending",
+    "request": {
+      "subscriptionId": "8f4a2b1c-6d3e-4f57-9a80-1b2c3d4e5f60",
+      "resourceGroup": "rg-orders",
+      "location": "eastus",
+      "managedScopes": [
+        "/subscriptions/8f4a2b1c-6d3e-4f57-9a80-1b2c3d4e5f60/resourceGroups/rg-orders"
+      ],
+      "preferredName": null,
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "identitySpecified": false,
+      "targetResources": [
+        "/subscriptions/8f4a2b1c-6d3e-4f57-9a80-1b2c3d4e5f60/resourceGroups/rg-orders/providers/Microsoft.Web/sites/orders"
+      ],
+      "requestHash": "db5635a71d5a9ece1c4e50b00af9cf3ac898160928bdf896cfe706e5df9d1538"
+    },
+    "decision": null,
+    "selected": null,
+    "alternatives": [],
+    "caveats": [],
+    "discoveryEvidence": null,
+    "provisioningEvidence": null,
+    "observedAt": null,
+    "remediationBrief": null
+  },
+  "analysis": {
+    "mode": "initial",
+    "scope": {
+      "repo": "contoso/orders",
+      "commit": "abc123",
+      "targetResources": [
+        "/subscriptions/8f4a2b1c-6d3e-4f57-9a80-1b2c3d4e5f60/resourceGroups/rg-orders/providers/Microsoft.Web/sites/orders"
+      ]
+    },
+    "hypotheses": [],
+    "selectedHypothesisId": null,
+    "originalHypothesisId": null,
+    "routingIntent": "select-initial"
+  },
+  "frozenValidation": null,
+  "guardrails": {
+    "environmentScope": "staging",
+    "blastRadiusCap": "one replica",
+    "safetyHalts": [
+      "availability below 95 percent for two minutes"
+    ]
+  },
+  "approvedAdvisoryIds": [],
+  "attemptedFixes": [],
+  "iterations": [],
+  "handoff": {
+    "analysisDecision": {},
+    "executionDecision": {},
+    "diagnosticDecision": {},
+    "testIdentity": {},
+    "buildIdentity": {},
+    "steadyStateEvidence": {},
+    "faultWindow": null,
+    "provingFaultEvidence": {},
+    "numericBaselines": [],
+    "observedSLIs": [],
+    "telemetryQueries": [],
+    "starvationEvidence": {},
+    "hypothesisResults": [],
+    "targetedPathEvidence": [],
+    "changedPathEvidence": [],
+    "dlqState": [],
+    "advisoryState": {
+      "previousSetId": null,
+      "currentSetId": null,
+      "defaultRecommendedAdvisoryIds": [],
+      "advisories": [],
+      "changeLedger": {
+        "added": [],
+        "changed": [],
+        "unchanged": [],
+        "removed": []
+      }
+    },
+    "codeChanges": {
+      "implemented": [],
+      "notImplemented": [],
+      "deliveryDecision": {}
+    },
+    "unresolvedCaveats": []
+  },
+  "transition": {
+    "status": "ready",
+    "from": null,
+    "to": "resilience-analysis",
+    "reason": "new run initialized"
+  },
+  "events": [
+    {
+      "eventId": "42df059f-aa61-4439-964e-238c0c11343e",
+      "timestamp": "2026-08-13T19:00:00Z",
+      "revision": 0,
+      "phase": "resilience-analysis",
+      "type": "run-started"
+    }
+  ]
+}

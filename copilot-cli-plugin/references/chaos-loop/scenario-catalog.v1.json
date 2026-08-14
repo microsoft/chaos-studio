@@ -1,0 +1,98 @@
+{
+  "schemaVersion": "chaos-loop-scenario-catalog/v1",
+  "scenarios": [
+    {
+      "family": "DNS Outage",
+      "namePattern": "(?i)^DNS(?:-| )?Outage(?:-| ).+$",
+      "allowedResourceTypes": [
+        "Microsoft.Network/networkSecurityGroups",
+        "Microsoft.Network/virtualNetworks"
+      ]
+    },
+    {
+      "family": "Microsoft Entra ID Outage",
+      "namePattern": "(?i)^(?:Microsoft(?:-| )?)?Entra(?:-| )?ID(?:-| )?Outage(?:-| ).+$",
+      "allowedResourceTypes": [
+        "Microsoft.Network/networkSecurityGroups",
+        "Microsoft.Network/virtualNetworks"
+      ]
+    },
+    {
+      "family": "Compute Zone Down",
+      "namePattern": "(?i)^Compute(?:-| )?Zone(?:-| )?Down(?:-| ).+$",
+      "allowedResourceTypes": [
+        "Microsoft.Compute/virtualMachines",
+        "Microsoft.Compute/virtualMachineScaleSets"
+      ]
+    },
+    {
+      "family": "Zone Down",
+      "namePattern": "(?i)^Zone(?:-| )?Down(?:-| ).+$",
+      "allowedResourceTypes": [
+        "Microsoft.Compute/virtualMachineScaleSets",
+        "Microsoft.Cache/redis"
+      ]
+    },
+    {
+      "family": "Database Resilience",
+      "priority": 100,
+      "namePattern": "(?i)^(?:Compute(?:-| )?Zone(?:-| )?Down.*(?:PostgreSQL|SQL)|DB(?:-| )?(?:Failover|Restart)(?:-| )?Under(?:-| )?Load).+$",
+      "allowedResourceTypes": [
+        "Microsoft.Compute/virtualMachines",
+        "Microsoft.Compute/virtualMachineScaleSets",
+        "Microsoft.DBforPostgreSQL/flexibleServers",
+        "Microsoft.DBforMySQL/flexibleServers",
+        "Microsoft.Sql/servers/databases",
+        "Microsoft.Sql/managedInstances",
+        "Microsoft.LoadTestService/loadTests"
+      ]
+    },
+    {
+      "family": "Cache Stampede",
+      "namePattern": "(?i)^Cache(?:-| )?Stampede.*(?:-| )1\\.\\d+$",
+      "allowedResourceTypes": [
+        "Microsoft.Cache/redisEnterprise",
+        "Microsoft.DBforMySQL/flexibleServers",
+        "Microsoft.Web/sites"
+      ]
+    },
+    {
+      "family": "Event-Driven Messaging Disruption",
+      "namePattern": "(?i)^Event(?:-| )?Driven(?:-| )?Messaging(?:-| )?Disruption(?:-| ).+$",
+      "allowedResourceTypes": [
+        "Microsoft.ServiceBus/namespaces",
+        "Microsoft.EventHub/namespaces"
+      ]
+    },
+    {
+      "family": "Dependency Blackout",
+      "namePattern": "(?i)^Dependency(?:-| )?Blackout(?:-| ).+$",
+      "allowedResourceTypes": [
+        "Microsoft.Network/networkSecurityGroups",
+        "Microsoft.ServiceBus/namespaces",
+        "Microsoft.EventHub/namespaces"
+      ]
+    },
+    {
+      "family": "VM Hibernate",
+      "namePattern": "(?i)^VM(?:-| )?Hibernate(?:-| ).+$",
+      "allowedResourceTypes": [
+        "Microsoft.Compute/virtualMachines"
+      ]
+    },
+    {
+      "family": "CPU Pressure",
+      "namePattern": "(?i)^CPU(?:-| )?Pressure(?:-| ).+$",
+      "allowedResourceTypes": [
+        "Microsoft.Compute/virtualMachines"
+      ]
+    },
+    {
+      "family": "Physical Memory Pressure",
+      "namePattern": "(?i)^(?:Physical(?:-| )?)?Memory(?:-| )?Pressure(?:-| ).+$",
+      "allowedResourceTypes": [
+        "Microsoft.Compute/virtualMachines"
+      ]
+    }
+  ]
+}

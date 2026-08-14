@@ -154,13 +154,59 @@ def chaos_create_workspace(
     except az.AzureError as e:
         return _err(e)
 
-    principal_id = (workspace.get("identity") or {}).get("principalId")
+    workspace_identity = workspace.get("identity") or {}
+    principal_id = workspace_identity.get("principalId")
+    if not principal_id and user_assigned_identity_resource_id:
+        principal_id = (
+            workspace_identity.get("userAssignedIdentities", {})
+            .get(user_assigned_identity_resource_id, {})
+            .get("principalId")
+        )
     rbac = (
         [_grant_reader(scope, principal_id) for scope in scopes]
         if principal_id
         else []
     )
     return _ok({"workspace": workspace, "roleAssignments": rbac})
+
+
+@mcp.tool()
+def chaos_list_workspaces(
+    subscription_id: str,
+    resource_group: str | None = None,
+) -> dict[str, Any]:
+    """List the Chaos Studio Workspaces that already exist, so an existing
+    workspace can be reused instead of provisioning a duplicate.
+
+    Read-only. Lists every workspace in the subscription, or only those in
+    `resource_group` when it is supplied. Follows ARM paging, so the result
+    contains every workspace, not just the first page.
+
+    Returns `{workspaces, count, scope}` where each workspace is the full ARM
+    resource (id, name, location, identity, properties.scopes,
+    properties.provisioningState).
+    """
+    if resource_group:
+        path = (
+            f"/subscriptions/{subscription_id}/resourceGroups/{resource_group}"
+            f"/providers/Microsoft.Chaos/workspaces"
+        )
+        scope = "resourceGroup"
+    else:
+        path = f"/subscriptions/{subscription_id}/providers/Microsoft.Chaos/workspaces"
+        scope = "subscription"
+    try:
+        workspaces = az.arm_list(path)
+    except az.AzureError as e:
+        return _err(e)
+    return _ok(
+        {
+            "workspaces": workspaces,
+            "count": len(workspaces),
+            "scope": scope,
+            "resourceGroup": resource_group,
+        }
+    )
 
 
 @mcp.tool()

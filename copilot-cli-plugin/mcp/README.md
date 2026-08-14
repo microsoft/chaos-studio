@@ -46,6 +46,17 @@ endpoint — the App Service / Container Apps / Functions endpoint
 you would grant the user (managing `Microsoft.Chaos` workspaces and querying
 Azure Monitor).
 
+## Workspace discovery and reuse
+
+`chaos_list_workspaces(subscription_id, resource_group=None)` is read-only and
+follows ARM paging, so an agent can enumerate every existing
+`Microsoft.Chaos/workspaces` resource and reuse a compatible one instead of
+provisioning a duplicate. `chaos_get_workspace` reads one back and
+`chaos_create_workspace` remains the only write path (it also grants the
+workspace identity Reader on each scope and returns the workspace readback).
+The Chaos Loop controller uses exactly these three tools for its start-time
+workspace preflight.
+
 ## Install
 
 ```bash

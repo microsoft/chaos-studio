@@ -1,0 +1,46 @@
+{
+  "planVersion": "chaos-loop-workspace-plan/v1",
+  "contractVersion": "chaos-loop-contract/v1",
+  "runId": "5e9aa5cf-15e6-4511-9025-9340c89d0d96",
+  "expectedStateRevision": 0,
+  "evaluation": {
+    "engine": "chaos_loop_state.py",
+    "policyVersion": "chaos-loop-policy/v2"
+  },
+  "requestHash": "db5635a71d5a9ece1c4e50b00af9cf3ac898160928bdf896cfe706e5df9d1538",
+  "observedAt": "2026-08-13T19:00:05Z",
+  "decision": "reuse",
+  "selected": {
+    "id": "/subscriptions/8f4a2b1c-6d3e-4f57-9a80-1b2c3d4e5f60/resourceGroups/rg-orders/providers/Microsoft.Chaos/workspaces/orders-resilience",
+    "name": "orders-resilience",
+    "subscriptionId": "8f4a2b1c-6d3e-4f57-9a80-1b2c3d4e5f60",
+    "resourceGroup": "rg-orders",
+    "location": "eastus",
+    "identity": {
+      "type": "SystemAssigned",
+      "userAssignedIdentityResourceIds": [],
+      "principalId": "3d2f8c11-9b74-4a1e-8c55-0a9f7b6e4d21"
+    },
+    "managedScopes": [
+      "/subscriptions/8f4a2b1c-6d3e-4f57-9a80-1b2c3d4e5f60/resourceGroups/rg-orders"
+    ],
+    "provisioningState": "Succeeded"
+  },
+  "createRequest": null,
+  "alternatives": [],
+  "caveats": [],
+  "discoveryEvidence": {
+    "source": "chaos_list_workspaces",
+    "scope": "resourceGroup",
+    "resourceGroup": "rg-orders",
+    "observedAt": "2026-08-13T19:00:05Z",
+    "candidateCount": 1,
+    "candidateIds": [
+      "/subscriptions/8f4a2b1c-6d3e-4f57-9a80-1b2c3d4e5f60/resourceGroups/rg-orders/providers/Microsoft.Chaos/workspaces/orders-resilience"
+    ],
+    "compatibleIds": [
+      "/subscriptions/8f4a2b1c-6d3e-4f57-9a80-1b2c3d4e5f60/resourceGroups/rg-orders/providers/Microsoft.Chaos/workspaces/orders-resilience"
+    ],
+    "rejected": []
+  }
+}

@@ -1,0 +1,581 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/microsoft/chaos-studio/blob/main/copilot-cli-plugin/schemas/chaos-loop/run-state.v1.schema.json",
+  "title": "Chaos Loop Run State v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "contractVersion",
+    "policyVersion",
+    "runId",
+    "faultId",
+    "stateRevision",
+    "entryMode",
+    "phase",
+    "iteration",
+    "maxIterations",
+    "verdict",
+    "terminationReason",
+    "workspace",
+    "analysis",
+    "frozenValidation",
+    "guardrails",
+    "approvedAdvisoryIds",
+    "attemptedFixes",
+    "iterations",
+    "handoff",
+    "transition",
+    "events"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "chaos-loop-state/v1" },
+    "contractVersion": { "const": "chaos-loop-contract/v1" },
+    "policyVersion": { "const": "chaos-loop-policy/v2" },
+    "runId": { "type": "string", "minLength": 1 },
+    "faultId": { "type": ["string", "null"], "minLength": 1 },
+    "stateRevision": { "type": "integer", "minimum": 0 },
+    "entryMode": { "enum": ["start", "resume"] },
+    "phase": {
+      "enum": [
+        "resilience-analysis",
+        "chaos-execution",
+        "diagnostic",
+        "advisory",
+        "advisory-approval",
+        "coding",
+        "awaiting-external-gate",
+        "terminated"
+      ]
+    },
+    "iteration": { "type": "integer", "minimum": 0 },
+    "maxIterations": { "type": "integer", "minimum": 1 },
+    "verdict": {
+      "enum": [
+        "in-progress",
+        "analysis-only",
+        "no-impact",
+        "no-remediation",
+        "resolved",
+        "escalated"
+      ]
+    },
+    "terminationReason": {
+      "type": ["string", "null"],
+      "enum": [
+        null,
+        "analysis-only",
+        "no-impact",
+        "no-remediation",
+        "resolved",
+        "escalated"
+      ]
+    },
+    "workspace": { "$ref": "#/$defs/workspace" },
+    "analysis": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["mode", "scope", "hypotheses", "selectedHypothesisId", "originalHypothesisId"],      "properties": {
+        "mode": { "enum": ["initial", "reassess"] },
+        "scope": {
+          "type": "object",
+          "required": ["repo", "commit", "targetResources"],
+          "properties": {
+            "repo": { "type": "string", "minLength": 1 },
+            "commit": { "type": "string", "minLength": 1 },
+            "targetResources": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "hypotheses": { "type": "array", "items": { "$ref": "#/$defs/hypothesis" } },
+        "selectedHypothesisId": { "type": ["string", "null"] },
+        "originalHypothesisId": { "type": ["string", "null"] }
+      }
+    },
+    "frozenValidation": {
+      "anyOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/frozenValidation" }
+      ]
+    },
+    "guardrails": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["environmentScope", "blastRadiusCap", "safetyHalts"],
+      "properties": {
+        "environmentScope": { "type": "string", "minLength": 1 },
+        "blastRadiusCap": { "type": "string", "minLength": 1 },
+        "safetyHalts": { "type": "array", "minItems": 1 }
+      }
+    },
+    "approvedAdvisoryIds": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "attemptedFixes": { "type": "array", "items": { "type": "object" } },
+    "iterations": { "type": "array", "items": { "type": "object" } },
+    "handoff": { "$ref": "#/$defs/handoff" },
+    "transition": { "$ref": "#/$defs/transition" },
+    "events": { "type": "array", "items": { "$ref": "#/$defs/event" } }
+  },
+  "$defs": {
+    "utcTimestamp": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$"
+    },
+    "armId": { "type": "string", "pattern": "^/subscriptions/[0-9a-f-]{36}(?:/.+)?$" },
+    "workspaceIdentityRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": { "enum": ["SystemAssigned", "UserAssigned"] },
+        "userAssignedIdentityResourceId": { "$ref": "#/$defs/armId" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "UserAssigned" } } },
+          "then": { "required": ["userAssignedIdentityResourceId"] }
+        }
+      ]
+    },
+    "workspaceRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "subscriptionId",
+        "resourceGroup",
+        "location",
+        "managedScopes",
+        "preferredName",
+        "identity",
+        "identitySpecified",
+        "targetResources",
+        "requestHash"
+      ],
+      "properties": {
+        "subscriptionId": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "resourceGroup": { "type": "string", "minLength": 1, "maxLength": 90 },
+        "location": { "type": "string", "pattern": "^[a-z0-9]{3,64}$" },
+        "managedScopes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/armId" }
+        },
+        "preferredName": {
+          "type": ["string", "null"],
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,62}[A-Za-z0-9]$"
+        },
+        "identity": { "$ref": "#/$defs/workspaceIdentityRequest" },
+        "identitySpecified": { "type": "boolean" },
+        "targetResources": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/armId" }
+        },
+        "requestHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "selectedWorkspace": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "id",
+        "name",
+        "subscriptionId",
+        "resourceGroup",
+        "location",
+        "identity",
+        "managedScopes",
+        "provisioningState"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/armId" },
+        "name": { "type": "string", "minLength": 1 },
+        "subscriptionId": { "type": "string", "minLength": 1 },
+        "resourceGroup": { "type": "string", "minLength": 1 },
+        "location": { "type": "string", "minLength": 1 },
+        "identity": {
+          "type": "object",
+          "required": ["type"],
+          "properties": {
+            "type": { "type": "string", "minLength": 1 },
+            "userAssignedIdentityResourceIds": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/armId" }
+            },
+            "principalId": { "type": ["string", "null"] }
+          }
+        },
+        "managedScopes": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/armId" }
+        },
+        "provisioningState": { "const": "Succeeded" }
+      }
+    },
+    "workspaceRemediationBrief": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["stage", "reason", "requiredCorrections"],
+      "properties": {
+        "stage": { "enum": ["list", "get", "create", "readback", "provisioning"] },
+        "reason": { "type": "string", "minLength": 1 },
+        "requiredCorrections": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "evidence": {}
+      }
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "request",
+        "decision",
+        "selected",
+        "alternatives",
+        "caveats",
+        "discoveryEvidence",
+        "provisioningEvidence",
+        "observedAt",
+        "remediationBrief"
+      ],
+      "properties": {
+        "status": { "enum": ["pending", "ready", "failed"] },
+        "request": {
+          "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/workspaceRequest" }]
+        },
+        "decision": { "enum": [null, "reused", "created"] },
+        "selected": {
+          "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/selectedWorkspace" }]
+        },
+        "alternatives": { "type": "array", "items": { "type": "object" } },
+        "caveats": { "type": "array", "items": { "type": "string" } },
+        "discoveryEvidence": { "type": ["object", "null"] },
+        "provisioningEvidence": { "type": ["object", "null"] },
+        "observedAt": {
+          "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/utcTimestamp" }]
+        },
+        "remediationBrief": {
+          "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/workspaceRemediationBrief" }]
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "ready" } } },
+          "then": {
+            "properties": {
+              "decision": { "enum": ["reused", "created"] },
+              "selected": { "$ref": "#/$defs/selectedWorkspace" },
+              "discoveryEvidence": { "type": "object" },
+              "provisioningEvidence": { "type": "object" },
+              "observedAt": { "$ref": "#/$defs/utcTimestamp" },
+              "remediationBrief": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "status": { "const": "failed" } } },
+          "then": {
+            "properties": {
+              "remediationBrief": { "$ref": "#/$defs/workspaceRemediationBrief" }
+            },
+            "required": ["remediationBrief"]
+          }
+        },
+        {
+          "if": { "properties": { "status": { "const": "pending" } } },
+          "then": {
+            "properties": {
+              "decision": { "type": "null" },
+              "selected": { "type": "null" }
+            }
+          }
+        }
+      ]
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["source", "observedAt", "value"],
+      "properties": {
+        "name": { "type": "string" },
+        "source": { "type": "string", "minLength": 1 },
+        "observedAt": { "$ref": "#/$defs/utcTimestamp" },
+        "value": {}
+      }
+    },
+    "window": {
+      "type": "object",
+      "required": ["startTime", "endTime"],
+      "properties": {
+        "startTime": { "$ref": "#/$defs/utcTimestamp" },
+        "endTime": { "$ref": "#/$defs/utcTimestamp" }
+      }
+    },
+    "hypothesis": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "hypothesisId",
+        "rank",
+        "statement",
+        "codeOrIaCEvidence",
+        "scenarioEligibility",
+        "rankingInputs",
+        "learningScore",
+        "matchingFault",
+        "steadyStatePredicates",
+        "workExpected",
+        "provingFault",
+        "confirmPredicate",
+        "executedCodePathPredicate"
+      ],
+      "properties": {
+        "hypothesisId": { "type": "string", "minLength": 1 },
+        "rank": { "type": "integer", "minimum": 1 },
+        "statement": { "type": "string", "minLength": 1 },
+        "codeOrIaCEvidence": { "type": "array", "minItems": 1 },
+        "scenarioEligibility": {
+          "type": "object",
+          "required": ["discovered", "configurationValidated", "safetyEligible"],
+          "properties": {
+            "discovered": { "const": true },
+            "configurationValidated": { "const": true },
+            "safetyEligible": { "const": true }
+          }
+        },
+        "rankingInputs": {
+          "type": "object",
+          "required": ["likelihood", "blastRadius", "falsifiability"],
+          "properties": {
+            "likelihood": { "type": "integer", "minimum": 1, "maximum": 5 },
+            "blastRadius": { "type": "integer", "minimum": 1, "maximum": 5 },
+            "falsifiability": { "type": "integer", "minimum": 1, "maximum": 5 }
+          }
+        },
+        "learningScore": { "type": "integer", "minimum": 1, "maximum": 125 },
+        "matchingFault": { "$ref": "#/$defs/frozenValidation" },
+        "steadyStatePredicates": { "type": "array", "minItems": 1 },
+        "workExpected": {
+          "type": "object",
+          "required": ["predicate", "query"],
+          "properties": {
+            "predicate": { "type": "string", "minLength": 1 },
+            "query": { "type": "string", "minLength": 1 }
+          }
+        },
+        "provingFault": {
+          "type": "object",
+          "required": ["predicate", "requiredEvidence", "queryOrSource"],
+          "properties": {
+            "predicate": { "type": "string", "minLength": 1 },
+            "requiredEvidence": { "type": "array", "minItems": 1 },
+            "queryOrSource": { "type": "string", "minLength": 1 }
+          }
+        },
+        "confirmPredicate": {
+          "type": "object",
+          "required": [
+            "predicate",
+            "telemetryQuery",
+            "metric",
+            "operator",
+            "threshold",
+            "unit",
+            "window"
+          ],
+          "properties": {
+            "predicate": { "type": "string", "minLength": 1 },
+            "telemetryQuery": { "type": "string", "minLength": 1 },
+            "metric": { "type": "string", "minLength": 1 },
+            "operator": { "enum": [">", ">=", "<", "<=", "==", "!="] },
+            "threshold": { "type": "number" },
+            "unit": { "type": "string", "minLength": 1 },
+            "window": { "type": "string", "minLength": 1 }
+          }
+        },
+        "executedCodePathPredicate": {
+          "type": "object",
+          "required": ["predicate", "queryOrTrace"],
+          "properties": {
+            "predicate": { "type": "string", "minLength": 1 },
+            "queryOrTrace": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "frozenValidation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scenarioName",
+        "configurationName",
+        "faultType",
+        "parameters",
+        "targetResources",
+        "blastRadius",
+        "duration"
+      ],
+      "properties": {
+        "scenarioName": { "type": "string", "minLength": 1 },
+        "configurationName": { "type": "string", "minLength": 1 },
+        "faultType": { "type": "string", "minLength": 1 },
+        "parameters": { "type": "object" },
+        "targetResources": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "blastRadius": {
+          "type": "object",
+          "required": ["scope", "targets"],
+          "properties": {
+            "scope": { "type": "string", "minLength": 1 },
+            "targets": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "minLength": 1 },
+              "uniqueItems": true
+            }
+          }
+        },
+        "duration": { "type": "string", "minLength": 1 }
+      }
+    },
+    "numericMeasurement": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["metric", "value", "unit", "window", "query", "source"],
+      "properties": {
+        "metric": { "type": "string", "minLength": 1 },
+        "value": { "type": ["number", "null"] },
+        "unit": { "type": "string", "minLength": 1 },
+        "window": { "$ref": "#/$defs/window" },
+        "query": { "type": "string" },
+        "source": { "type": "string" },
+        "caveat": { "type": ["string", "null"] }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "value": { "type": "null" } } },
+          "then": {
+            "required": ["caveat"],
+            "properties": { "caveat": { "type": "string", "minLength": 1 } }
+          }
+        }
+      ]
+    },
+    "handoff": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "analysisDecision",
+        "executionDecision",
+        "diagnosticDecision",
+        "testIdentity",
+        "buildIdentity",
+        "steadyStateEvidence",
+        "faultWindow",
+        "provingFaultEvidence",
+        "numericBaselines",
+        "observedSLIs",
+        "telemetryQueries",
+        "starvationEvidence",
+        "hypothesisResults",
+        "targetedPathEvidence",
+        "changedPathEvidence",
+        "dlqState",
+        "advisoryState",
+        "codeChanges",
+        "unresolvedCaveats"
+      ],
+      "properties": {
+        "analysisDecision": { "type": "object" },
+        "executionDecision": { "type": "object" },
+        "diagnosticDecision": { "type": "object" },
+        "testIdentity": { "type": "object" },
+        "buildIdentity": { "type": "object" },
+        "steadyStateEvidence": { "type": "object" },
+        "faultWindow": { "type": ["object", "null"] },
+        "provingFaultEvidence": { "type": "object" },
+        "numericBaselines": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/numericMeasurement" }
+        },
+        "observedSLIs": { "type": "array", "items": { "type": "object" } },
+        "telemetryQueries": { "type": "array", "items": { "type": "object" } },
+        "starvationEvidence": { "type": "object" },
+        "hypothesisResults": { "type": "array", "items": { "type": "object" } },
+        "targetedPathEvidence": { "type": "array", "items": { "type": "object" } },
+        "changedPathEvidence": { "type": "array", "items": { "type": "object" } },
+        "dlqState": { "type": "array", "items": { "type": "object" } },
+        "advisoryState": {
+          "type": "object",
+          "required": [
+            "previousSetId",
+            "currentSetId",
+            "defaultRecommendedAdvisoryIds",
+            "advisories",
+            "changeLedger"
+          ],
+          "properties": {
+            "previousSetId": { "type": ["string", "null"] },
+            "currentSetId": { "type": ["string", "null"] },
+            "defaultRecommendedAdvisoryIds": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 },
+              "uniqueItems": true
+            },
+            "advisories": { "type": "array", "items": { "type": "object" } },
+            "changeLedger": { "type": "object" }
+          }
+        },
+        "codeChanges": {
+          "type": "object",
+          "required": ["implemented", "notImplemented", "deliveryDecision"],
+          "properties": {
+            "implemented": { "type": "array", "items": { "type": "object" } },
+            "notImplemented": { "type": "array", "items": { "type": "object" } },
+            "deliveryDecision": { "type": "object" }
+          }
+        },
+        "unresolvedCaveats": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "transition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "from", "to", "reason"],
+      "properties": {
+        "status": { "enum": ["ready", "blocked", "terminated"] },
+        "from": { "type": ["string", "null"] },
+        "to": { "type": ["string", "null"] },
+        "reason": { "type": "string", "minLength": 1 }
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["eventId", "timestamp", "revision", "phase", "type"],
+      "properties": {
+        "eventId": { "type": "string", "minLength": 1 },
+        "timestamp": { "$ref": "#/$defs/utcTimestamp" },
+        "revision": { "type": "integer", "minimum": 0 },
+        "phase": { "type": "string", "minLength": 1 },
+        "type": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

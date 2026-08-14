@@ -1,0 +1,27 @@
+{
+  "name": "chaos-loop",
+  "description": "Evidence-gated Azure Chaos Studio resilience loop with durable state, explicit phase contracts, and a hard external merge-and-deploy gate.",
+  "version": "1.0.0",
+  "author": { "name": "Azure Chaos Studio" },
+  "license": "MIT",
+  "keywords": [
+    "azure",
+    "chaos-engineering",
+    "resilience",
+    "diagnostics",
+    "remediation",
+    "verification",
+    "mcp"
+  ],
+  "skills": "skills/",
+  "mcpServers": {
+    "chaos-studio": {
+      "command": "chaos-mcp",
+      "description": "Chaos Studio v2 and Azure Monitor operations used by the Chaos Loop phases.",
+      "install": {
+        "type": "python",
+        "path": "mcp/"
+      }
+    }
+  }
+}
