@@ -50,6 +50,7 @@ jobs:
       - name: Deploy the demo
         if: inputs.operation == 'deploy'
         working-directory: samples/aks-zone-down-demo
+        shell: bash
         run: |
           ./deploy.sh 2>&1 | tee /tmp/deploy.log
           {
@@ -57,7 +58,7 @@ jobs:
             echo '```'
             tail -n 12 /tmp/deploy.log
             echo '```'
-            echo "Next: create the Workspace and run the scenario - see the [sample README](../../samples/aks-zone-down-demo/README.md)."
+            echo "Next: create the Workspace and run the scenario - see the [sample README](https://github.com/microsoft/chaos-studio/blob/main/samples/aks-zone-down-demo/README.md)."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Clean up the demo
