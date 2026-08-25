@@ -223,14 +223,30 @@ def verify_zone_coverage(
     revision -- pods that are still Terminating just won't count as Ready."""
     deadline = time.monotonic() + timeout_seconds
     while True:
-        nodes_obj = kubectl_json(["get", "nodes"])
-        node_zone_map = build_node_zone_map(nodes_obj)
-        pods_obj = kubectl_json(["get", "pods", "-l", label_selector, "-n", namespace])
-        pods = parse_frontend_pods(pods_obj, node_zone_map)
+        stamp = time.strftime("%H:%M:%S")
+        try:
+            nodes_obj = kubectl_json(["get", "nodes"])
+            node_zone_map = build_node_zone_map(nodes_obj)
+            pods_obj = kubectl_json(["get", "pods", "-l", label_selector, "-n", namespace])
+            pods = parse_frontend_pods(pods_obj, node_zone_map)
+        except (RuntimeError, subprocess.SubprocessError, json.JSONDecodeError) as e:
+            # A transient kubectl/API/JSON failure (e.g. a momentary API
+            # server blip) must not abort the check -- retry until the
+            # deadline, same as any other "not yet satisfied" iteration, and
+            # only fail loudly once the timeout is actually exhausted.
+            print(f"[{stamp}] transient error, retrying: {e}", file=sys.stderr)
+            if time.monotonic() >= deadline:
+                print(
+                    f"FAIL after {timeout_seconds:.0f}s: kubectl/API kept failing: {e}",
+                    file=sys.stderr,
+                )
+                return False
+            time.sleep(poll_seconds)
+            continue
+
         covered = zones_with_ready_replica(pods)
         missing = [z for z in zones if z not in covered]
         ready_total = sum(1 for p in pods if p["ready"])
-        stamp = time.strftime("%H:%M:%S")
         print(
             f"[{stamp}] ready replicas={ready_total} "
             f"zones covered={sorted(covered)} missing={missing}"
@@ -353,7 +369,12 @@ def poll_loop(state: MonitorState, stop_event: threading.Event) -> None:
             curr = poll_once(state.config, node_zone_cache)
             state.record(curr)
         except RuntimeError as e:
-            state.record_error(str(e))
+            # Surface it in the terminal immediately (e.g. a stale/missing
+            # kubeconfig) and keep it in state so the dashboard shows a
+            # visible banner instead of sitting on "checking..." forever.
+            message = str(e)
+            print(f"[monitor] poll error: {message}", file=sys.stderr)
+            state.record_error(message)
         stop_event.wait(state.config.interval)
 
 
@@ -379,11 +400,15 @@ PAGE_TEMPLATE = """<!doctype html>
   th {{ color: #8b949e; font-weight: 600; }}
   .history {{ max-height: 40vh; overflow-y: auto; }}
   .stale {{ outline: 3px solid #f85149; }}
+  .banner {{ display: none; border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 1.25rem; background: #3b1d1d; border: 1px solid #f85149; color: #ffd7d5; font-size: 0.9rem; }}
+  .banner.show {{ display: block; }}
 </style>
 </head>
 <body>
   <h1>AKS zone-down demo &mdash; live monitor</h1>
   <div class="sub" id="sub">storefront: {storefront_url} &middot; target zone: {target_zone} &middot; polling every {interval}s</div>
+
+  <div class="banner" id="banner"></div>
 
   <div class="cards">
     <div class="card"><div class="label">Storefront</div><div class="value unknown" id="http">checking&hellip;</div></div>
@@ -415,6 +440,16 @@ async function refresh() {{
     const res = await fetch('/api/state?_=' + Date.now(), {{ cache: 'no-store' }});
     const data = await res.json();
     body.classList.remove('stale');
+
+    const banner = document.getElementById('banner');
+    if (data.errors && data.errors.length) {{
+      banner.textContent = 'Poller error (kubectl/kubeconfig likely stale or the API server is unreachable): ' +
+        data.errors[data.errors.length - 1];
+      banner.classList.add('show');
+    }} else {{
+      banner.classList.remove('show');
+    }}
+
     const cur = data.current;
     if (!cur) {{
       setCard('http', 'waiting for first sample', 'unknown');

@@ -46,7 +46,10 @@ presenting it, so a demo starts at the interesting part.
    `verify-fix.sh` blocks until that's actually true, waiting out any
    rolling-update stragglers from the old single-replica revision.
 6. **Run 2 — prove it.** Same scenario, same zone. A node still dies, but the
-   store keeps serving from the surviving zones.
+   store keeps *sustained* service from the surviving zones. Expect brief
+   Azure Load Balancer backend-pool convergence blips around the node
+   transition — the monitor's timeline is what lets you tell a transient blip
+   apart from a sustained failure; don't claim zero interruption.
 7. Two **Scenario reports** that both say `Succeeded` — the teaching moment
    that a run succeeding measures the disruption delivered, not app health.
    The before/after difference lives in the monitor, not the report.
@@ -197,8 +200,13 @@ for the portal mechanics. This section covers what's specific to this demo.
    can leave a replica `Pending` if a zone lacks spare capacity; this
    3-node/3-zone cluster has room for exactly one each.
 7. **Run 2:** rerun the same scenario against the same zone with the monitor
-   still open. The storefront keeps serving while the node dies — the
-   monitor's HTTP card stays green throughout, and its zone-coverage card
+   still open. The storefront keeps *sustained* availability while the node
+   dies — expect the monitor's HTTP card to stay green through most of the
+   run, but a brief red blip is possible while the Azure Load Balancer's
+   backend pool converges around the node transition. Do not claim the card
+   "stays green throughout" or that there is zero interruption; use the
+   timeline to show that any dip is transient (a sample or two) rather than
+   sustained (the multi-minute outage from Run 1). The zone-coverage card
    drops to two zones and recovers to three as the node returns.
 8. Open **Run history** → **Generate report** for both runs. Both say
    `Succeeded` — that status means the shutdown action was delivered to the

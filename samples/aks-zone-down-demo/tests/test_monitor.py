@@ -11,9 +11,12 @@ from the samples/aks-zone-down-demo/ directory, or as part of a repo-wide
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import pathlib
 import py_compile
 import sys
+import threading
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
@@ -229,6 +232,131 @@ class VerifyZoneCoverageTest(unittest.TestCase):
         finally:
             monitor.kubectl_json = original
         self.assertFalse(ok)
+
+    def test_transient_kubectl_error_retries_then_passes(self):
+        """A single transient kubectl/API failure must not abort the check --
+        it should retry and still pass once the real state settles."""
+        calls = {"n": 0}
+
+        def fake_kubectl_json(args, timeout=10.0):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("Unable to connect to the server: dial timeout")
+            if args[:2] == ["get", "nodes"]:
+                return {"items": [_node("n1", "z1"), _node("n2", "z2")]}
+            return {
+                "items": [
+                    _pod("store-front-a", "n1", True),
+                    _pod("store-front-b", "n2", True),
+                ]
+            }
+
+        original = monitor.kubectl_json
+        monitor.kubectl_json = fake_kubectl_json
+        try:
+            with contextlib.redirect_stderr(io.StringIO()) as captured_stderr:
+                ok = monitor.verify_zone_coverage(
+                    "app=store-front", "default", ["z1", "z2"], timeout_seconds=5, poll_seconds=0.05
+                )
+        finally:
+            monitor.kubectl_json = original
+        self.assertTrue(ok)
+        self.assertGreaterEqual(calls["n"], 2)
+        self.assertIn("transient error, retrying", captured_stderr.getvalue())
+
+    def test_persistent_kubectl_error_fails_after_timeout(self):
+        """If kubectl/API never recovers, the check must still fail loudly
+        once the deadline passes, not hang or raise an uncaught exception."""
+
+        def always_failing_kubectl_json(args, timeout=10.0):
+            raise RuntimeError("Unable to connect to the server: connection refused")
+
+        original = monitor.kubectl_json
+        monitor.kubectl_json = always_failing_kubectl_json
+        try:
+            with contextlib.redirect_stderr(io.StringIO()) as captured_stderr:
+                ok = monitor.verify_zone_coverage(
+                    "app=store-front", "default", ["z1", "z2"], timeout_seconds=0.2, poll_seconds=0.05
+                )
+        finally:
+            monitor.kubectl_json = original
+        self.assertFalse(ok)
+        self.assertIn("FAIL after", captured_stderr.getvalue())
+        self.assertIn("connection refused", captured_stderr.getvalue())
+
+
+class MonitorStateErrorTest(unittest.TestCase):
+    """A visible-error requirement: poll errors must reach both the terminal
+    and the JSON the dashboard renders, so a stale/missing kubeconfig doesn't
+    leave the UI stuck on 'checking...' forever with no explanation."""
+
+    def test_record_error_appears_in_snapshot_json(self):
+        state = monitor.MonitorState(monitor.Config(monitor.parse_args([
+            "--storefront-url", "http://example.com",
+            "--target-zone", "z1",
+        ])))
+        state.record_error("kubectl error: Unable to connect to the server")
+        snap = state.snapshot_json()
+        self.assertEqual(snap["errors"], ["kubectl error: Unable to connect to the server"])
+
+    def test_record_error_caps_history_at_five(self):
+        state = monitor.MonitorState(monitor.Config(monitor.parse_args([
+            "--storefront-url", "http://example.com",
+            "--target-zone", "z1",
+        ])))
+        for i in range(8):
+            state.record_error(f"error {i}")
+        snap = state.snapshot_json()
+        self.assertEqual(snap["errors"], [f"error {i}" for i in range(3, 8)])
+
+    def test_poll_loop_records_and_prints_error(self):
+        state = monitor.MonitorState(monitor.Config(monitor.parse_args([
+            "--storefront-url", "http://example.com",
+            "--target-zone", "z1",
+            "--interval", "0.01",
+        ])))
+        stop_event = threading.Event()
+        call_count = {"n": 0}
+
+        def failing_poll_once(config, node_zone_cache):
+            call_count["n"] += 1
+            if call_count["n"] >= 2:
+                stop_event.set()
+            raise RuntimeError("kubectl error: stale kubeconfig")
+
+        original = monitor.poll_once
+        monitor.poll_once = failing_poll_once
+        try:
+            with contextlib.redirect_stderr(io.StringIO()) as captured_stderr:
+                monitor.poll_loop(state, stop_event)
+        finally:
+            monitor.poll_once = original
+        snap = state.snapshot_json()
+        self.assertTrue(snap["errors"])
+        self.assertIn("stale kubeconfig", snap["errors"][-1])
+        self.assertIn("poll error", captured_stderr.getvalue())
+        self.assertIn("stale kubeconfig", captured_stderr.getvalue())
+
+
+class DashboardBannerRenderingTest(unittest.TestCase):
+    """The dashboard's client-side JS must consume data.errors -- otherwise a
+    persistent poll error leaves the page on 'checking...' with no visible
+    explanation. Assert the wiring exists in the served page/template."""
+
+    def test_page_template_has_error_banner_element(self):
+        self.assertIn('id="banner"', monitor.PAGE_TEMPLATE)
+
+    def test_page_template_js_consumes_errors(self):
+        self.assertIn("data.errors", monitor.PAGE_TEMPLATE)
+
+    def test_rendered_page_includes_banner(self):
+        config = monitor.Config(monitor.parse_args([
+            "--storefront-url", "http://example.com",
+            "--target-zone", "z1",
+        ]))
+        page = monitor.render_page(config)
+        self.assertIn('id="banner"', page)
+        self.assertIn("data.errors", page)
 
 
 if __name__ == "__main__":
