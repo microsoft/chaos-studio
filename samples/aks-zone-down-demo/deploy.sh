@@ -35,7 +35,7 @@ kubectl rollout status deployment/store-front --timeout=300s
 echo "==> DEMO SETUP (deliberate anti-pattern): pinning the single store-front"
 echo "    replica to one zone so Run 1 is deterministic. This is NOT a"
 echo "    resilience recommendation -- it is staged breakage for teaching,"
-echo "    and it's removed as part of the fix (README.md step 6)."
+echo "    and it's removed as part of the fix in the Learn tutorial."
 STORE_NODE="$(kubectl get pods -l app=store-front -o jsonpath='{.items[0].spec.nodeName}')"
 PIN_ZONE="$(kubectl get node "$STORE_NODE" -o jsonpath="{.metadata.labels['${ZONE_LABEL//./\\.}']}")"
 if [ -z "$PIN_ZONE" ]; then
@@ -47,7 +47,7 @@ kubectl patch deployment store-front --patch "$(cat <<EOF
 {
   "metadata": {
     "annotations": {
-      "chaos-demo.aks-zone-down-demo/deliberate-anti-pattern": "Pins the single front-end replica to zone ${PIN_ZONE} so Run 1 is deterministic. Remove this pin as part of the fix (README.md step 6) -- do not carry it into a real deployment."
+      "chaos-demo.aks-zone-down-demo/deliberate-anti-pattern": "Pins the single front-end replica to zone ${PIN_ZONE} so Run 1 is deterministic. Remove this pin as part of the Learn tutorial fix -- do not carry it into a real deployment."
     }
   },
   "spec": {
@@ -73,8 +73,7 @@ kubectl patch deployment store-front --patch "$(cat <<EOF
 EOF
 )"
 
-echo "==> Restarting the rollout so the pinned pod (re)schedules deterministically"
-kubectl rollout restart deployment/store-front
+echo "==> Waiting for the affinity patch rollout"
 kubectl rollout status deployment/store-front --timeout=300s
 
 # Sanity-check the pin actually held -- if it didn't, Run 1 won't be
@@ -97,8 +96,8 @@ done
 NODE_RG="$(az aks show --resource-group "$RESOURCE_GROUP" --name "$CLUSTER_NAME" --query nodeResourceGroup -o tsv)"
 
 echo
-echo "Done."
-echo
+echo "AKS_ZONE_DOWN_DEMO_SUMMARY_BEGIN"
+echo "Demo deployment complete."
 if [ -n "$STORE_IP" ]; then
   echo "  Storefront:                    http://$STORE_IP"
 else
@@ -106,7 +105,7 @@ else
 fi
 echo "  Infrastructure resource group: $NODE_RG"
 echo "  store-front PINNED zone:       $STORE_ZONE  <- target this zone (the number after the region) for Run 1"
-echo "  (the pin is deliberate demo setup -- remove it when you apply the fix, README.md step 6)"
+echo "  The pin is deliberate demo setup; remove it when the Learn tutorial applies the fix."
 echo
 echo "Next: create a Chaos Studio Workspace scoped to '$NODE_RG' and run the"
 echo "Compute Zone Down scenario against the store-front zone:"
@@ -116,3 +115,4 @@ if [ -n "$STORE_IP" ]; then
   echo "Start the live monitor before Run 1:"
   echo "  python3 monitor.py --storefront-url http://$STORE_IP --target-zone $STORE_ZONE"
 fi
+echo "AKS_ZONE_DOWN_DEMO_SUMMARY_END"

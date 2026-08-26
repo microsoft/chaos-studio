@@ -46,20 +46,14 @@ from typing import Any, Optional
 
 ZONE_LABEL = "topology.kubernetes.io/zone"
 
-# Default poll cadence, derived from measured evidence: a live run showed the
-# storefront's HTTP failure at 27:41 and the Kubernetes node NotReady
-# transition at 28:23, a ~42s gap. 5s yields roughly 42/5 ~= 8 samples across
-# that gap -- enough to render the two events as clearly separate points on
-# the timeline instead of a single ambiguous jump, without polling kubectl
-# faster than a live demo needs. Override with MONITOR_INTERVAL_SECONDS or
-# --interval if your environment shows a different gap.
+# Override the five-second demo cadence with MONITOR_INTERVAL_SECONDS or
+# --interval when needed.
 DEFAULT_INTERVAL_SECONDS = 5.0
 DEFAULT_HTTP_TIMEOUT_SECONDS = 3.0
 DEFAULT_PORT = 8787
 DEFAULT_NAMESPACE = "default"
 DEFAULT_LABEL_SELECTOR = "app=store-front"
 DEFAULT_VERIFY_TIMEOUT_SECONDS = 300
-NODE_MAP_REFRESH_SECONDS = 30.0
 
 
 # --------------------------------------------------------------------------
@@ -196,8 +190,8 @@ def check_storefront(url: str, timeout: float) -> tuple[bool, str]:
         return False, f"error: {e.reason if hasattr(e, 'reason') else e}"
 
 
-def discover_zones(zone_label: str = ZONE_LABEL) -> list[str]:
-    nodes_obj = kubectl_json(["get", "nodes"])
+def discover_zones(nodes_obj: dict, zone_label: str = ZONE_LABEL) -> list[str]:
+    """Return the distinct zone labels in an all-nodes response."""
     zones = {
         (n.get("metadata", {}) or {}).get("labels", {}).get(zone_label)
         for n in nodes_obj.get("items", []) or []
@@ -213,7 +207,6 @@ def discover_zones(zone_label: str = ZONE_LABEL) -> list[str]:
 def verify_zone_coverage(
     label_selector: str,
     namespace: str,
-    zones: list[str],
     timeout_seconds: float,
     poll_seconds: float = 5.0,
 ) -> bool:
@@ -226,10 +219,13 @@ def verify_zone_coverage(
         stamp = time.strftime("%H:%M:%S")
         try:
             nodes_obj = kubectl_json(["get", "nodes"])
+            zones = discover_zones(nodes_obj)
+            if not zones:
+                raise RuntimeError("could not discover any zones from node labels")
             node_zone_map = build_node_zone_map(nodes_obj)
             pods_obj = kubectl_json(["get", "pods", "-l", label_selector, "-n", namespace])
             pods = parse_frontend_pods(pods_obj, node_zone_map)
-        except (RuntimeError, subprocess.SubprocessError, json.JSONDecodeError) as e:
+        except (RuntimeError, subprocess.SubprocessError, json.JSONDecodeError, OSError) as e:
             # A transient kubectl/API/JSON failure (e.g. a momentary API
             # server blip) must not abort the check -- retry until the
             # deadline, same as any other "not yet satisfied" iteration, and
@@ -282,7 +278,7 @@ class MonitorState:
         self.last_snapshot: Optional[dict] = None
         self.history: list[dict] = []
         self.samples = 0
-        self.errors: list[str] = []
+        self.error: Optional[str] = None
 
     def record(self, curr: dict) -> None:
         with self.lock:
@@ -291,11 +287,11 @@ class MonitorState:
                 self.history.append({"ts": curr["ts"], "message": message})
             self.last_snapshot = curr
             self.samples += 1
+            self.error = None
 
     def record_error(self, message: str) -> None:
         with self.lock:
-            self.errors.append(message)
-            self.errors = self.errors[-5:]
+            self.error = message
 
     def snapshot_json(self) -> dict:
         with self.lock:
@@ -312,7 +308,7 @@ class MonitorState:
                 "current": snap,
                 "history": list(self.history),
                 "samples": self.samples,
-                "errors": list(self.errors),
+                "error": self.error,
             }
 
 
@@ -327,28 +323,28 @@ class Config:
         self.port = args.port
 
 
-def poll_once(config: Config, node_zone_cache: dict) -> dict:
+def poll_once(config: Config) -> dict:
     http_ok, http_detail = check_storefront(config.storefront_url, config.http_timeout)
 
     node_state = "Unknown"
     zones: set = set()
     pods: list[dict] = []
     try:
-        nodes_obj = kubectl_json(["get", "nodes", "-l", f"{ZONE_LABEL}={config.target_zone}"])
-        items = nodes_obj.get("items", [])
-        node_state = get_node_ready_state(items[0]) if items else "Unknown"
-
-        if not node_zone_cache.get("map") or (
-            time.time() - node_zone_cache.get("refreshed", 0) > NODE_MAP_REFRESH_SECONDS
-        ):
-            all_nodes_obj = kubectl_json(["get", "nodes"])
-            node_zone_cache["map"] = build_node_zone_map(all_nodes_obj)
-            node_zone_cache["refreshed"] = time.time()
-
+        nodes_obj = kubectl_json(["get", "nodes"])
+        node_zone_map = build_node_zone_map(nodes_obj)
+        target_states = [
+            get_node_ready_state(node)
+            for node in nodes_obj.get("items", []) or []
+            if (node.get("metadata", {}) or {}).get("labels", {}).get(ZONE_LABEL) == config.target_zone
+        ]
+        if "Ready" in target_states:
+            node_state = "Ready"
+        elif "NotReady" in target_states:
+            node_state = "NotReady"
         pods_obj = kubectl_json(["get", "pods", "-l", config.label_selector, "-n", config.namespace])
-        pods = parse_frontend_pods(pods_obj, node_zone_cache["map"])
+        pods = parse_frontend_pods(pods_obj, node_zone_map)
         zones = zones_with_ready_replica(pods)
-    except (RuntimeError, subprocess.SubprocessError, json.JSONDecodeError) as e:
+    except (RuntimeError, subprocess.SubprocessError, json.JSONDecodeError, OSError) as e:
         raise RuntimeError(f"kubectl error: {e}") from e
 
     return {
@@ -363,10 +359,9 @@ def poll_once(config: Config, node_zone_cache: dict) -> dict:
 
 
 def poll_loop(state: MonitorState, stop_event: threading.Event) -> None:
-    node_zone_cache: dict = {}
     while not stop_event.is_set():
         try:
-            curr = poll_once(state.config, node_zone_cache)
+            curr = poll_once(state.config)
             state.record(curr)
         except RuntimeError as e:
             # Surface it in the terminal immediately (e.g. a stale/missing
@@ -442,9 +437,9 @@ async function refresh() {{
     body.classList.remove('stale');
 
     const banner = document.getElementById('banner');
-    if (data.errors && data.errors.length) {{
+    if (data.error) {{
       banner.textContent = 'Poller error (kubectl/kubeconfig likely stale or the API server is unreachable): ' +
-        data.errors[data.errors.length - 1];
+        data.error;
       banner.classList.add('show');
     }} else {{
       banner.classList.remove('show');
@@ -587,11 +582,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
 def main(argv: Optional[list[str]] = None) -> int:
     args = parse_args(argv)
     if args.mode == "verify":
-        zones = discover_zones()
-        if not zones:
-            print("Could not discover any zones from node labels.", file=sys.stderr)
-            return 1
-        ok = verify_zone_coverage(args.label_selector, args.namespace, zones, args.timeout)
+        ok = verify_zone_coverage(args.label_selector, args.namespace, args.timeout)
         return 0 if ok else 1
 
     serve(Config(args))

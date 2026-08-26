@@ -64,6 +64,11 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
 
+      - name: Test AKS zone-down demo monitor
+        if: matrix.python == '3.12'
+        working-directory: samples/aks-zone-down-demo
+        run: python -m unittest discover -s tests -v
+
       - name: Install package + test deps
         working-directory: copilot-cli-plugin/mcp
         run: |
