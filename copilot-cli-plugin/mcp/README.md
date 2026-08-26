@@ -71,6 +71,21 @@ The server requires an active `az login` session (or a managed identity — see
 `{"ok": false, "errorType": ...}` envelope (rather than raising) when auth or
 permissions are missing, so agents can remediate and retry.
 
+## Durable run discovery
+
+The MCP process is intentionally stateless, but Chaos Studio ScenarioRun
+resources are durable. Use these tools to continue work from a fresh agent
+session:
+
+| Tool | Purpose |
+|---|---|
+| `chaos_list_scenario_runs(subscription_id, resource_group, workspace_name, scenario_name, configuration_name?, status?, target_resource_id?)` | Return compact summaries from every ScenarioRun page, newest first, with optional exact filters. |
+| `chaos_get_scenario_run(subscription_id, resource_group, workspace_name, scenario_name, scenario_run_id)` | Return current state and available report details; completed runs include timing, resources, action summaries, errors, and the resolved run definition. |
+
+This is discovery over the service's existing records, not MCP-side memory.
+Agents should retain stable resource and run IDs in their own workflow artifact
+when they need to link an incident, remediation, and validation run.
+
 ## Development
 
 ```bash
