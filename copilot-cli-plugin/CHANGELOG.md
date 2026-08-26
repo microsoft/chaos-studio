@@ -7,6 +7,13 @@ the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Added
+
+- `chaos_list_scenario_runs` MCP tool for rediscovering durable ScenarioRun
+  records after the agent session that created them has ended. The tool follows
+  every service-provided pagination link, returns runs newest-first, and can
+  filter by configuration, status, or targeted resource ID.
+
 ### Changed
 
 - The PowerShell skills (`create-workspace`, `setup-scenario`, `run-scenario`)

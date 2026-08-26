@@ -343,6 +343,36 @@ def arm_get(path: str, **kw) -> dict:
     return resp.json() if resp.content else {}
 
 
+def arm_list(path: str, **kw) -> list[dict[str, Any]]:
+    """Read every page from an ARM list endpoint.
+
+    ARM list responses use ``value`` for the current page and an optional
+    absolute ``nextLink`` for continuation. Following the service-provided link
+    keeps callers complete without inventing a client-side result cap.
+    """
+    items: list[dict[str, Any]] = []
+    next_path: str | None = path
+    seen: set[str] = set()
+
+    while next_path:
+        if next_path in seen:
+            raise AzureError(f"ARM list pagination repeated nextLink: {next_path}")
+        seen.add(next_path)
+
+        page = arm_get(next_path, **kw)
+        value = page.get("value", [])
+        if not isinstance(value, list):
+            raise AzureError("ARM list response field 'value' was not an array.")
+        items.extend(value)
+
+        next_link = page.get("nextLink")
+        if next_link is not None and not isinstance(next_link, str):
+            raise AzureError("ARM list response field 'nextLink' was not a string.")
+        next_path = next_link or None
+
+    return items
+
+
 def arm_put(path: str, body: Mapping[str, Any], **kw) -> httpx.Response:
     resp = arm_request("PUT", path, body=body, **kw)
     _raise_for_arm(resp)
