@@ -38,7 +38,7 @@ printf ' <%s>' "$@" >>"$COMMAND_LOG"
 printf '\n' >>"$COMMAND_LOG"
 
 case "$1" in
-  apply|rollout)
+  apply|patch|rollout)
     ;;
   get)
     case "$2" in
