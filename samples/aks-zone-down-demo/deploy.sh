@@ -6,6 +6,7 @@ set -euo pipefail
 RESOURCE_GROUP="${RESOURCE_GROUP:-chaos-demo-rg}"
 LOCATION="${LOCATION:-eastus2}"
 CLUSTER_NAME="${CLUSTER_NAME:-chaos-demo-aks}"
+NODE_VM_SIZE="${NODE_VM_SIZE:-}"
 # Pinned to a release so the demo doesn't drift with upstream main; override if needed.
 MANIFEST_URL="${MANIFEST_URL:-https://raw.githubusercontent.com/Azure-Samples/aks-store-demo/2.2.0/aks-store-quickstart.yaml}"
 ZONE_LABEL="topology.kubernetes.io/zone"
@@ -14,14 +15,29 @@ echo "==> Creating resource group '$RESOURCE_GROUP' in $LOCATION"
 az group create --name "$RESOURCE_GROUP" --location "$LOCATION" \
   --tags chaos-demo=aks-zone-down-demo --output none
 
-echo "==> Creating AKS cluster '$CLUSTER_NAME' (3 nodes across zones 1-3; takes a few minutes)"
-az aks create \
-  --resource-group "$RESOURCE_GROUP" \
-  --name "$CLUSTER_NAME" \
-  --node-count 3 \
-  --zones 1 2 3 \
-  --generate-ssh-keys \
+AKS_CREATE_ARGS=(
+  aks create
+  --resource-group "$RESOURCE_GROUP"
+  --name "$CLUSTER_NAME"
+  --node-count 3
+  --zones 1 2 3
+  --generate-ssh-keys
   --output none
+)
+if [ -n "$NODE_VM_SIZE" ]; then
+  AKS_CREATE_ARGS+=(--node-vm-size "$NODE_VM_SIZE")
+fi
+
+echo "==> Creating AKS cluster '$CLUSTER_NAME' (3 nodes across zones 1-3; takes a few minutes)"
+if az "${AKS_CREATE_ARGS[@]}"; then
+  :
+else
+  status=$?
+  echo "AKS cluster creation failed; use the Azure error above to distinguish SKU support, quota, and live capacity." >&2
+  echo "This demo uses one node pool across zones 1-3, so an overridden NODE_VM_SIZE must support all three zones in '$LOCATION'." >&2
+  echo "SKU listings describe support and restrictions, not guaranteed deployment capacity." >&2
+  exit "$status"
+fi
 
 echo "==> Connecting kubectl"
 az aks get-credentials --resource-group "$RESOURCE_GROUP" --name "$CLUSTER_NAME" --overwrite-existing

@@ -19,6 +19,19 @@ python3 monitor.py --storefront-url http://<STOREFRONT_IP> --target-zone <ZONE>
 ./cleanup.sh
 ```
 
+AKS uses one VM size for every node in this single node pool. An optional
+override must support zones 1, 2, and 3 in the selected region:
+
+```bash
+NODE_VM_SIZE=YOUR_SUPPORTED_VM_SIZE ./deploy.sh
+```
+
+The script intentionally does not reject a region or size using an
+`az vm list-skus` preflight. SKU listings describe support and subscription
+restrictions, but they do not guarantee current capacity. Cluster creation is
+the authoritative check and reports quota, policy, SKU, or allocation failures
+directly.
+
 Follow the Learn tutorial after deployment, including its [hard-spread fix and required verification](https://learn.microsoft.com/azure/chaos-studio/chaos-studio-tutorial-sample-app#fix-the-deployment-and-verify-it).
 
 ## Optional GitHub Actions deployment

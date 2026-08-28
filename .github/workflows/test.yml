@@ -64,11 +64,6 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
 
-      - name: Test AKS zone-down demo monitor
-        if: matrix.python == '3.12'
-        working-directory: samples/aks-zone-down-demo
-        run: python -m unittest discover -s tests -v
-
       - name: Install package + test deps
         working-directory: copilot-cli-plugin/mcp
         run: |
@@ -87,6 +82,22 @@ jobs:
         with:
           name: coverage-xml
           path: copilot-cli-plugin/mcp/coverage.xml
+
+  sample-test:
+    name: AKS zone-down demo
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Test monitor
+        working-directory: samples/aks-zone-down-demo
+        run: python -m unittest discover -s tests -p 'test_monitor.py' -v
+      - name: Test deployment guardrails
+        working-directory: samples/aks-zone-down-demo
+        run: ./tests/test_deploy.sh
 
   lint-python:
     name: Lint (ruff)
