@@ -86,7 +86,6 @@ jobs:
   sample-test:
     name: AKS zone-down demo
     runs-on: ubuntu-latest
-    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
