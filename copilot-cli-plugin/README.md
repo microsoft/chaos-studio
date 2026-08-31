@@ -1,8 +1,14 @@
-# startchaos — Chaos Studio v2 Workspace Plugin
+# startchaos — Chaos Studio Workspaces plugin
 
 A GitHub Copilot CLI plugin that guides Azure customers through the end-to-end
-**Chaos Studio v2 Workspace** experience: provision a workspace, configure
-scenarios, and execute chaos experiments — all from a single conversation.
+**Chaos Studio Workspaces** journey: provision a Workspace, configure a Scenario,
+start a ScenarioRun, and analyze its impact — all from a single conversation.
+
+For the product model and supported workflows, see the Microsoft Learn
+[Workspaces overview](https://learn.microsoft.com/en-us/azure/chaos-studio/chaos-studio-workspaces-overview),
+[Workspace quickstart](https://learn.microsoft.com/en-us/azure/chaos-studio/quickstart-create-workspace),
+[Scenario catalog](https://learn.microsoft.com/en-us/azure/chaos-studio/chaos-studio-scenarios),
+and [Azure CLI guide](https://learn.microsoft.com/en-us/azure/chaos-studio/chaos-studio-manage-cli).
 
 ## Prerequisites
 
@@ -54,11 +60,11 @@ session for auth.
 
 | Skill | Description |
 |---|---|
-| `start-chaos` | Orchestrator — auth → workspace → scenario → run |
-| `create-workspace` | Provision workspace + identity + RBAC |
-| `setup-scenario` | Discover, configure, validate scenarios |
-| `run-scenario` | Execute and stream experiment results |
-| `chaos-impact` | Analyze run impact — correlate Azure Monitor signals to targeted resources |
+| `start-chaos` | Orchestrator — authentication → Workspace → Scenario → ScenarioRun |
+| `create-workspace` | Provision a Workspace, identity, and RBAC |
+| `setup-scenario` | Discover, configure, and validate Scenarios |
+| `run-scenario` | Start and stream ScenarioRun results |
+| `chaos-impact` | Analyze ScenarioRun impact — correlate Azure Monitor signals to targeted resources |
 
 ## MCP tools (for agents)
 
@@ -86,17 +92,17 @@ Per-client config snippets (Claude Desktop, Cursor, Codex CLI) are in
 
 | Tool | Purpose |
 |---|---|
-| `chaos_create_workspace` | Provision workspace + identity + Reader RBAC |
-| `chaos_get_workspace` | Fetch workspace |
-| `chaos_refresh_recommendations` | Trigger workspace evaluation |
-| `chaos_list_recommended_scenarios` | List recommended scenarios |
-| `chaos_create_scenario_configuration` | Create/update configuration (LRO-aware) |
-| `chaos_validate_scenario_configuration` | Validate configuration |
-| `chaos_fix_resource_permissions` | Auto-grant scenario target roles |
-| `chaos_execute_scenario` | Kick off a run, return `scenarioRunId` |
-| `chaos_list_scenario_runs` | Rediscover compact summaries of durable prior runs, with optional configuration/status/resource filters |
-| `chaos_get_scenario_run` | Fetch current state and, after completion, the full durable run report |
-| `chaos_cancel_scenario_run` | Best-effort cancel |
+| `chaos_create_workspace` | Provision a Workspace, identity, and Reader RBAC |
+| `chaos_get_workspace` | Fetch a Workspace |
+| `chaos_refresh_recommendations` | Trigger Workspace evaluation |
+| `chaos_list_recommended_scenarios` | List recommended Scenarios |
+| `chaos_create_scenario_configuration` | Create or update a Scenario configuration (LRO-aware) |
+| `chaos_validate_scenario_configuration` | Validate a Scenario configuration |
+| `chaos_fix_resource_permissions` | Auto-grant Scenario target roles |
+| `chaos_execute_scenario` | Start a ScenarioRun and return `scenarioRunId` |
+| `chaos_list_scenario_runs` | Rediscover compact summaries of durable prior ScenarioRuns, with optional configuration/status/resource filters |
+| `chaos_get_scenario_run` | Fetch a ScenarioRun's current state and, after completion, its full durable report |
+| `chaos_cancel_scenario_run` | Best-effort ScenarioRun cancellation |
 | `monitor_query_metrics` | Query Azure Monitor metrics for a resource over a time window |
 | `monitor_query_logs` | Run a KQL query against a Log Analytics workspace |
 | `monitor_search_activity_log` | Search the Azure Activity Log for resource events |
@@ -107,8 +113,8 @@ instructions (PyPI + Smithery).
 ### Continue after the agent session ends
 
 The MCP server does not keep conversational state. Chaos Studio does keep the
-authoritative run records. A fresh agent session can call
-`chaos_list_scenario_runs`, select the relevant run, and then call
+authoritative ScenarioRun records. A fresh agent session can call
+`chaos_list_scenario_runs`, select the relevant ScenarioRun, and then call
 `chaos_get_scenario_run` to recover its targets, timing, action results, and
 errors. This keeps continuity in the service rather than in one model context.
 
@@ -119,14 +125,14 @@ errors. This keeps continuity in the service rather than in one model context.
 
 # The orchestrator will guide you through:
 #   Phase 0 — Azure CLI authentication
-#   Phase 1 — Create a Chaos Studio workspace
-#   Phase 2 — Set up a scenario configuration
-#   Phase 3 — Run the chaos experiment
+#   Phase 1 — Create a Workspace
+#   Phase 2 — Configure a Scenario
+#   Phase 3 — Start a ScenarioRun
 ```
 
 ## Impact Report
 
-After a chaos run completes, use `/chaos-impact` to automatically correlate Azure Monitor
+After a ScenarioRun completes, use `/chaos-impact` to automatically correlate Azure Monitor
 signals (metrics, logs, activity log, alerts, service health) with the targeted resources
 and classify them as **chaos-attributed**, **baseline**, or **unexplained**.
 
@@ -142,7 +148,7 @@ and classify them as **chaos-attributed**, **baseline**, or **unexplained**.
 
 | Parameter | Default | Description |
 |---|---|---|
-| `<scenarioRunId>` | *(required)* | The run to analyze |
+| `<scenarioRunId>` | *(required)* | The ScenarioRun to analyze |
 | `-Buffer` | `PT5M` | Pre/post window buffer (ISO-8601 duration) |
 | `-OutputDir` | session dir | Where to write artifacts |
 | `-MaxResources` | `50` | Per-run resource fan-out cap |
@@ -155,7 +161,7 @@ and classify them as **chaos-attributed**, **baseline**, or **unexplained**.
 |---|---|
 | 0 | Report emitted successfully |
 | 1 | Hard error (details on stderr / in an error card) |
-| 2 | Missing run context — re-invoke with the missing parameters |
+| 2 | Missing ScenarioRun context — re-invoke with the missing parameters |
 | 3 | Log Analytics workspace not discoverable for ≥ 1 resource — supply `-LogAnalyticsWorkspaceId <id>` or `-LogAnalyticsWorkspaceId none` |
 | 4 | Permission gap — ensure caller has `Monitoring Reader` on the targeted resource groups |
 

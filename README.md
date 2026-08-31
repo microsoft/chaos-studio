@@ -1,26 +1,29 @@
-# Azure Chaos Studio — Open Source
+# Chaos Studio Workspaces — Open-source companion
 
-Community tooling, samples, and scenarios for **Azure Chaos Studio**, the managed
-resilience-testing service for Azure: break things on purpose, prove your system
-recovers.
+Community tooling, Scenario contribution scaffolds, and hands-on samples for
+**Chaos Studio Workspaces**, the current Azure Chaos Studio model for discovering
+resources, running resilience tests, and reviewing ScenarioRun results.
 
-> This is the open-source companion repo. The **service** is documented at
-> [learn.microsoft.com/azure/chaos-studio](https://learn.microsoft.com/azure/chaos-studio).
-> What lives here is community tooling and samples — not the service source.
+> This repository complements the managed service; it doesn't contain the service
+> source. See the [Azure Chaos Studio documentation](https://learn.microsoft.com/en-us/azure/chaos-studio/).
+
+## Start with Workspaces
+
+| Journey | Destination |
+|---|---|
+| Understand the model | [What are Workspaces in Azure Chaos Studio?](https://learn.microsoft.com/en-us/azure/chaos-studio/chaos-studio-workspaces-overview) |
+| Create and run your first Scenario | [Quickstart: Create a Workspace and run your first Scenario](https://learn.microsoft.com/en-us/azure/chaos-studio/quickstart-create-workspace) |
+| Choose between the current and legacy models | [Compare Workspaces and Experiments (classic)](https://learn.microsoft.com/en-us/azure/chaos-studio/chaos-studio-workspaces-vs-experiments) |
+| Explore supported outage patterns | [Scenarios in Azure Chaos Studio](https://learn.microsoft.com/en-us/azure/chaos-studio/chaos-studio-scenarios) |
+| Try the primary hands-on sample | [AKS zone-down demo](samples/aks-zone-down-demo/) |
 
 ## What's here
 
 | Component | Path | What it is |
 |---|---|---|
-| **Copilot CLI plugin + MCP server** | [`copilot-cli-plugin/`](copilot-cli-plugin/) | Create workspaces, configure scenarios, run experiments, and analyze impact — from a conversation or an autonomous agent. |
-| **Scenarios** | [`scenarios/`](scenarios/) | Shareable custom Scenario definitions (Bicep/JSON) beyond the built-in templates. |
-| **Samples** | [`samples/`](samples/) | Sample apps and infrastructure you can deploy and break to practice. |
-
-## New to Chaos Studio?
-
-Start with the docs: [Workspaces](https://learn.microsoft.com/azure/chaos-studio/chaos-studio-workspaces-overview)
-· [Scenarios](https://learn.microsoft.com/azure/chaos-studio/chaos-studio-scenarios)
-· [Scenario reports](https://learn.microsoft.com/azure/chaos-studio/chaos-studio-scenario-reports).
+| **Copilot CLI plugin + MCP server** | [`copilot-cli-plugin/`](copilot-cli-plugin/) | Create Workspaces, configure Scenarios, start ScenarioRuns, and analyze impact from a conversation or an autonomous agent. |
+| **Scenarios** | [`scenarios/`](scenarios/) | Contribution scaffold for shareable custom Scenario definitions beyond the built-in templates. |
+| **Samples** | [`samples/`](samples/) | Deployable applications and infrastructure for practicing resilience testing. |
 
 ## Feedback (public preview)
 
