@@ -2,7 +2,7 @@
 .SYNOPSIS
     Step driver for the create-workspace skill.
 .DESCRIPTION
-    Provisions a Microsoft.Chaos/workspaces resource (v2), binds a managed identity,
+    Provisions a Microsoft.Chaos/workspaces resource, binds a managed identity,
     validates scopes, and grants Reader RBAC on each scope.
 
     Workspace lifecycle uses the `az chaos` CLI extension (via Invoke-AzChaos).

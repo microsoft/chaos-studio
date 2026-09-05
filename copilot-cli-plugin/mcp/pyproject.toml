@@ -1,7 +1,7 @@
 [project]
 name = "chaos-mcp"
 version = "0.4.0"
-description = "MCP server exposing Azure Chaos Studio v2 operations as agent-callable tools."
+description = "MCP server exposing Chaos Studio Workspaces operations as agent-callable tools."
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [{ name = "Azure Chaos Studio" }]
