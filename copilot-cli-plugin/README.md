@@ -1,14 +1,14 @@
-# startchaos — Chaos Studio Workspaces plugin
+# GitHub Copilot CLI plugin for Chaos Studio Workspaces
 
-A GitHub Copilot CLI plugin that guides Azure customers through the end-to-end
+The **startchaos** GitHub Copilot CLI plugin guides Azure customers through the end-to-end
 **Chaos Studio Workspaces** journey: provision a Workspace, configure a Scenario,
 start a ScenarioRun, and analyze its impact — all from a single conversation.
 
 For the product model and supported workflows, see the Microsoft Learn
-[Workspaces overview](https://learn.microsoft.com/en-us/azure/chaos-studio/chaos-studio-workspaces-overview),
-[Workspace quickstart](https://learn.microsoft.com/en-us/azure/chaos-studio/quickstart-create-workspace),
-[Scenario catalog](https://learn.microsoft.com/en-us/azure/chaos-studio/chaos-studio-scenarios),
-and [Azure CLI guide](https://learn.microsoft.com/en-us/azure/chaos-studio/chaos-studio-manage-cli).
+[Workspaces overview](https://learn.microsoft.com/azure/chaos-studio/chaos-studio-workspaces-overview),
+[Workspace quickstart](https://learn.microsoft.com/azure/chaos-studio/quickstart-create-workspace),
+[Scenario catalog](https://learn.microsoft.com/azure/chaos-studio/chaos-studio-scenarios),
+and [Azure CLI guide](https://learn.microsoft.com/azure/chaos-studio/chaos-studio-manage-cli).
 
 ## Prerequisites
 
@@ -50,8 +50,8 @@ plugins:
 
 | Surface | Folder | For |
 |---|---|---|
-| **Skill** (interactive) | `skills/start-chaos` | Humans driving Chaos Studio from a conversation |
-| **MCP server** | `mcp/` | Autonomous agents that need typed Chaos Studio tools |
+| **Skill** (interactive) | [Workspaces orchestration skill](skills/start-chaos/SKILL.md) | Humans driving Chaos Studio from a conversation |
+| **MCP server** | [MCP server guide](mcp/README.md) | Autonomous agents that need typed Chaos Studio tools |
 
 Both target `Microsoft.Chaos` `2026-05-01-preview` and use the local `az login`
 session for auth.
@@ -60,11 +60,11 @@ session for auth.
 
 | Skill | Description |
 |---|---|
-| `start-chaos` | Orchestrator — authentication → Workspace → Scenario → ScenarioRun |
-| `create-workspace` | Provision a Workspace, identity, and RBAC |
-| `setup-scenario` | Discover, configure, and validate Scenarios |
-| `run-scenario` | Start and stream ScenarioRun results |
-| `chaos-impact` | Analyze ScenarioRun impact — correlate Azure Monitor signals to targeted resources |
+| [`start-chaos`](skills/start-chaos/SKILL.md) | Orchestrator — authentication → Workspace → Scenario → ScenarioRun |
+| [`create-workspace`](skills/create-workspace/SKILL.md) | Provision a Workspace, identity, and RBAC |
+| [`setup-scenario`](skills/setup-scenario/SKILL.md) | Discover, configure, and validate Scenarios |
+| [`run-scenario`](skills/run-scenario/SKILL.md) | Start and stream ScenarioRun results |
+| [`chaos-impact`](skills/chaos-impact/SKILL.md) | Analyze ScenarioRun impact — correlate Azure Monitor signals to targeted resources |
 
 ## MCP tools (for agents)
 
@@ -80,14 +80,14 @@ pip install chaos-mcp
 pip install -e ./mcp
 ```
 
-Register it in your MCP client config (see `mcp/mcp-config.example.json`):
+Register it in your MCP client config (see the [example MCP configuration](mcp/mcp-config.example.json)):
 
 ```json
 { "mcpServers": { "chaos-studio": { "command": "chaos-mcp" } } }
 ```
 
-Per-client config snippets (Claude Desktop, Cursor, Codex CLI) are in
-`mcp/README.md`. The Copilot CLI plugin wires this up automatically via
+Client setup instructions (Claude Desktop, Claude Code, Cursor) are in the
+[MCP server guide](mcp/README.md#client-configuration). The Copilot CLI plugin wires this up automatically via
 `plugin.json`.
 
 | Tool | Purpose |
@@ -107,15 +107,15 @@ Per-client config snippets (Claude Desktop, Cursor, Codex CLI) are in
 | `monitor_query_logs` | Run a KQL query against a Log Analytics workspace |
 | `monitor_search_activity_log` | Search the Azure Activity Log for resource events |
 
-See `mcp/README.md` for the full agent integration guide and publishing
-instructions (PyPI + Smithery).
+See the [MCP server guide](mcp/README.md) for authentication, client configuration,
+and development instructions.
 
 ### Continue after the agent session ends
 
 The MCP server does not keep conversational state. Chaos Studio does keep the
 authoritative ScenarioRun records. A fresh agent session can call
 `chaos_list_scenario_runs`, select the relevant ScenarioRun, and then call
-`chaos_get_scenario_run` to recover its targets, timing, action results, and
+`chaos_get_scenario_run` to recover its targets, timing, Action results, and
 errors. This keeps continuity in the service rather than in one model context.
 
 ## Usage
@@ -130,18 +130,20 @@ errors. This keeps continuity in the service rather than in one model context.
 #   Phase 3 — Start a ScenarioRun
 ```
 
-## Impact Report
+## Scenario run impact reports with Azure Monitor
 
 After a ScenarioRun completes, use `/chaos-impact` to automatically correlate Azure Monitor
 signals (metrics, logs, activity log, alerts, service health) with the targeted resources
 and classify them as **chaos-attributed**, **baseline**, or **unexplained**.
+This tooling report complements the service's Scenario reports with monitoring
+signals; use application health checks to assess end-to-end resilience.
 
 ```text
 > /chaos-impact <scenarioRunId>
 
 # Produces:
 #   impact-<runId>.md    — Markdown report card (per-action signal tables)
-#   impact-<runId>.json  — JSON sidecar (schema v1, suitable for cross-run diffing)
+#   impact-<runId>.json  — JSON sidecar (schema version 1, suitable for cross-run diffing)
 ```
 
 ### Parameters
@@ -175,7 +177,8 @@ and classify them as **chaos-attributed**, **baseline**, or **unexplained**.
 5. Classifies each signal by time-overlap, target-overlap, and magnitude vs. baseline.
 6. Renders a Markdown report card and a JSON sidecar.
 
-See [`docs/impact-synthesis-skill.md`](docs/impact-synthesis-skill.md) for a full walkthrough.
+See the [Azure Monitor impact analysis walkthrough](docs/impact-synthesis-skill.md)
+for parameters, sample output, and troubleshooting.
 
 ## Configuration Overrides
 
@@ -188,18 +191,10 @@ The plugin persists progress to `$env:STARTCHAOS_STATE_PATH`
 (default: `${SESSION_DIR}/startchaos-state.json`). Re-invoking the orchestrator
 resumes from the first incomplete phase.
 
-## Sample Transcript
-
-See [`docs/impact-synthesis-skill.md`](docs/impact-synthesis-skill.md) for a full walkthrough including a sample impact report.
-
-```text
-[placeholder — a full happy-path transcript will be added here]
-```
-
 ## API Version
 
 All ARM calls target **`2026-05-01-preview`** (`Microsoft.Chaos` namespace).
 
 ## License
 
-MIT
+[MIT](../LICENSE)

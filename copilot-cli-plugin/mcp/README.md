@@ -1,18 +1,18 @@
-# chaos-mcp
+# chaos-mcp: MCP server for Chaos Studio Workspaces
 
-MCP server exposing Chaos Studio Workspaces operations as agent-callable tools.
+MCP server exposing Azure Chaos Studio Workspaces operations as agent-callable tools.
 
 Before automating the service, review the Microsoft Learn
-[Workspaces overview](https://learn.microsoft.com/en-us/azure/chaos-studio/chaos-studio-workspaces-overview),
-[Workspace quickstart](https://learn.microsoft.com/en-us/azure/chaos-studio/quickstart-create-workspace),
-[Scenario catalog](https://learn.microsoft.com/en-us/azure/chaos-studio/chaos-studio-scenarios),
-and [Azure CLI guide](https://learn.microsoft.com/en-us/azure/chaos-studio/chaos-studio-manage-cli).
+[Workspaces overview](https://learn.microsoft.com/azure/chaos-studio/chaos-studio-workspaces-overview),
+[Workspace quickstart](https://learn.microsoft.com/azure/chaos-studio/quickstart-create-workspace),
+[Scenario catalog](https://learn.microsoft.com/azure/chaos-studio/chaos-studio-scenarios),
+and [Azure CLI guide](https://learn.microsoft.com/azure/chaos-studio/chaos-studio-manage-cli).
 
 The server relies on the user's local `az` CLI session for authentication
 rather than managing tokens itself, keeping the server stateless. It can also
 be pointed at an Azure Managed Identity for unattended runs — see
 [Authentication](#authentication). See the
-[copilot-cli-plugin README](../README.md) for the full tool table and how
+[Copilot CLI plugin guide](../README.md) for the full tool table and how
 this package fits into the Chaos Studio Copilot CLI plugin.
 
 ## Authentication

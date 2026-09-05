@@ -1,9 +1,9 @@
 ---
 name: chaos-impact
-description: "Synthesize an Azure Monitor impact report for a Chaos Studio v2 ScenarioRun: pulls the run, walks targeted resources, queries metrics/logs/activity-log/alerts over the run window ± buffer, and renders a Markdown + JSON impact card."
+description: "Synthesize an Azure Monitor impact report for a Chaos Studio Workspaces ScenarioRun: pulls the run, walks targeted resources, queries metrics/logs/activity-log/alerts over the run window ± buffer, and renders a Markdown + JSON impact card."
 ---
 
-# ChaosImpact — Post-Run Azure Monitor Synthesis
+# ChaosImpact — analyze Scenario run impact with Azure Monitor
 
 > ⛔ **ABSOLUTE RULE**: Do NOT improvise, skip, or substitute any step. On ANY error, STOP and wait for the user.
 
@@ -19,6 +19,8 @@ Monitor tools on the `chaos-studio` MCP server directly (`monitor_query_metrics`
 `monitor_query_logs`, `monitor_search_activity_log`) and assemble your own
 report. The PowerShell skill and the MCP tools are two independent surfaces
 over the same Azure endpoints — neither calls the other.
+See the [Azure Monitor impact analysis walkthrough](../../docs/impact-synthesis-skill.md)
+for sample output and troubleshooting.
 
 Both surfaces target `Microsoft.Chaos` `2026-05-01-preview` plus the pinned
 Azure Monitor API versions in `scripts/Constants.ps1`, and use the local

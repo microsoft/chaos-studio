@@ -1,10 +1,10 @@
-# Scenarios
+# Custom Scenarios for Chaos Studio Workspaces
 
 This directory is currently a contribution scaffold. It contains no custom
 Scenario definitions beyond this README.
 
 Chaos Studio Workspaces already provides supported Scenario templates. Review
-[Scenarios in Azure Chaos Studio](https://learn.microsoft.com/en-us/azure/chaos-studio/chaos-studio-scenarios)
+[Scenarios in Azure Chaos Studio](https://learn.microsoft.com/azure/chaos-studio/chaos-studio-scenarios)
 before creating a custom definition.
 
 Future contributions should use one folder per Scenario, store the

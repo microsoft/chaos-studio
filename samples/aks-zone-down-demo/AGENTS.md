@@ -10,13 +10,14 @@ preview). The arc matters:
 
 1. Deploy the AKS store demo app with its **default single-replica**
    deployments to a zone-redundant AKS cluster.
-2. Run the **Compute Zone Down** scenario against the zone the `store-front`
+2. Run the **Compute Zone Down** Scenario against the zone the `store-front`
    pod runs in. **The storefront going down is the expected, desired outcome
    of run 1** — it demonstrates the resilience gap. Do not treat the outage
    as an error to fix mid-run, and do not scale the deployment before run 1;
    that destroys the lesson.
-3. Apply the fix (replicas + zone topology spread constraint, in README.md
-   step 5), rerun the same scenario, and show the storefront surviving.
+3. Apply the fix (replicas + zone topology spread constraint, in the
+   [demo walkthrough](README.md#run-the-demo) step 5), rerun the same Scenario,
+   and show the storefront surviving.
 
 ## Ground rules
 
@@ -25,7 +26,7 @@ preview). The arc matters:
 - `deploy.sh` tags its resource group `chaos-demo=aks-zone-down-demo`, and
   `cleanup.sh` refuses to delete a group without that tag. Don't bypass the
   guard.
-- Confirm with the user before starting a scenario run and before any
+- Confirm with the user before starting a Scenario run and before any
   deletion.
 - Chaos Studio Workspaces are in public preview; regions and behavior can
   change. If something doesn't match these instructions, prefer the live
@@ -38,18 +39,18 @@ preview). The arc matters:
    cluster's infrastructure resource group (`MC_*`), and the zone the
    `store-front` pod landed in. Verify the storefront loads before
    proceeding.
-2. Create the workspace and run the scenario per README.md ("Run the demo").
+2. Create the Workspace and run the Scenario per the [demo walkthrough](README.md#run-the-demo).
    You can do this in the Azure portal with the user, or with the `az chaos`
    CLI extension and this repo's Copilot CLI plugin. Permissions: the Reader
-   banner on the workspace, and the **Fix Permissions** action on the
-   scenario configuration page when validation reports missing RBAC.
-3. Between runs, apply the fix exactly as written in README.md step 5, and
+   banner on the Workspace, and the **Fix Permissions** action on the
+   Scenario configuration page when validation reports missing RBAC.
+3. Between runs, apply the fix exactly as written in the demo walkthrough step 5, and
    confirm the replicas spread across nodes before rerunning.
 4. `./cleanup.sh` when finished (`FORCE=1` skips the confirmation prompt).
 
 ## References
 
-- Full walkthrough: <https://learn.microsoft.com/azure/chaos-studio/chaos-studio-tutorial-sample-app>
-- Manage workspaces and scenarios with the CLI: <https://learn.microsoft.com/azure/chaos-studio/chaos-studio-manage-cli>
-- Least-privilege roles: <https://learn.microsoft.com/azure/chaos-studio/chaos-studio-workspaces-least-privilege-roles>
-- Copilot CLI plugin: [`../../copilot-cli-plugin/`](../../copilot-cli-plugin/)
+- [Full AKS zone-resilience walkthrough](https://learn.microsoft.com/azure/chaos-studio/chaos-studio-tutorial-sample-app)
+- [Manage Workspaces and Scenarios with the CLI](https://learn.microsoft.com/azure/chaos-studio/chaos-studio-manage-cli)
+- [Least-privilege roles for Workspaces](https://learn.microsoft.com/azure/chaos-studio/chaos-studio-workspaces-least-privilege-roles)
+- [Copilot CLI plugin and MCP server](../../copilot-cli-plugin/)

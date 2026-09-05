@@ -1,9 +1,9 @@
 ---
 name: run-scenario
-description: "Execute a ScenarioConfiguration and stream ScenarioRun status with per-action breakdown until terminal state."
+description: "Execute a ScenarioConfiguration in Chaos Studio Workspaces and stream ScenarioRun status with per-Action breakdown until terminal state."
 ---
 
-# RunScenario — Scenario Execution & Status Streaming
+# RunScenario — start and monitor Scenario runs in Chaos Studio Workspaces
 
 > ⛔ **ABSOLUTE RULE**: Do NOT improvise, skip, or substitute any step. On ANY error, STOP and wait for the user.
 
@@ -11,7 +11,7 @@ description: "Execute a ScenarioConfiguration and stream ScenarioRun status with
 
 This skill is the **human-interactive** path: it reads run context from `startchaos-state.json`, renders status cards, and persists the run result. Use it when there is a user in the loop.
 
-If you are an **autonomous agent** with no user to prompt, use `chaos_execute_scenario` + `chaos_get_scenario_run` (MCP) for a non-interactive run-and-poll flow. Cancellation: `chaos_cancel_scenario_run`. See `mcp/README.md`.
+If you are an **autonomous agent** with no user to prompt, use `chaos_execute_scenario` + `chaos_get_scenario_run` (MCP) for a non-interactive run-and-poll flow. Cancellation: `chaos_cancel_scenario_run`. See the [MCP server guide](../../mcp/README.md).
 
 Both surfaces target `Microsoft.Chaos` `2026-05-01-preview` and use the local `az login` session for auth.
 
@@ -25,7 +25,7 @@ The AI orchestrator's **only** job is:
 2. Run the script.
 3. Handle exit codes (see below).
 
-The script takes **no parameters**: configuration name, scenario, and workspace are all read from state.
+The script takes **no parameters**: configuration name, Scenario, and Workspace are all read from state.
 
 ## Prerequisites
 
@@ -54,10 +54,10 @@ On `Ctrl+C`, the script invokes `ScenarioRuns_Cancel` (POST `.../runs/{runId}/ca
 
 ## What the Script Handles (no AI logic needed)
 
-- Confirmation card with scenario, parameters, and scope summary (suppressed when `STARTCHAOS_NONINTERACTIVE=1`)
+- Confirmation card with Scenario, parameters, and scope summary (suppressed when `STARTCHAOS_NONINTERACTIVE=1`)
 - Run start via `az chaos scenario run start --skip-validation --no-wait` (validation already gated upstream)
 - ScenarioRun ID resolution from the start result, with `az chaos scenario run list` fallback
-- Per-poll status via `az chaos scenario run show`: top status, elapsed time, per-action `scenarioRunSummary[]` table, resource count, error counts
+- Per-poll status via `az chaos scenario run show`: top status, elapsed time, per-Action `scenarioRunSummary[]` table, resource count, error counts
 - Terminal-state detection (`Succeeded`, `Failed`, `Canceled`) and final summary card
 - Atomic state writes with error envelopes
 - Cancellation handling
