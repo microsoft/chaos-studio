@@ -1,6 +1,6 @@
 # chaos-mcp: MCP server for Chaos Studio Workspaces
 
-MCP server exposing Azure Chaos Studio Workspaces operations as agent-callable tools.
+MCP server exposing Chaos Studio Workspaces operations as agent-callable tools.
 
 Before automating the service, review the Microsoft Learn
 [Workspaces overview](https://learn.microsoft.com/azure/chaos-studio/chaos-studio-workspaces-overview),

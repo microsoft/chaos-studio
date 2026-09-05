@@ -161,7 +161,7 @@ $elapsed = ((Get-Date) - $pipelineStart).ToString('hh\:mm\:ss')
 # If we resumed and the run was already done, use stored run data
 $scenarioName = ($state.setup.selectedScenarioId -split '/')[-1]
 
-Write-Card -Title 'Scenario Run Complete' -Status '✅ Success' -Properties ([ordered]@{
+Write-Card -Title 'Pipeline Complete' -Status '✅ Success' -Properties ([ordered]@{
     'Subscription'   = "$($state.context.subscriptionName) ($($state.context.subscriptionId))"
     'Workspace'      = $state.workspace.id
     'Scenario'       = $scenarioName
