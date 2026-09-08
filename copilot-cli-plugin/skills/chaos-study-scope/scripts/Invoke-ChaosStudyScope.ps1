@@ -105,7 +105,15 @@ param(
 
     # Scenario parameters, keyed by the names in the scenario's live parameter
     # list. Frozen onto the plan as the {key,value} pairs the service takes.
+    # These are what the configuration API accepts; anything the *action*
+    # declares goes in -ActionParameters instead.
     [hashtable]$Parameters,
+
+    # Action parameters, keyed by the names in the selected action's live
+    # parameter schema. Kept separate from -Parameters because the two schemas
+    # are different documents: checking a scenario's duration against an
+    # action's schema rejects a study the service would have accepted.
+    [hashtable]$ActionParameters,
 
     [string]$Hypothesis,
 
@@ -648,7 +656,18 @@ $probeSpec = ConvertFrom-ChaosMechanismProbe -Table $MechanismProbe
 $blastRadius = New-ChaosBlastRadius -Locations $FilterLocation -Zones $FilterZone -PhysicalZones $FilterPhysicalZone `
     -ExcludeResources $ExcludeResource -ExcludeTypes $ExcludeType -ExcludeTags $ExcludeTag
 
-$projected = ConvertTo-ChaosList (Resolve-ChaosBlastRadiusResource -ScopedResources $scopedResources -BlastRadius $blastRadius)
+# A blast-radius filter that cannot be evaluated is a hard stop, not an empty
+# scope: silently producing zero targets is indistinguishable from a workspace
+# with nothing in it, and the operator would go looking for the wrong problem.
+try {
+    $projected = ConvertTo-ChaosList (Resolve-ChaosBlastRadiusResource -ScopedResources $scopedResources -BlastRadius $blastRadius)
+}
+catch {
+    Write-ChaosStudyFailure -Title 'Blast-radius filter cannot be evaluated' `
+        -Message ([string]$_.Exception.Message) `
+        -Remediation 'Chaos Studio''s discoveredResources payload does not publish every attribute. Narrow the study with a selector the payload does carry - -ExcludeResource or -ExcludeType - rather than one the service never returns.'
+    exit (Get-ChaosStudyExitCode -Name 'Error')
+}
 
 # -- Readiness -------------------------------------------------------------
 
@@ -680,9 +699,11 @@ $exerciseModel = New-ChaosExerciseModel `
     -Assumption $exerciseAssumptions
 
 $readiness = Invoke-ChaosReadinessGates -Action $selectedAction `
+    -Scenario $selectedScenario `
     -ScopedResourceTypes $scopeTypesForGates `
     -ScopedResources $projected `
     -Parameters $Parameters `
+    -ActionParameters $ActionParameters `
     -SteadyState $predicate `
     -InjectMinutes $DurationMinutes `
     -AvailableSources $SignalSource `
@@ -691,7 +712,8 @@ $readiness = Invoke-ChaosReadinessGates -Action $selectedAction `
     -MechanismProbe $probeSpec `
     -ExerciseModel $exerciseModel `
     -AcceptWeakExercise:$AcceptWeakExercise `
-    -DiscoverySkipped:$SkipDiscovery
+    -DiscoverySkipped:$SkipDiscovery `
+    -DiscoveredCount $(if ($SkipDiscovery) { $null } else { @($scopedResources).Count })
 
 $limitationCodes = @($readiness.limitationCodes)
 if ($SkipDiscovery -and $limitationCodes -notcontains 'L10') { $limitationCodes += 'L10' }
@@ -725,6 +747,7 @@ $scopeHash = Get-ChaosScopeHash -SubscriptionId $SubscriptionId -ResourceGroup $
 $study = New-ChaosStudy -ScopeHash $scopeHash -StudyRoot $StudyRoot
 Move-ChaosStudyStaging -StudyPath $study.path -StagingPath $stagingPath | Out-Null
 $scenarioParameters = ConvertTo-ChaosList (ConvertTo-ChaosScenarioParameter -Table $Parameters)
+$actionParameters = ConvertTo-ChaosList (ConvertTo-ChaosScenarioParameter -Table $ActionParameters)
 $declaredVsEffective = $null
 
 if (-not $SkipDiscovery) {
@@ -898,6 +921,10 @@ $plan = [ordered]@{
         appliesTo        = @($selectedAction.appliesTo)
         recommendedRoles = @($selectedAction.recommendedRoles)
         parametersSchema = $selectedAction.parametersSchema
+        # Action parameters are frozen separately from the scenario's: they are
+        # validated against a different schema and must be reproduced exactly on
+        # rerun, so they cannot share one bucket.
+        parameters       = @($actionParameters)
     }
 
     windows     = [ordered]@{

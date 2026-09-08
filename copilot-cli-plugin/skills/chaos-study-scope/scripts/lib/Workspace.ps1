@@ -629,10 +629,27 @@ function Resolve-ChaosBlastRadiusResource {
     $candidates = @(@($ScopedResources) | Where-Object { $null -ne $_ })
     if ($null -eq $BlastRadius) { return , @($candidates) }
 
+    # A filter on metadata the discovery API does not return would quietly
+    # match nothing, and an empty scope reads exactly like a workspace with no
+    # resources - so the study would report "no resources" when what actually
+    # happened is that the filter could not be evaluated at all. Refuse instead.
+    $assertFilterable = {
+        param([string]$Axis, [scriptblock]$Present)
+        if ($candidates.Count -eq 0) { return }
+        $known = @($candidates | Where-Object { & $Present $_ })
+        if ($known.Count -gt 0) { return }
+        throw ("Cannot filter by $Axis`: the Chaos Studio discovery API does not return $Axis for any of the $($candidates.Count) discovered resource(s), so the filter could not be evaluated and would silently select nothing. " +
+            "Drop -Filter$($Axis.Substring(0,1).ToUpperInvariant())$($Axis.Substring(1)) and narrow the scope with -ExcludeResource or -ExcludeType, which compare fields discovery does return.")
+    }
+
     $filters = Get-ChaosBlastRadiusMember -Container $BlastRadius -Name 'filters'
     if ($null -ne $filters) {
         $wantedLocations = Get-ChaosBlastRadiusMember -Container $filters -Name 'locations'
         if ($null -ne $wantedLocations) {
+            & $assertFilterable 'location' {
+                param($r)
+                ($r.PSObject.Properties.Name -contains 'location') -and -not [string]::IsNullOrWhiteSpace([string]$r.location)
+            }
             $locationSet = @(@($wantedLocations) | ForEach-Object { ([string]$_).ToLowerInvariant() })
             $candidates = @($candidates | Where-Object {
                     -not [string]::IsNullOrWhiteSpace($_.location) -and $locationSet -contains $_.location.ToLowerInvariant()
@@ -641,6 +658,10 @@ function Resolve-ChaosBlastRadiusResource {
 
         $wantedZones = Get-ChaosBlastRadiusMember -Container $filters -Name 'zones'
         if ($null -ne $wantedZones) {
+            & $assertFilterable 'zone' {
+                param($r)
+                ($r.PSObject.Properties.Name -contains 'zones') -and @(@($r.zones) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -gt 0
+            }
             $zoneSet = @(@($wantedZones) | ForEach-Object { [string]$_ })
             $candidates = @($candidates | Where-Object {
                     $owned = @(@($_.zones) | ForEach-Object { [string]$_ })

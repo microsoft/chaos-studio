@@ -45,7 +45,10 @@ through a run.
 
 **Parameters are validated against the service's schema.** Not against a copy of
 it. Required properties, enums and types come from the live `parametersSchema`,
-so validation cannot drift from the platform.
+so validation cannot drift from the platform. Scenario knobs and action knobs
+are different documents: `-Parameters` is checked against the scenario's schema
+and is what the configuration carries, `-ActionParameters` against the action's.
+Neither is ever silently checked against the other.
 
 **Freeze what was approved.** The plan is written once and hashed. The run skill
 re-computes that hash; if it changed, the run refuses (exit `12`). What you
@@ -88,10 +91,15 @@ Useful switches:
   when it does not exist. Without it, a missing workspace is an error rather
   than an implicit provisioning action.
 - `-Location` — region for a workspace being created
-- `-Parameters @{ ... }` — scenario knobs, validated against the live schema
+- `-Parameters @{ ... }` — scenario knobs, validated against the live scenario
+  schema; these are what the configuration carries
+- `-ActionParameters @{ ... }` — action knobs, validated against the action's own
+  schema and recorded on the plan. The V2 configuration body takes scenario
+  parameters only, so these are declared and frozen, never transmitted.
 - `-FilterLocation` / `-FilterZone` / `-ExcludeResource` / `-ExcludeType` /
   `-ExcludeTag` — the blast radius, frozen onto the plan as the configuration's
-  `filters` and `exclusions`
+  `filters` and `exclusions`. Discovery does not report a location or zone, so
+  those two filters fail loudly rather than silently emptying the scope.
 - `-SignalSource` — the evidence to collect (`metrics:` / `logs:`); no defaults
   are invented for you
 - `-Hypothesis` — what you expect to happen, recorded for honesty at report time

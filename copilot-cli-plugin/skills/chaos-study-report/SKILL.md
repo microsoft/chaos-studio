@@ -17,10 +17,14 @@ the same evidence it produces the same report, every time.
 **Absent evidence is reported as absent.** A signal that was not collected
 renders as *not measured*, never as `0`. A zero is a measurement; a gap is not.
 
-**A pass requires proof the action landed.** If no collected signal moved between
-the baseline and injection windows, the verdict is **Inconclusive**, not "held".
-Claiming resilience against an action that never arrived is the most expensive
-mistake this suite can make, so it is designed out.
+**A pass requires proof the action landed.** Movement is not proof. The plan
+freezes a mechanism probe with a numeric condition, and the report evaluates that
+exact condition against evidence taken from inside the action's own window. A
+signal that drifted the right way but never met the threshold does not prove
+anything, and a condition that cannot be parsed or was never measured is reported
+as unproven with its reason — never as a pass. Without that proof the verdict is
+**Inconclusive**, not "held". Claiming resilience against an action that never
+arrived is the most expensive mistake this suite can make, so it is designed out.
 
 **Severity follows recovery, not drama.** A breach that never recovers is
 `critical`. The identical breach that self-heals within the recovery window is

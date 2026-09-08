@@ -331,12 +331,14 @@ and you will be asked again.
         Write-ChaosStudyNote -Message "Cancelling scenario run $runId."
         $cancelResidue = Invoke-ChaosResidueRemoval -StudyPath $studyPath -Kind 'scenarioRun' -Id $runId -Removal {
             Stop-ChaosStudyScenarioRun -Plan $plan -RunId $runId -Adapter $Adapter -StudyPath $studyPath
+        } -VerifyAbsent {
+            Test-ChaosStudyScenarioRunAbsent -Plan $plan -RunId $runId -Adapter $Adapter -StudyPath $studyPath
         }
-        if ($cancelResidue.status -ne 'succeeded') {
-            Write-ChaosStudyNote -Message "Scenario run $runId could not be confirmed cancelled: $($cancelResidue.error)" -Level 'warn'
+        if (-not $cancelResidue.removed) {
+            Write-ChaosStudyNote -Message "Scenario run $runId is not confirmed stopped (state: $($cancelResidue.status)). $($cancelResidue.error)" -Level 'warn'
         }
         Add-ChaosCommandTrailEntry -StudyPath $studyPath -Phase 'run' -Command 'az chaos scenario run cancel' `
-            -Arguments @($runId, "cleanup=$($cancelResidue.status)") -ExitCode $(if ($cancelResidue.status -eq 'succeeded') { 0 } else { 1 }) | Out-Null
+            -Arguments @($runId, "cleanup=$($cancelResidue.status)") -ExitCode $(if ($cancelResidue.removed) { 0 } else { 1 }) | Out-Null
     }
     if ($configurationResidueKind) {
         if ($KeepConfiguration) {
@@ -346,12 +348,14 @@ and you will be asked again.
             Write-ChaosStudyNote -Message "Deleting scenario configuration $configurationName."
             $configResidue = Invoke-ChaosResidueRemoval -StudyPath $studyPath -Kind $configurationResidueKind -Id $configurationName -Removal {
                 Remove-ChaosStudyConfiguration -Plan $plan -ConfigurationName $configurationName -Adapter $Adapter -StudyPath $studyPath
+            } -VerifyAbsent {
+                Test-ChaosStudyConfigurationAbsent -Plan $plan -ConfigurationName $configurationName -Adapter $Adapter -StudyPath $studyPath
             }
-            if ($configResidue.status -ne 'succeeded') {
-                Write-ChaosStudyNote -Message "Scenario configuration $configurationName could not be confirmed deleted: $($configResidue.error)" -Level 'warn'
+            if (-not $configResidue.removed) {
+                Write-ChaosStudyNote -Message "Scenario configuration $configurationName is not confirmed deleted (state: $($configResidue.status)). $($configResidue.error)" -Level 'warn'
             }
             Add-ChaosCommandTrailEntry -StudyPath $studyPath -Phase 'run' -Command 'az chaos scenario config delete' `
-                -Arguments @($configurationName, "cleanup=$($configResidue.status)") -ExitCode $(if ($configResidue.status -eq 'succeeded') { 0 } else { 1 }) | Out-Null
+                -Arguments @($configurationName, "cleanup=$($configResidue.status)") -ExitCode $(if ($configResidue.removed) { 0 } else { 1 }) | Out-Null
         }
     }
 }

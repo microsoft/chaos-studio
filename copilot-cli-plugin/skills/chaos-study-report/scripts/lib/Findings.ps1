@@ -31,6 +31,12 @@ Set-StrictMode -Version Latest
 $script:ChaosFindingsContractVersion = 'findings.v2'
 $script:ChaosFindingsLegacyVersions = @('findings.v1')
 
+# Signal identity is resolved in exactly one place for the whole suite. The
+# report must answer "which collected result carries the objective's signal?"
+# the same way scoping answered "can any source produce it?", or a study passes
+# scoping and then reports its own objective unreadable.
+. (Join-Path $PSScriptRoot '..' '..' '..' 'chaos-study' 'scripts' 'lib' 'SignalIdentity.ps1')
+
 function Get-ChaosFindingsContractVersion {
     <#
     .SYNOPSIS
@@ -198,6 +204,179 @@ function Get-ChaosImpactDelta {
     }
 }
 
+function ConvertFrom-ChaosProbeCondition {
+    <#
+    .SYNOPSIS
+        Parse a mechanism probe's `condition` into something evaluable.
+
+    .DESCRIPTION
+        The condition is the falsifiable half of the probe: `>= 80`, `cpu >= 80`,
+        `< 10 ms`. Without it, "the number moved" is all that can be said - and a
+        CPU that drifted 1.59 to 2.06 under ordinary load moved, which is exactly
+        how a study once declared a fault landed when the agent had failed to
+        install. So the operator and the threshold are parsed here, and anything
+        that cannot be parsed is reported as unparseable rather than being
+        quietly reduced to a direction check.
+
+    .OUTPUTS
+        { raw; operator; threshold; unit; parsed; reason }
+        parsed:$false always carries a reason the operator can act on.
+    #>
+    param([AllowNull()][AllowEmptyString()][string]$Condition)
+
+    if ([string]::IsNullOrWhiteSpace($Condition)) {
+        return [pscustomobject]@{
+            raw = $Condition; operator = $null; threshold = $null; unit = $null
+            parsed = $false
+            reason = 'the probe carries no condition, so there is no threshold the mechanism can be held to'
+        }
+    }
+
+    $raw = $Condition.Trim()
+    # `<signal> <op> <number> [unit]` or just `<op> <number> [unit]`.
+    $match = [regex]::Match($raw, '(>=|<=|==|!=|=>|=<|>|<)\s*(-?[0-9]+(?:\.[0-9]+)?)\s*([A-Za-z%/]*)')
+    if (-not $match.Success) {
+        return [pscustomobject]@{
+            raw = $raw; operator = $null; threshold = $null; unit = $null
+            parsed = $false
+            reason = "no comparison operator and numeric threshold could be read from '$raw'"
+        }
+    }
+
+    $operator = switch ($match.Groups[1].Value) {
+        '=>' { '>=' }
+        '=<' { '<=' }
+        default { $match.Groups[1].Value }
+    }
+    $threshold = 0.0
+    if (-not [double]::TryParse($match.Groups[2].Value, [ref]$threshold)) {
+        return [pscustomobject]@{
+            raw = $raw; operator = $operator; threshold = $null; unit = $null
+            parsed = $false
+            reason = "the threshold in '$raw' is not a number"
+        }
+    }
+
+    $unit = $match.Groups[3].Value
+    return [pscustomobject]@{
+        raw       = $raw
+        operator  = $operator
+        threshold = $threshold
+        unit      = if ([string]::IsNullOrWhiteSpace($unit)) { $null } else { $unit }
+        parsed    = $true
+        reason    = $null
+    }
+}
+
+function Test-ChaosProbeCondition {
+    <#
+    .SYNOPSIS
+        Does one measured value satisfy a parsed probe condition?
+
+    .OUTPUTS
+        $true, $false, or $null when the condition or the value is unusable.
+        Unusable is never a pass.
+    #>
+    param(
+        [Parameter(Mandatory)][AllowNull()][object]$Condition,
+        [AllowNull()][object]$Value
+    )
+    if ($null -eq $Condition -or -not $Condition.parsed) { return $null }
+    if ($null -eq $Value) { return $null }
+    $actual = 0.0
+    if (-not [double]::TryParse([string]$Value, [ref]$actual)) { return $null }
+    $threshold = [double]$Condition.threshold
+    switch ([string]$Condition.operator) {
+        '>=' { return $actual -ge $threshold }
+        '>'  { return $actual -gt $threshold }
+        '<=' { return $actual -le $threshold }
+        '<'  { return $actual -lt $threshold }
+        '==' { return $actual -eq $threshold }
+        '!=' { return $actual -ne $threshold }
+        default { return $null }
+    }
+}
+
+function Get-ChaosSignalWindowPoint {
+    <#
+    .SYNOPSIS
+        The measurement points of a signal that fall inside an action window.
+
+    .DESCRIPTION
+        A probe must land *during the action*, not merely somewhere in a
+        collected series. When the evidence carries timestamps and the window is
+        known, this narrows the series to the points that were actually inside
+        it, so a value drifting after the action stopped cannot be read as the
+        action's doing.
+
+    .OUTPUTS
+        { points; total; inWindow; verifiable }
+        verifiable:$false means the evidence carries no usable timestamps, in
+        which case the collector's own window boundary is all there is.
+    #>
+    param(
+        [AllowNull()][object]$Signal,
+        [AllowNull()][object]$ActionWindow
+    )
+
+    $empty = [pscustomobject]@{ points = @(); total = 0; inWindow = 0; verifiable = $false }
+    if ($null -eq $Signal -or $null -eq $Signal.values) { return $empty }
+
+    $values = $Signal.values
+    if ($values -is [string]) { return $empty }
+    # A summary row (a dictionary of column -> value) is not a time series, so
+    # there are no points to place inside a window.
+    if ($values -is [System.Collections.IDictionary]) { return $empty }
+    # PowerShell unwraps a one-element array on assignment, so a single-sample
+    # series arrives here as a bare point object. Treat it as the series it is,
+    # or a one-sample measurement would skip the window check entirely.
+    $points = if ($values -is [System.Collections.IEnumerable]) { @($values) } else { @($values) }
+
+    $start = [datetime]::MinValue
+    $end = [datetime]::MaxValue
+    $haveWindow = $false
+    if ($null -ne $ActionWindow) {
+        $rawStart = if ($ActionWindow.PSObject.Properties.Name -contains 'start') { [string]$ActionWindow.start } else { '' }
+        $rawEnd = if ($ActionWindow.PSObject.Properties.Name -contains 'end') { [string]$ActionWindow.end } else { '' }
+        $parsedStart = [datetime]::MinValue
+        $parsedEnd = [datetime]::MaxValue
+        $okStart = [datetime]::TryParse($rawStart, [ref]$parsedStart)
+        $okEnd = [datetime]::TryParse($rawEnd, [ref]$parsedEnd)
+        if ($okStart -or $okEnd) {
+            $haveWindow = $true
+            if ($okStart) { $start = $parsedStart.ToUniversalTime() }
+            if ($okEnd) { $end = $parsedEnd.ToUniversalTime() }
+        }
+    }
+
+    $total = 0
+    $inside = [System.Collections.Generic.List[object]]::new()
+    $sawTimestamp = $false
+    foreach ($point in $points) {
+        if ($null -eq $point) { continue }
+        $total++
+        if ($point -is [string]) { continue }
+        $stamp = $null
+        foreach ($name in @('timestamp', 'sampledAt', 'TimeGenerated', 'timeStamp')) {
+            if ($point.PSObject.Properties.Name -contains $name) {
+                $candidate = $point.$name
+                if ($null -ne $candidate -and -not [string]::IsNullOrWhiteSpace([string]$candidate)) { $stamp = [string]$candidate; break }
+            }
+        }
+        if ($null -eq $stamp) { continue }
+        $parsed = [datetime]::MinValue
+        if (-not [datetime]::TryParse($stamp, [ref]$parsed)) { continue }
+        $sawTimestamp = $true
+        $utc = $parsed.ToUniversalTime()
+        if ($utc -ge $start -and $utc -le $end) { [void]$inside.Add($point) }
+    }
+
+    if (-not $sawTimestamp -or -not $haveWindow) {
+        return [pscustomobject]@{ points = @(); total = $total; inWindow = 0; verifiable = $false }
+    }
+    return [pscustomobject]@{ points = @($inside); total = $total; inWindow = $inside.Count; verifiable = $true }
+}
+
 function Test-ChaosMechanismProbe {
     <#
     .SYNOPSIS
@@ -232,7 +411,8 @@ function Test-ChaosMechanismProbe {
         [AllowNull()][object]$Probe,
         [AllowNull()][object[]]$Before,
         [AllowNull()][object[]]$During,
-        [AllowNull()][AllowEmptyCollection()][string[]]$ExpectedResourceIds = @()
+        [AllowNull()][AllowEmptyCollection()][string[]]$ExpectedResourceIds = @(),
+        [AllowNull()][object]$ActionWindow = $null
     )
 
     if ($null -eq $Probe) {
@@ -241,6 +421,7 @@ function Test-ChaosMechanismProbe {
             direction = $null
             signal    = $null
             detail    = 'No mechanism probe was frozen on this plan, so the mechanism cannot be proven - a signal moving is not, on its own, evidence the stated mechanism reached the system.'
+            evidence  = $null
         }
     }
 
@@ -358,14 +539,79 @@ function Test-ChaosMechanismProbe {
     $dValue = & $readValue $duringMatch
     $bValue = & $readValue $beforeMatch
 
+    # The condition is the falsifiable half of the probe. Direction alone says
+    # only that a number changed; the condition says it reached the value the
+    # mechanism predicts. Both are required, and an unparseable condition is a
+    # gap - never a pass.
+    $parsedCondition = ConvertFrom-ChaosProbeCondition -Condition $condition
+
+    # Landing must happen inside the action window. When the evidence carries
+    # timestamps, the value is re-read from the in-window points only, so drift
+    # after the action stopped cannot be credited to it.
+    $windowNote = $null
+    $duringWindow = Get-ChaosSignalWindowPoint -Signal $duringMatch -ActionWindow $ActionWindow
+    if ($duringWindow.verifiable) {
+        if ($duringWindow.inWindow -eq 0) {
+            return [pscustomobject]@{
+                proven    = $false
+                direction = $direction
+                signal    = $probeLabel
+                detail    = "The mechanism probe '$probeLabel' returned $($duringWindow.total) measurement(s), none of which fall inside the action window, so nothing it measured can be attributed to the action."
+                evidence  = $null
+            }
+        }
+        $scoped = [pscustomobject]@{ source = $duringMatch.source; window = $duringMatch.window; values = @($duringWindow.points); caveat = $null }
+        $inWindowValue = & $readValue $scoped
+        if ($null -ne $inWindowValue) { $dValue = $inWindowValue }
+        $windowNote = "$($duringWindow.inWindow) of $($duringWindow.total) measurement(s) fell inside the action window."
+    }
+
+    $provenance = {
+        param($value)
+        [ordered]@{
+            probeSignal   = $probeLabel
+            source        = if ($null -ne $duringMatch) { [string]$duringMatch.source } else { $null }
+            window        = 'during'
+            condition     = if ([string]::IsNullOrWhiteSpace($condition)) { $null } else { $condition }
+            evaluatedValue = $value
+            baselineValue = $bValue
+            pointsTotal   = [int]$duringWindow.total
+            pointsInWindow = if ($duringWindow.verifiable) { [int]$duringWindow.inWindow } else { $null }
+            windowVerified = [bool]$duringWindow.verifiable
+        }
+    }
+
     $result = {
         param($ok, $detail)
-        [pscustomobject]@{ proven = $ok; direction = $direction; signal = $probeLabel; detail = $detail }
+        [pscustomobject]@{
+            proven = $ok; direction = $direction; signal = $probeLabel
+            detail = if ([string]::IsNullOrWhiteSpace($windowNote)) { $detail } else { "$detail $windowNote" }
+            evidence = if ($ok -eq $true) { & $provenance $dValue } else { $null }
+        }
+    }
+
+    $gap = {
+        param($detail)
+        [pscustomobject]@{
+            proven = $null; direction = $direction; signal = $probeLabel
+            detail = $detail; evidence = $null
+        }
     }
 
     switch ($direction) {
         'appears' {
             if (-not $beforePresent -and $duringPresent) {
+                # A discrete probe may still carry a threshold; when it does the
+                # appearance alone is not enough.
+                if ($parsedCondition.parsed) {
+                    $satisfied = Test-ChaosProbeCondition -Condition $parsedCondition -Value $dValue
+                    if ($null -eq $satisfied) {
+                        return & $gap "The mechanism probe '$probeLabel' appeared during the action window but its condition '$condition' could not be evaluated against the measurement, so the mechanism is not proven."
+                    }
+                    if (-not $satisfied) {
+                        return & $result $false "The mechanism probe '$probeLabel' appeared during the action window but did not satisfy '$condition' (measured $dValue), so the mechanism is not proven."
+                    }
+                }
                 return & $result $true "The mechanism probe '$probeLabel' was absent before injection and appeared during the action window, as the mechanism predicts."
             }
             return & $result $false "The mechanism probe '$probeLabel' did not appear during the action window as predicted, so the mechanism is not proven."
@@ -376,62 +622,58 @@ function Test-ChaosMechanismProbe {
             }
             return & $result $false "The mechanism probe '$probeLabel' did not disappear during the action window as predicted, so the mechanism is not proven."
         }
-        'crosses' {
-            $threshold = $null
-            if ($condition -match '(-?[0-9]+(?:\.[0-9]+)?)') { $threshold = [double]$Matches[1] }
-            if ($null -ne $threshold -and $null -ne $bValue -and $null -ne $dValue) {
-                # Local names must not collide with the $Before/$During parameters:
-                # those are type-constrained to [object[]], so assigning a bool to
-                # $before/$during would coerce it back into an array and break the
-                # comparison. Use distinct names.
-                $beforeCrossed = ($bValue -ge $threshold)
-                $duringCrossed = ($dValue -ge $threshold)
-                if ($beforeCrossed -ne $duringCrossed) {
-                    return & $result $true "The mechanism probe '$probeLabel' crossed the threshold in '$condition' (from $bValue to $dValue), as the mechanism predicts."
-                }
-                return & $result $false "The mechanism probe '$probeLabel' did not cross the threshold in '$condition' (stayed at $dValue), so the mechanism is not proven."
-            }
-            # Without a numeric threshold or comparable values, any movement of
-            # the probe's own signal is the best available evidence.
-            if ($null -ne $bValue -and $null -ne $dValue -and $bValue -ne $dValue) {
-                return & $result $true "The mechanism probe '$probeLabel' moved from $bValue to $dValue during the action window."
-            }
-            if (($duringPresent -and (& $numericColumnMissing $duringMatch)) -or ($beforePresent -and (& $numericColumnMissing $beforeMatch))) {
-                return [pscustomobject]@{
-                    proven    = $null
-                    direction = $direction
-                    signal    = $probeLabel
-                    detail    = "The mechanism probe '$probeLabel' returned rows but no numeric column named $(& $expectedColumns) could be read, so whether it crossed '$condition' cannot be judged. Have the probe query project one of those columns."
-                }
-            }
-            return & $result $false "The mechanism probe '$probeLabel' did not move during the action window, so the mechanism is not proven."
-        }
         default {
-            if ($null -eq $bValue -or $null -eq $dValue) {
-                # Distinguish a real measurement gap from a probe misconfigured
-                # to project no readable numeric column: the latter is a config
-                # error the operator can fix, not evidence the mechanism was
-                # simply not observed.
-                if (($duringPresent -and (& $numericColumnMissing $duringMatch)) -or ($beforePresent -and (& $numericColumnMissing $beforeMatch))) {
-                    return [pscustomobject]@{
-                        proven    = $null
-                        direction = $direction
-                        signal    = $probeLabel
-                        detail    = "The mechanism probe '$probeLabel' returned rows but no numeric column named $(& $expectedColumns) could be read, so its '$direction' movement cannot be judged. Have the probe query project one of those columns."
-                    }
-                }
-                return [pscustomobject]@{
-                    proven    = $null
-                    direction = $direction
-                    signal    = $probeLabel
-                    detail    = "The mechanism probe '$probeLabel' could not be compared across the baseline and action windows, so whether it moved '$direction' is unknown."
-                }
+            if ($direction -ne 'crosses' -and $direction -ne 'up' -and $direction -ne 'down') {
+                return & $gap "The mechanism probe '$probeLabel' declares an expectedDirection of '$direction', which this study cannot evaluate, so the mechanism is not proven."
             }
-            $moved = if ($direction -eq 'up') { $dValue -gt $bValue } elseif ($direction -eq 'down') { $dValue -lt $bValue } else { $false }
-            if ($moved) {
-                return & $result $true "The mechanism probe '$probeLabel' moved $direction (from $bValue to $dValue) within the action window, as the mechanism predicts."
+
+            # No usable threshold means no falsifiable claim. Movement is not a
+            # substitute for it: that substitution is the defect this guards.
+            if (-not $parsedCondition.parsed) {
+                return & $gap "The mechanism probe '$probeLabel' cannot be judged because $($parsedCondition.reason). Movement on its own is not evidence the mechanism landed, so the mechanism is not proven. Re-scope with a -MechanismProbe condition such as '$probeLabel >= 80'."
             }
-            return & $result $false "The mechanism probe '$probeLabel' did not move $direction within the action window (from $bValue to $dValue), so the mechanism is not proven."
+
+            if ($null -eq $dValue) {
+                if ($duringPresent -and (& $numericColumnMissing $duringMatch)) {
+                    return & $gap "The mechanism probe '$probeLabel' returned rows but no numeric column named $(& $expectedColumns) could be read, so whether it satisfied '$condition' cannot be judged. Have the probe query project one of those columns."
+                }
+                return & $gap "The mechanism probe '$probeLabel' was not measured during the action window, so whether it satisfied '$condition' is unknown."
+            }
+
+            $duringSatisfied = Test-ChaosProbeCondition -Condition $parsedCondition -Value $dValue
+            if ($null -eq $duringSatisfied) {
+                return & $gap "The mechanism probe '$probeLabel' measured $dValue, but '$condition' could not be evaluated against it, so the mechanism is not proven."
+            }
+            if (-not $duringSatisfied) {
+                return & $result $false "The mechanism probe '$probeLabel' measured $dValue during the action window, which does not satisfy '$condition', so the mechanism is not proven."
+            }
+
+            if ($direction -eq 'crosses') {
+                # Crossing means the condition was NOT met before and IS met
+                # during. Without a baseline there is no crossing to observe.
+                if ($null -eq $bValue) {
+                    return & $gap "The mechanism probe '$probeLabel' satisfied '$condition' during the action window, but it was not measured beforehand, so it cannot be shown to have crossed rather than to have always been there."
+                }
+                $beforeSatisfied = Test-ChaosProbeCondition -Condition $parsedCondition -Value $bValue
+                if ($null -eq $beforeSatisfied) {
+                    return & $gap "The mechanism probe '$probeLabel' satisfied '$condition' during the action window, but the baseline reading could not be evaluated against it, so a crossing cannot be shown."
+                }
+                if ($beforeSatisfied) {
+                    return & $result $false "The mechanism probe '$probeLabel' already satisfied '$condition' before injection (baseline $bValue, during $dValue), so it did not cross and the mechanism is not proven."
+                }
+                return & $result $true "The mechanism probe '$probeLabel' crossed '$condition' during the action window (baseline $bValue, during $dValue), as the mechanism predicts."
+            }
+
+            # up / down: the condition is met AND the value moved the predicted
+            # way relative to the baseline, when a baseline exists.
+            if ($null -ne $bValue) {
+                $moved = if ($direction -eq 'up') { $dValue -gt $bValue } else { $dValue -lt $bValue }
+                if (-not $moved) {
+                    return & $result $false "The mechanism probe '$probeLabel' satisfied '$condition' at $dValue but did not move $direction from its baseline of $bValue, so the action cannot be shown to have caused it."
+                }
+                return & $result $true "The mechanism probe '$probeLabel' moved $direction from $bValue to $dValue and satisfied '$condition' within the action window, as the mechanism predicts."
+            }
+            return & $result $true "The mechanism probe '$probeLabel' measured $dValue within the action window, satisfying '$condition', as the mechanism predicts."
         }
     }
 }
@@ -682,9 +924,10 @@ function Build-StudyFindings {
     $delta = Get-ChaosImpactDelta -Before $pre -During $during
 
     # Mechanism proof binds to the exact frozen probe evaluated over the action
-    # window's evidence, never to "any signal moved". A v1/v2 plan carries no
-    # frozen probe, so those studies fall back to the generic movement check
-    # rather than being refused a report.
+    # window's evidence, never to "any signal moved". A plan carrying no frozen
+    # probe therefore cannot prove its mechanism at all: the generic movement
+    # check that once stood in here would report a fault as landed whenever any
+    # collected number happened to change, which is precisely a false pass.
     $frozenProbe = $null
     if (($Plan.PSObject.Properties.Name -contains 'mechanism') -and $Plan.mechanism -and
         ($Plan.mechanism.PSObject.Properties.Name -contains 'mechanismProbe')) {
@@ -696,26 +939,39 @@ function Build-StudyFindings {
         $expectedResourceIds = @($Plan.scope.projectedResources)
     }
 
-    if ($null -ne $frozenProbe) {
-        $probeResult = Test-ChaosMechanismProbe -Probe $frozenProbe -Before $pre -During $during -ExpectedResourceIds $expectedResourceIds
-        $mechanismProven = $probeResult.proven -eq $true
-        $mechanismMoved = $probeResult.proven
-        $mechanismDetail = $probeResult.detail
+    # The action window is what "during" is supposed to mean. Reading it here
+    # lets the probe reject measurements that fall outside it rather than
+    # trusting that whatever the collector labelled 'during' truly was.
+    $probeActionWindow = $null
+    if (($RunRecord.PSObject.Properties.Name -contains 'windows') -and $null -ne $RunRecord.windows -and
+        ($RunRecord.windows.PSObject.Properties.Name -contains 'action')) {
+        $probeActionWindow = $RunRecord.windows.action
     }
-    else {
-        $mechanismProven = $delta.moved -eq $true
-        $mechanismMoved = $delta.moved
-        $mechanismDetail = $delta.detail
-    }
+
+    $probeResult = Test-ChaosMechanismProbe -Probe $frozenProbe -Before $pre -During $during `
+        -ExpectedResourceIds $expectedResourceIds -ActionWindow $probeActionWindow
+    $mechanismProven = $probeResult.proven -eq $true
+    $mechanismMoved = $probeResult.proven
+    $mechanismDetail = $probeResult.detail
+    $mechanismEvidence = if ($probeResult.PSObject.Properties.Name -contains 'evidence') { $probeResult.evidence } else { $null }
 
     $predicate = $Plan.question.steadyState
     $signalName = [string]$predicate.signal
 
+    $configuredSources = @()
+    if (($Plan.PSObject.Properties.Name -contains 'signals') -and $Plan.signals -and
+        ($Plan.signals.PSObject.Properties.Name -contains 'configuredSources') -and $Plan.signals.configuredSources) {
+        $configuredSources = @($Plan.signals.configuredSources | ForEach-Object { [string]$_ })
+    }
+
+    # The objective's signal is found by the one identity rule the whole suite
+    # shares. A log result is stored under `logs:<workspaceId>` but carries the
+    # objective's column inside its values, so looking only at the source id -
+    # as this once did - reported a signal the run had truthfully measured as
+    # unreadable. A measured zero is a measurement; only absence is missing.
     $findByName = {
         param($set)
-        $match = @($set) | Where-Object { $_.source -eq "metrics:$signalName" -or $_.source -eq $signalName } | Select-Object -First 1
-        if ($match) { return $match }
-        return $null
+        return Select-ChaosSignalByName -Signals @($set) -SignalName $signalName -Sources $configuredSources
     }
 
     # A collector reports either a named column or a time series. Scoping has
@@ -782,7 +1038,15 @@ function Build-StudyFindings {
 
     if (-not $mechanismProven) {
         $limitations += 'L3'
-        $evidenceRef = @([ordered]@{ signal = 'all-sources'; window = 'during'; kind = 'mechanism' })
+        # The evidence ref points at the probe that was actually evaluated, not
+        # at 'all-sources', so a reader can trace the claim back to the exact
+        # measurement that failed to support it.
+        $evidenceRef = if ($null -ne $probeResult -and $probeResult.signal) {
+            @([ordered]@{ signal = [string]$probeResult.signal; window = 'during'; kind = 'mechanism' })
+        }
+        else {
+            @([ordered]@{ signal = 'no-frozen-probe'; window = 'during'; kind = 'mechanism' })
+        }
         $findings += New-ChaosFinding -Key (Get-ChaosFindingKey -ActionUrn $actionIdentity -Signal 'mechanism' -Predicate 'impact-proof') `
             -Kind 'operational' `
             -Title 'Injection was not proven to reach the system' `
@@ -870,19 +1134,21 @@ function Build-StudyFindings {
         # stranded role assignment is a standing grant on someone's
         # subscription; a stranded configuration is clutter. Both belong in the
         # report, but they are not the same problem.
+        # 'verified-absent' is the only status that means gone; see
+        # Test-ChaosResidueRemoved for why a command that returned 0 is not it.
         $unresolvedKinds = @(@($residue.entries) |
-            Where-Object { $_ -and $_.status -ne 'succeeded' } |
+            Where-Object { $_ -and $_.status -ne 'verified-absent' } |
             ForEach-Object { [string]$_.kind })
         $residueSeverity = if (($unresolvedKinds -contains 'roleAssignment') -or ($unresolvedKinds -contains 'workspace')) { 'high' } else { 'medium' }
         $residueList = (@(@($residue.entries) |
-                Where-Object { $_ -and $_.status -ne 'succeeded' } |
+                Where-Object { $_ -and $_.status -ne 'verified-absent' } |
                 ForEach-Object { "$($_.kind) $($_.id) ($($_.status))" }) -join '; ')
         $findings += New-ChaosFinding -Key (Get-ChaosFindingKey -ActionUrn $actionIdentity -Signal 'residue' -Predicate 'cleanup-confirmed') `
             -Kind 'residue' `
-            -Title "This study left $([int]$residue.unresolved) resource(s) it could not confirm removed" `
+            -Title "This study left $([int]$residue.unresolved) resource(s) it could not verify were removed" `
             -Severity $residueSeverity -Confidence 'high' `
             -Observation "Unresolved residue: $residueList." `
-            -Interpretation 'These were created by this study and their removal was not observed to succeed. Until each one is removed by hand, the subscription still carries the cost, the access, or both.' `
+            -Interpretation 'These were created by this study and their absence was never observed. A removal command that returned successfully is not the same as the object being gone, so until each one is confirmed by hand the subscription may still carry the cost, the access, or both.' `
             -Evidence @([ordered]@{ signal = 'residue-ledger'; window = 'post'; kind = 'residue' }) `
             -Remediation @(
                 'Run the exact removal command recorded against each unresolved entry in the residue ledger appendix.'
@@ -912,6 +1178,7 @@ function Build-StudyFindings {
         residue          = $residue
         mechanismProven  = $mechanismProven
         mechanismDetail  = $mechanismDetail
+        mechanismEvidence = $mechanismEvidence
         predicate        = [ordered]@{
             raw    = $predicate.raw
             during = $predicateDuring

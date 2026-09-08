@@ -34,6 +34,7 @@
 Set-StrictMode -Version Latest
 
 . (Join-Path $PSScriptRoot '..' '..' '..' 'chaos-study' 'scripts' 'lib' 'Common.ps1')
+. (Join-Path $PSScriptRoot '..' '..' '..' 'chaos-study' 'scripts' 'lib' 'SignalIdentity.ps1')
 . (Join-Path $PSScriptRoot 'ActionDiscovery.ps1')
 
 function New-ChaosReadinessGate {
@@ -97,7 +98,8 @@ function Test-ChaosScopePopulated {
     #>
     param(
         [AllowNull()][AllowEmptyCollection()][object[]]$ScopedResources,
-        [switch]$DiscoverySkipped
+        [switch]$DiscoverySkipped,
+        [AllowNull()][object]$DiscoveredCount
     )
 
     $count = @(@($ScopedResources) | Where-Object { $null -ne $_ }).Count
@@ -107,6 +109,19 @@ function Test-ChaosScopePopulated {
             -Status 'unknown' -Severity 'blocking' -LimitationCode 'L10' `
             -Detail 'Discovery was skipped, so the workspace was never asked what it discovered. Whether the scope resolves to any resource at all is unverified.' `
             -Remediation 'Re-scope without -SkipDiscovery before running this study, so an empty scope cannot be mistaken for a resilient result.'
+    }
+
+    # An empty workspace and a blast radius that filtered everything away are
+    # different problems with different fixes. Telling an operator to refresh
+    # recommendations when their own exclusions emptied the scope sends them to
+    # the wrong place, so the two are reported separately.
+    $discovered = if ($null -ne $DiscoveredCount) { [int]$DiscoveredCount } else { $count }
+
+    if ($count -eq 0 -and $discovered -gt 0) {
+        return New-ChaosReadinessGate -Id 'scope-populated' -Title 'Workspace scope contains resources' `
+            -Status 'fail' -Severity 'blocking' `
+            -Detail "The workspace discovered $discovered resource(s), but the blast radius removed all of them. A scenario run against an empty scope succeeds without touching anything, which is indistinguishable from a resilient result." `
+            -Remediation 'Widen or drop the blast-radius filters and exclusions. The workspace itself is populated, so refreshing recommendations will not change this.'
     }
 
     if ($count -eq 0) {
@@ -166,18 +181,29 @@ function Test-ChaosActionScopeFit {
 function Test-ChaosActionParameterFit {
     <#
     .SYNOPSIS
-        Blocking: do the supplied parameters satisfy the action's live schema?
+        Blocking: do the supplied *action* parameters satisfy the action's live
+        schema?
+
+    .DESCRIPTION
+        Actions and scenarios each publish their own parameter schema and the
+        two are not interchangeable. A scenario parameter such as a duration is
+        declared by the scenario, never by the action, so checking it against
+        the action's schema rejects a perfectly valid study. This gate is
+        deliberately narrow: it sees only what the caller supplied as action
+        parameters. Scenario parameters are checked by
+        Test-ChaosScenarioParameterFit against the scenario's own live spec.
     #>
     param(
         [Parameter(Mandatory)][object]$Action,
-        [AllowNull()][object]$Parameters
+        [AllowNull()][object]$ActionParameters
     )
 
+    $Parameters = $ActionParameters
     $schema = $Action.parametersSchema
     if ($null -eq $schema) {
         return New-ChaosReadinessGate -Id 'action-parameters' -Title 'Action parameters match the service schema' `
             -Status 'unknown' -Severity 'advisory' `
-            -Detail "Chaos Studio returned no parameter schema for action '$($Action.name)', so the supplied parameters could not be checked before injection." `
+            -Detail "Chaos Studio returned no parameter schema for action '$($Action.name)', so the supplied action parameters could not be checked before injection." `
             -LimitationCode 'L10'
     }
 
@@ -186,7 +212,7 @@ function Test-ChaosActionParameterFit {
         return New-ChaosReadinessGate -Id 'action-parameters' -Title 'Action parameters match the service schema' `
             -Status 'fail' -Severity 'blocking' `
             -Detail ($problems -join ' ') `
-            -Remediation 'Run scoping with -ListActions to print this action''s parameter schema, then supply -Parameters accordingly.'
+            -Remediation 'Run scoping with -ListActions to print this action''s parameter schema, then supply -ActionParameters accordingly. Values the scenario declares - a duration, for example - belong in -Parameters, not -ActionParameters.'
     }
 
     $specs = ConvertTo-ChaosList (Get-ChaosActionParameterSpec -Schema $schema)
@@ -198,6 +224,97 @@ function Test-ChaosActionParameterFit {
     }
 
     return New-ChaosReadinessGate -Id 'action-parameters' -Title 'Action parameters match the service schema' `
+        -Status 'pass' -Severity 'blocking' -Detail $detail
+}
+
+function Test-ChaosScenarioParameterFit {
+    <#
+    .SYNOPSIS
+        Do the supplied scenario parameters satisfy the scenario's live spec?
+
+    .DESCRIPTION
+        The configuration API takes scenario parameters, so this is the schema
+        that actually governs what -Parameters may contain. Two states matter
+        and they are graded differently.
+
+        When the scenario came from live discovery its parameter list is
+        authoritative, so a missing required parameter or an unrecognised key
+        is blocking - the platform would reject the configuration, and finding
+        that here costs nothing.
+
+        When the scenario is unverified-offline there is no spec to check
+        against. That is recorded as a provisional advisory, not a pass and not
+        a rejection: the service's own configuration validation stays the
+        authority, which is the only honest answer when the suite never saw the
+        schema. Guessing in either direction would either block a valid study
+        or claim a check that never happened.
+    #>
+    param(
+        [AllowNull()][object]$Scenario,
+        [AllowNull()][object]$Parameters
+    )
+
+    $supplied = @()
+    if ($null -ne $Parameters) {
+        $supplied = if ($Parameters -is [System.Collections.IDictionary]) {
+            @($Parameters.Keys | ForEach-Object { [string]$_ })
+        } else {
+            @($Parameters.PSObject.Properties | ForEach-Object { $_.Name })
+        }
+    }
+    $supplied = @($supplied | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+
+    $specs = @()
+    if ($null -ne $Scenario -and $Scenario.PSObject.Properties.Name -contains 'parameters') {
+        $specs = @(@($Scenario.parameters) | Where-Object { $null -ne $_ })
+    }
+
+    $discovered = ($null -ne $Scenario -and $Scenario.PSObject.Properties.Name -contains 'discovered' -and $Scenario.discovered -eq $true)
+
+    if ($specs.Count -eq 0) {
+        $detail = if ($supplied.Count -gt 0) {
+            "The scenario published no parameter list, so $($supplied.Count) supplied parameter(s) - $($supplied -join ', ') - could not be checked here. Chaos Studio validates the configuration before the run starts and remains the authority."
+        } else {
+            'The scenario published no parameter list and none were supplied. Chaos Studio validates the configuration before the run starts.'
+        }
+        return New-ChaosReadinessGate -Id 'scenario-parameters' -Title 'Scenario parameters match the service schema' `
+            -Status 'unknown' -Severity 'advisory' -Detail $detail -LimitationCode 'L10'
+    }
+
+    $known = @($specs | ForEach-Object { [string]$_.name } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $requiredNames = @($specs | Where-Object { $_.required -eq $true } | ForEach-Object { [string]$_.name })
+
+    $problems = @()
+    foreach ($name in $requiredNames) {
+        if ($supplied -notcontains $name) {
+            $problems += "The scenario requires parameter '$name' but it was not supplied."
+        }
+    }
+    foreach ($name in $supplied) {
+        if ($known -notcontains $name) {
+            $problems += "Parameter '$name' is not declared by scenario '$($Scenario.name)'. Declared: $($known -join ', ')."
+        }
+    }
+
+    if ($problems.Count -gt 0) {
+        # Only a live spec is trustworthy enough to reject on. An offline record
+        # carrying a stale list must not block a study the service would accept.
+        $severity = if ($discovered) { 'blocking' } else { 'advisory' }
+        $status = if ($discovered) { 'fail' } else { 'unknown' }
+        $limitation = if ($discovered) { $null } else { 'L10' }
+        return New-ChaosReadinessGate -Id 'scenario-parameters' -Title 'Scenario parameters match the service schema' `
+            -Status $status -Severity $severity `
+            -Detail ($problems -join ' ') `
+            -Remediation 'Run scoping with -ListScenarios to print this scenario''s parameter list, then supply -Parameters accordingly. Values the action declares belong in -ActionParameters.' `
+            -LimitationCode $limitation
+    }
+
+    $detail = if ($requiredNames.Count -gt 0) {
+        "All required scenario parameters supplied: $($requiredNames -join ', ')."
+    } else {
+        'This scenario declares no required parameters.'
+    }
+    return New-ChaosReadinessGate -Id 'scenario-parameters' -Title 'Scenario parameters match the service schema' `
         -Status 'pass' -Severity 'blocking' -Detail $detail
 }
 
@@ -223,16 +340,36 @@ function Test-ChaosObservabilityCoverage {
     # A predicate naming a signal that nothing collects is the quietest way for
     # a study to be useless: it runs, it reports, and the objective is simply
     # never evaluated. That is caught here rather than discovered in the report.
+    #
+    # The objective names a *signal*; a source names *where the number comes
+    # from*. For `logs:<workspaceId>#<kql>` those differ entirely, so the match
+    # is made against the columns the KQL projects - never against the workspace
+    # id, which is what previously refused every valid log objective.
     if ($null -ne $SteadyState) {
         $signal = [string]$SteadyState.signal
-        $matched = @($AvailableSources | Where-Object {
-                $_ -eq $signal -or $_ -like "*:$signal" -or $_ -like "*:$signal#*"
-            })
+        $matched = @()
+        $undecidable = @()
+        foreach ($source in @($AvailableSources)) {
+            $test = Test-ChaosSourceProducesSignal -Spec $source -SignalName $signal
+            if ($test.matched -eq $true) { $matched += $source }
+            elseif ($null -eq $test.matched) { $undecidable += $test.reason }
+        }
+
+        if ($matched.Count -eq 0 -and $undecidable.Count -gt 0) {
+            # Unknown is not a refusal. The study may proceed, but it must say
+            # that its own objective might never be evaluated.
+            return New-ChaosReadinessGate -Id 'observability' -Title 'A signal can prove the fault landed' `
+                -Status 'fail' -Severity 'advisory' `
+                -Detail "The steady-state objective is about '$signal', but no configured source can be shown to produce it: $($undecidable -join ' ')" `
+                -Remediation "Give the query's output column an explicit alias matching the objective, for example ``| summarize $signal = ...``." `
+                -LimitationCode 'L2'
+        }
+
         if ($matched.Count -eq 0) {
             return New-ChaosReadinessGate -Id 'observability' -Title 'A signal can prove the fault landed' `
                 -Status 'fail' -Severity 'blocking' `
                 -Detail "The steady-state objective is about '$signal', but no configured signal source produces it (configured: $($AvailableSources -join ', ')). The study would run to completion and never evaluate its own objective." `
-                -Remediation "Name the source after the signal the objective uses, for example -SignalSource 'metrics:$signal', or restate the objective in terms of a signal that is collected." `
+                -Remediation "Name the source after the signal the objective uses, for example -SignalSource 'metrics:$signal', or project that column from the log query (``| summarize $signal = ...``)." `
                 -LimitationCode 'L2'
         }
     }
@@ -439,9 +576,11 @@ function Invoke-ChaosReadinessGates {
     #>
     param(
         [Parameter(Mandatory)][object]$Action,
+        [AllowNull()][object]$Scenario = $null,
         [AllowNull()][AllowEmptyCollection()][string[]]$ScopedResourceTypes,
         [AllowNull()][AllowEmptyCollection()][object[]]$ScopedResources,
         [AllowNull()][object]$Parameters,
+        [AllowNull()][object]$ActionParameters = $null,
         [AllowNull()][object]$SteadyState,
         [Parameter(Mandatory)][int]$InjectMinutes,
         [AllowEmptyCollection()][string[]]$AvailableSources = @(),
@@ -450,7 +589,8 @@ function Invoke-ChaosReadinessGates {
         [AllowNull()][object]$MechanismProbe = $null,
         [AllowNull()][object]$ExerciseModel = $null,
         [switch]$AcceptWeakExercise,
-        [switch]$DiscoverySkipped
+        [switch]$DiscoverySkipped,
+        [AllowNull()][object]$DiscoveredCount = $null
     )
 
     $scopedResourceIds = @(@($ScopedResources) | Where-Object { $_ } | ForEach-Object {
@@ -461,9 +601,10 @@ function Invoke-ChaosReadinessGates {
 
     $gates = @(
         Test-ChaosSteadyStatePredicate -Predicate $SteadyState
-        Test-ChaosScopePopulated -ScopedResources $ScopedResources -DiscoverySkipped:$DiscoverySkipped
+        Test-ChaosScopePopulated -ScopedResources $ScopedResources -DiscoverySkipped:$DiscoverySkipped -DiscoveredCount $DiscoveredCount
         Test-ChaosActionScopeFit -Action $Action -ScopedResourceTypes $ScopedResourceTypes
-        Test-ChaosActionParameterFit -Action $Action -Parameters $Parameters
+        Test-ChaosActionParameterFit -Action $Action -ActionParameters $ActionParameters
+        Test-ChaosScenarioParameterFit -Scenario $Scenario -Parameters $Parameters
         Test-ChaosMechanismTraceable -FailureMechanism $FailureMechanism -MechanismEvidence $MechanismEvidence `
             -MechanismProbe $MechanismProbe -AvailableSources $AvailableSources -ScopedResourceIds $scopedResourceIds
         Test-ChaosActionReversibility -Action $Action

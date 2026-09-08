@@ -342,10 +342,17 @@ $($baseline.studyId): predicate $($comparison.baseline.predicateVerdict), study 
         $hypothesis = [string](Get-ChaosMember -InputObject $plan.question -Name 'hypothesis')
         if (-not [string]::IsNullOrWhiteSpace($hypothesis)) { $lines += "    -Hypothesis '$($hypothesis -replace "'", "''")' ``" }
 
-        # Scenario parameters are stored as the {key,value} pairs the service
-        # takes; the scope skill takes a hashtable, so they are folded back.
-        $storedParameters = @(Get-ChaosItems -InputObject (Get-ChaosMember -InputObject $plan.scenario -Name 'parameters'))
-        if ($storedParameters.Count -gt 0) {
+        # Scenario and action parameters are stored as the {key,value} pairs the
+        # service takes; the scope skill takes a hashtable for each, so they are
+        # folded back separately. They are validated against different schemas,
+        # so collapsing them into one switch would reroute values on rerun.
+        $parameterSets = @(
+            @{ Container = $plan.scenario; Switch = 'Parameters'; Label = 'scenario' }
+            @{ Container = $plan.action; Switch = 'ActionParameters'; Label = 'action' }
+        )
+        foreach ($set in $parameterSets) {
+            $storedParameters = @(Get-ChaosItems -InputObject (Get-ChaosMember -InputObject $set.Container -Name 'parameters'))
+            if ($storedParameters.Count -eq 0) { continue }
             $pairs = @()
             foreach ($parameter in $storedParameters) {
                 $key = [string](Get-ChaosMember -InputObject $parameter -Name 'key')
@@ -353,8 +360,8 @@ $($baseline.studyId): predicate $($comparison.baseline.predicateVerdict), study 
                 if ([string]::IsNullOrWhiteSpace($key) -or $null -eq $literal) { $pairs = $null; break }
                 $pairs += "$key = $literal"
             }
-            if ($null -eq $pairs) { $unreproducible += 'the scenario parameters - one of them cannot be written back as a literal' }
-            else { $lines += "    -Parameters @{ $($pairs -join '; ') } ``" }
+            if ($null -eq $pairs) { $unreproducible += "the $($set.Label) parameters - one of them cannot be written back as a literal" }
+            else { $lines += "    -$($set.Switch) @{ $($pairs -join '; ') } ``" }
         }
 
         # Exposure arithmetic. Reproduced from the frozen inputs so the rerun

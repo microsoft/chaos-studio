@@ -355,6 +355,78 @@ function Remove-ChaosStudyConfiguration {
 
 # -- Validation and permissions --------------------------------------------
 
+function Test-ChaosStudyConfigurationAbsent {
+    <#
+    .SYNOPSIS
+        Read back a scenario configuration to see whether it is actually gone.
+
+    .DESCRIPTION
+        Deletion is asynchronous, so the only honest way to say a
+        configuration was removed is to look for it and not find it. Returns
+        $true for absent, $false for still present, and $null when the read
+        itself could not be performed - which the ledger records as
+        'verification-unavailable' rather than quietly counting as removed.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][object]$Plan,
+        [Parameter(Mandatory)][string]$ConfigurationName,
+        [AllowNull()][AllowEmptyString()][string]$Adapter,
+        [AllowNull()][AllowEmptyString()][string]$StudyPath
+    )
+
+    $cliArgs = Get-ChaosConfigurationScopingArgument -Plan $Plan -ConfigurationName $ConfigurationName
+    try {
+        Invoke-ChaosStudyOperation -Kind 'config.show' -Arguments @{ cliArgs = $cliArgs } `
+            -ExpectedSchema 'any.v1' -Adapter (Get-ChaosExecutionAdapter -Plan $Plan -Adapter $Adapter) `
+            -StudyPath $StudyPath -OperationHint 'scenario config show' | Out-Null
+    } catch {
+        # Only an authoritative not-found proves absence. Anything else - a
+        # throttle, an auth failure, a timeout - proves nothing, so it stays
+        # $null and the ledger records verification-unavailable.
+        if (Test-ChaosNotFoundError -Text $_.Exception.Message) { return $true }
+        return $null
+    }
+    # The read succeeded, so the configuration is still there.
+    return $false
+}
+
+function Test-ChaosStudyScenarioRunAbsent {
+    <#
+    .SYNOPSIS
+        Read back a scenario run to see whether it has actually stopped.
+
+    .DESCRIPTION
+        A run is not a resource that disappears - cancelling it moves it to a
+        terminal state. "Absent" here therefore means "no longer executing":
+        the run either cannot be found, or reports a terminal status. A run
+        still reporting a live state after a cancel is exactly the case that
+        must not be printed as cleaned up.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][object]$Plan,
+        [Parameter(Mandatory)][string]$RunId,
+        [AllowNull()][AllowEmptyString()][string]$Adapter,
+        [AllowNull()][AllowEmptyString()][string]$StudyPath
+    )
+
+    $run = $null
+    try {
+        $run = Get-ChaosStudyScenarioRun -Plan $Plan -RunId $RunId -Adapter $Adapter -StudyPath $StudyPath
+    } catch {
+        if (Test-ChaosNotFoundError -Text $_.Exception.Message) { return $true }
+        return $null
+    }
+    # run.show tolerates failure and returns $null for both "gone" and "could
+    # not read", so $null cannot be claimed as absence.
+    if ($null -eq $run) { return $null }
+
+    $status = Get-ChaosScenarioRunStatus -Run $run
+    if ([string]::IsNullOrWhiteSpace([string]$status)) { return $null }
+    return (Test-ChaosScenarioRunTerminal -Status ([string]$status))
+}
+
 function Get-ChaosConfigurationValidation {
     <#
     .SYNOPSIS

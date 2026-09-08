@@ -288,6 +288,52 @@ function Get-ChaosResidueRemovalCommand {
     return [string]$command
 }
 
+function Test-ChaosNotFoundError {
+    <#
+    .SYNOPSIS
+        Whether an error text is an authoritative "this object does not exist".
+
+    .DESCRIPTION
+        Absence verification hinges on telling a real not-found from a call
+        that simply failed. A 404 or ResourceNotFound is the service stating
+        the object is gone; a timeout, a throttle, or an auth failure states
+        nothing at all. Returning $false for the second class is what keeps
+        those cases in 'verification-unavailable' instead of being counted as
+        a successful cleanup.
+    #>
+    param([AllowNull()][AllowEmptyString()][string]$Text)
+
+    if ([string]::IsNullOrWhiteSpace($Text)) { return $false }
+    # Auth and throttling failures can carry a 404-looking substring in a URL
+    # or a correlation id, so they are excluded before the not-found match.
+    if ($Text -match '(?i)(throttl|too many requests|\b429\b|timed? ?out|unauthoriz|forbidden|\b401\b|\b403\b)') { return $false }
+    return [bool]($Text -match '(?i)(resourcenotfound|notfound|not found|does not exist|could not be found|no such|\b404\b)')
+}
+
+function Test-ChaosResidueRemoved {
+    <#
+    .SYNOPSIS
+        Whether a cleanup status means the object is actually gone.
+
+    .DESCRIPTION
+        Exactly one status means removed: 'verified-absent', which is only ever
+        written after a read-back observed the object was no longer there. A
+        removal command that returned 0 is 'accepted-unverified' - the control
+        plane took the request, which is not the same as the object having gone
+        away, and ARM is eventually consistent enough that the difference is
+        real. Treating acceptance as removal is the bug this predicate exists
+        to prevent, so every consumer asks here rather than string-comparing.
+
+        Ledgers written before verification existed carry the legacy
+        'succeeded', which was command-return-only. It is deliberately NOT
+        removed: those studies never checked, and saying they did would be the
+        same false claim in a new place.
+    #>
+    param([AllowNull()][AllowEmptyString()][string]$Status)
+
+    return ([string]$Status -eq 'verified-absent')
+}
+
 function Set-ChaosResidueCleanup {
     <#
     .SYNOPSIS
@@ -295,10 +341,21 @@ function Set-ChaosResidueCleanup {
 
     .DESCRIPTION
         The only way an entry leaves the 'unattempted' state. It takes a real
-        status - succeeded, failed, or skipped - and, when it failed, the error
-        that was actually raised. Nothing here infers success from the fact
-        that a removal was tried; that inference is the bug this whole ledger
-        exists to make impossible.
+        status and, when it failed, the error that was actually raised. Nothing
+        here infers success from the fact that a removal was tried; that
+        inference is the bug this whole ledger exists to make impossible.
+
+        The status vocabulary separates the five things that can actually
+        happen, because collapsing them is what lets a study print "removed"
+        about something still running:
+
+          verified-absent         a read-back confirmed the object is gone
+          accepted-unverified     the command returned 0, absence unconfirmed
+          still-present           the read-back found the object still there
+          verification-unavailable the read-back itself could not be performed
+          failed                  the removal command raised
+          skipped                 deliberately not attempted
+          unattempted             never tried
 
         Returns $false when there is no such entry, rather than inventing one:
         recording cleanup for an object that was never recorded as created
@@ -308,9 +365,10 @@ function Set-ChaosResidueCleanup {
         [Parameter(Mandatory)][string]$StudyPath,
         [Parameter(Mandatory)][string]$Kind,
         [Parameter(Mandatory)][string]$Id,
-        [Parameter(Mandatory)][ValidateSet('succeeded', 'failed', 'skipped', 'unattempted')][string]$Status,
+        [Parameter(Mandatory)][ValidateSet('verified-absent', 'accepted-unverified', 'still-present', 'verification-unavailable', 'failed', 'skipped', 'unattempted')][string]$Status,
         [AllowNull()][AllowEmptyString()][string]$ErrorText = $null,
-        [AllowNull()][AllowEmptyString()][string]$Command = $null
+        [AllowNull()][AllowEmptyString()][string]$Command = $null,
+        [AllowNull()][AllowEmptyCollection()][object[]]$Attempts = $null
     )
 
     $ledger = Get-ChaosResidueLedger -StudyPath $StudyPath
@@ -331,8 +389,12 @@ function Set-ChaosResidueCleanup {
         cleanup    = [ordered]@{
             attemptedAt = Get-ChaosUtcNow
             status      = $Status
+            removed     = (Test-ChaosResidueRemoved -Status $Status)
             error       = if ([string]::IsNullOrWhiteSpace($ErrorText)) { $null } else { $ErrorText }
             command     = $command
+            # Null, not an empty array: nobody looked is not the same as looked
+            # and saw nothing.
+            attempts    = if ($null -eq $Attempts) { $null } else { @($Attempts) }
         }
     }
 
@@ -347,30 +409,46 @@ function Set-ChaosResidueCleanup {
 function Invoke-ChaosResidueRemoval {
     <#
     .SYNOPSIS
-        Attempt a removal, observe what happened, and persist that outcome.
+        Attempt a removal, observe whether the object actually went away, and
+        persist that outcome.
 
     .DESCRIPTION
         This replaces the `-AllowFailure | Out-Null` pattern, which discarded
         the one piece of information that mattered: whether the thing actually
-        went away. Here the removal runs inside a try/catch, the exception (if
-        any) is kept verbatim, and the ledger is advanced to 'succeeded' or
-        'failed' accordingly.
+        went away. It also replaces the weaker version of this function, which
+        wrote 'succeeded' whenever the removal command did not throw - a
+        control-plane accept, not a deletion. ARM is eventually consistent, so
+        a 202 and a still-running scenario are entirely compatible.
+
+        With -VerifyAbsent, the removal is followed by a bounded read-back
+        poll. The verifier returns $true for absent, $false for still present,
+        and $null (or throws) when it could not tell. Only an observed absence
+        writes 'verified-absent'; everything else keeps the entry unresolved
+        and therefore keeps L14 and the exact removal command in the report.
+
+        Without a verifier the best available status is 'accepted-unverified'.
+        That is deliberately not a success: a caller that cannot check has not
+        earned the right to print "removed".
 
         It never rethrows, because every caller is a finally block unwinding
         from some other failure and an exception here would mask that. The
-        failure is not swallowed though - it is written down, and it is what
-        raises L14 later.
+        failure is not swallowed though - it is written down.
     #>
     param(
         [Parameter(Mandatory)][string]$StudyPath,
         [Parameter(Mandatory)][string]$Kind,
         [Parameter(Mandatory)][string]$Id,
         [Parameter(Mandatory)][scriptblock]$Removal,
-        [AllowNull()][AllowEmptyString()][string]$Command = $null
+        [AllowNull()][AllowEmptyString()][string]$Command = $null,
+        [AllowNull()][scriptblock]$VerifyAbsent = $null,
+        [ValidateRange(1, 30)][int]$VerifyAttempts = 4,
+        [ValidateRange(0, 60)][double]$VerifyDelaySeconds = 3
     )
 
-    $status = 'succeeded'
+    $status = 'accepted-unverified'
     $errorText = $null
+    $attempts = $null
+
     try {
         & $Removal | Out-Null
     } catch {
@@ -378,9 +456,73 @@ function Invoke-ChaosResidueRemoval {
         $errorText = $_.Exception.Message
     }
 
+    # A removal that raised is already terminal - polling for absence would at
+    # best confirm what the error said, and at worst turn a real failure into a
+    # softer-looking status.
+    if ($status -ne 'failed' -and $null -ne $VerifyAbsent) {
+        $attempts = [System.Collections.Generic.List[object]]::new()
+        $unavailableReason = $null
+
+        for ($i = 1; $i -le $VerifyAttempts; $i++) {
+            $observed = $null
+            $attemptError = $null
+            try {
+                $observed = & $VerifyAbsent
+            } catch {
+                $attemptError = $_.Exception.Message
+            }
+
+            # $null is 'could not tell', which is distinct from $false ('still
+            # there'). Coercing the two together would let an unreadable
+            # resource look like a present one, or worse, an absent one.
+            $absent = if ($null -ne $attemptError) { $null }
+            elseif ($null -eq $observed) { $null }
+            else { [bool]$observed }
+
+            $attempts.Add([ordered]@{
+                    attempt    = $i
+                    observedAt = Get-ChaosUtcNow
+                    absent     = $absent
+                    error      = $attemptError
+                }) | Out-Null
+
+            if ($absent -eq $true) {
+                $status = 'verified-absent'
+                $unavailableReason = $null
+                break
+            }
+            if ($null -eq $absent) {
+                $unavailableReason = if ([string]::IsNullOrWhiteSpace($attemptError)) {
+                    'the absence check returned no answer'
+                } else { $attemptError }
+            } else {
+                $unavailableReason = $null
+                $status = 'still-present'
+            }
+
+            if ($i -lt $VerifyAttempts -and $VerifyDelaySeconds -gt 0) {
+                Start-Sleep -Seconds $VerifyDelaySeconds
+            }
+        }
+
+        if ($status -ne 'verified-absent') {
+            if ($null -ne $unavailableReason) {
+                $status = 'verification-unavailable'
+                if ([string]::IsNullOrWhiteSpace($errorText)) {
+                    $errorText = "Removal was accepted but absence could not be confirmed: $unavailableReason"
+                }
+            } elseif ($status -eq 'still-present') {
+                if ([string]::IsNullOrWhiteSpace($errorText)) {
+                    $errorText = "Removal was accepted but the object was still present after $VerifyAttempts check(s)."
+                }
+            }
+        }
+        $attempts = @($attempts)
+    }
+
     $recorded = $false
     try {
-        $recorded = Set-ChaosResidueCleanup -StudyPath $StudyPath -Kind $Kind -Id $Id -Status $status -ErrorText $errorText -Command $Command
+        $recorded = Set-ChaosResidueCleanup -StudyPath $StudyPath -Kind $Kind -Id $Id -Status $status -ErrorText $errorText -Command $Command -Attempts $attempts
     } catch {
         $recorded = $false
     }
@@ -389,7 +531,9 @@ function Invoke-ChaosResidueRemoval {
         kind     = $Kind
         id       = $Id
         status   = $status
+        removed  = (Test-ChaosResidueRemoved -Status $status)
         error    = $errorText
+        attempts = $attempts
         recorded = [bool]$recorded
     }
 }
@@ -400,11 +544,12 @@ function Get-ChaosUnresolvedResidue {
         The ledger entries this study cannot show were removed.
 
     .DESCRIPTION
-        Unresolved means anything other than an observed success: never
-        attempted, attempted and failed, or deliberately skipped. All three
-        leave something behind, and the report has to say so. Sealing with
-        unresolved residue is allowed - an operator may well want to keep a
-        workspace - but it is never hidden.
+        Unresolved means anything other than an *observed* removal: never
+        attempted, attempted and failed, deliberately skipped, accepted but
+        unconfirmed, confirmed still present, or unverifiable. All of them
+        leave something possibly behind, and the report has to say so. Sealing
+        with unresolved residue is allowed - an operator may well want to keep
+        a workspace - but it is never hidden.
     #>
     param([Parameter(Mandatory)][string]$StudyPath)
 
@@ -415,7 +560,7 @@ function Get-ChaosUnresolvedResidue {
             if (-not $hasCleanup) { return $true }
             $cleanup = $_.cleanup
             if ($null -eq $cleanup) { return $true }
-            return ([string]$cleanup.status -ne 'succeeded')
+            return (-not (Test-ChaosResidueRemoved -Status ([string]$cleanup.status)))
         })
 }
 
@@ -443,7 +588,9 @@ function Get-ChaosResidueSummary {
                     id          = [string]$_.id
                     createdAt   = $_.createdAt
                     status      = if ($null -eq $cleanup) { 'unattempted' } else { [string]$cleanup.status }
+                    removed     = if ($null -eq $cleanup) { $false } else { (Test-ChaosResidueRemoved -Status ([string]$cleanup.status)) }
                     attemptedAt = if ($null -eq $cleanup) { $null } else { $cleanup.attemptedAt }
+                    attempts    = if ($null -eq $cleanup -or $null -eq $cleanup.PSObject.Properties['attempts']) { $null } else { $cleanup.attempts }
                     error       = if ($null -eq $cleanup) { $null } else { $cleanup.error }
                     command     = if ($null -ne $cleanup -and -not [string]::IsNullOrWhiteSpace([string]$cleanup.command)) { [string]$cleanup.command } else { Get-ChaosResidueRemovalCommand -Entry $_ }
                 }

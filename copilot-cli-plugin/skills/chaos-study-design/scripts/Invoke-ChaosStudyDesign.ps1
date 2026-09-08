@@ -368,6 +368,11 @@ function Get-ChaosDesignHandoff {
         signals              = @(Get-ChaosItems -InputObject $Candidate.signals | Where-Object { $_ })
         exposure             = $exposure
         actionRequirements   = Get-ChaosMember -InputObject $Candidate -Name 'actionRequirements'
+        # Scenario and action parameters travel separately across the seam
+        # because scope validates them against two different live schemas.
+        # A candidate that names neither hands off neither - absent stays absent.
+        parameters           = Get-ChaosMember -InputObject $Candidate -Name 'parameters'
+        actionParameters     = Get-ChaosMember -InputObject $Candidate -Name 'actionParameters'
         discoveryConstraints = Get-ChaosMember -InputObject $Candidate -Name 'availability'
         blastRadius          = [ordered]@{
             filters       = @(Get-ChaosItems -InputObject $blast.filters | Where-Object { $_ })

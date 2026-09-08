@@ -116,6 +116,50 @@ function ConvertFrom-ChaosBriefBlastRadius {
     return $result
 }
 
+function ConvertFrom-ChaosBriefParameterTable {
+    <#
+    .SYNOPSIS
+        Fold a brief's parameter record into the hashtable scope takes.
+
+    .DESCRIPTION
+        A brief may carry parameters either as the {key,value} pairs the
+        service uses or as a plain object. Both are accepted; anything else
+        yields no table rather than a partially-understood one, because a
+        half-read parameter set is worse than an absent one - the study would
+        run configured differently from what the customer confirmed.
+    #>
+    param([AllowNull()][object]$InputObject)
+
+    if ($null -eq $InputObject) { return $null }
+
+    $table = @{}
+    $pairsSeen = $false
+    foreach ($item in @(Get-ChaosItems -InputObject $InputObject | Where-Object { $null -ne $_ })) {
+        $key = Get-ChaosBriefValue -InputObject $item -Name 'key'
+        if ($null -eq $key) { continue }
+        $pairsSeen = $true
+        if ([string]::IsNullOrWhiteSpace([string]$key)) { continue }
+        $table[[string]$key] = Get-ChaosBriefValue -InputObject $item -Name 'value'
+    }
+    if ($pairsSeen) { return $table }
+
+    if ($InputObject -is [System.Collections.IDictionary]) {
+        foreach ($key in $InputObject.Keys) {
+            if ([string]::IsNullOrWhiteSpace([string]$key)) { continue }
+            $table[[string]$key] = $InputObject[$key]
+        }
+        return $table
+    }
+
+    if ($InputObject -is [string] -or $InputObject -is [System.ValueType]) { return $null }
+
+    foreach ($property in $InputObject.PSObject.Properties) {
+        if ([string]::IsNullOrWhiteSpace($property.Name)) { continue }
+        $table[$property.Name] = $property.Value
+    }
+    return $table
+}
+
 function Import-ChaosBriefHandoff {
     <#
     .SYNOPSIS
@@ -228,6 +272,18 @@ function Import-ChaosBriefHandoff {
         foreach ($note in (Get-ChaosItems -InputObject $mapped['unmapped'])) {
             Write-ChaosStudyNote "Brief blast-radius entry '$note' has no scope parameter and was NOT applied. Pass it explicitly if it must constrain this run."
         }
+    }
+
+    # Parameters cross the seam as two separate tables. Scope validates the
+    # scenario set against the scenario's live spec and the action set against
+    # the action's schema, so folding them together here would reroute a value
+    # into the wrong validator - the exact defect this split exists to prevent.
+    foreach ($map in @(
+            @{ brief = 'parameters'; scope = 'Parameters' },
+            @{ brief = 'actionParameters'; scope = 'ActionParameters' })) {
+        if ($Bound.ContainsKey($map.scope)) { continue }
+        $table = ConvertFrom-ChaosBriefParameterTable -InputObject (Get-ChaosBriefValue -InputObject $handoff -Name $map.brief)
+        if ($null -ne $table -and $table.Count -gt 0) { $out[$map.scope] = $table }
     }
 
     # Scenario and action come from live discovery, not from the brief, unless

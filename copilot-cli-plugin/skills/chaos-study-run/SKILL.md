@@ -47,10 +47,14 @@ compare to; without post there is no way to tell degradation from damage.
 reason. Nothing is interpolated, averaged, or inferred to fill a gap — the report
 would rather say *not measured* than mislead.
 
-**Cleanup is unconditional.** The scenario configuration is deleted in a
-`finally` block, so a crash, a Ctrl-C, or a failed collection still tears it
-down. A run still in flight is cancelled. Use `-KeepConfiguration` only when you
-intend to inspect it afterwards.
+**Cleanup is unconditional, and removal is observed rather than assumed.** The
+scenario configuration is deleted in a `finally` block, so a crash, a Ctrl-C, or
+a failed collection still tears it down. A run still in flight is cancelled. The
+delete returning 0 only means the control plane accepted the request, so each
+removal is followed by a read-back: only an observed absence is reported as
+removed, and anything still present stays in the residue ledger with the exact
+command to finish the job. Use `-KeepConfiguration` only when you intend to
+inspect it afterwards.
 
 **Sealed studies are immutable.** Re-running a sealed study exits `13`. Re-test
 by scoping a new one, so history stays comparable.

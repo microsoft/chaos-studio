@@ -235,20 +235,29 @@ $(if ($verdictRationale) { "<p>$(ConvertTo-ChaosHtmlText -Text $verdictRationale
 "@
 
     # V2 scenario parameters arrive as an array of {key, value} pairs, which is
-    # the shape `az chaos scenario config create --parameters` accepts.
-    $parameterRows = @()
-    foreach ($pair in @($Plan.scenario.parameters)) {
-        if ($null -eq $pair) { continue }
-        $name = if ($pair.PSObject.Properties.Name -contains 'key') { [string]$pair.key } else { $null }
-        if (-not $name) { continue }
-        $value = if ($pair.PSObject.Properties.Name -contains 'value') { $pair.value } else { $null }
-        $rendered = if ($value -is [string] -or $value -is [bool] -or $value -is [int] -or $value -is [long] -or $value -is [double]) {
-            ConvertTo-ChaosReportValue -Value $value
-        } else {
-            "<code>$(ConvertTo-ChaosHtmlText -Text (ConvertTo-ChaosCanonicalJson -InputObject $value))</code>"
+    # the shape `az chaos scenario config create --parameters` accepts. Action
+    # parameters use the same pair shape but a different schema, so they are
+    # rendered as their own table - reading them as one list would misstate
+    # which document each value was validated against.
+    $renderParameterRows = {
+        param([AllowNull()][object]$Pairs)
+        $rows = @()
+        foreach ($pair in @($Pairs)) {
+            if ($null -eq $pair) { continue }
+            $name = if ($pair.PSObject.Properties.Name -contains 'key') { [string]$pair.key } else { $null }
+            if (-not $name) { continue }
+            $value = if ($pair.PSObject.Properties.Name -contains 'value') { $pair.value } else { $null }
+            $rendered = if ($value -is [string] -or $value -is [bool] -or $value -is [int] -or $value -is [long] -or $value -is [double]) {
+                ConvertTo-ChaosReportValue -Value $value
+            } else {
+                "<code>$(ConvertTo-ChaosHtmlText -Text (ConvertTo-ChaosCanonicalJson -InputObject $value))</code>"
+            }
+            $rows += "  <tr><td class=`"mono`">$(ConvertTo-ChaosHtmlText -Text $name)</td><td>$rendered</td></tr>"
         }
-        $parameterRows += "  <tr><td class=`"mono`">$(ConvertTo-ChaosHtmlText -Text $name)</td><td>$rendered</td></tr>"
+        return , $rows
     }
+    $parameterRows = ConvertTo-ChaosList (& $renderParameterRows $Plan.scenario.parameters)
+    $actionParameterRows = ConvertTo-ChaosList (& $renderParameterRows (Get-ChaosMember -InputObject $Plan.action -Name 'parameters'))
 
     $scopedTypes = @($Plan.scope.resourceTypes) | Where-Object { $_ }
     $blastRows = @()
@@ -278,6 +287,7 @@ $(New-ChaosReportRow -Label 'Action window derived from' -Value $(if ($null -ne 
 <table><thead><tr><th>Parameter</th><th>Value</th></tr></thead><tbody>
 $($parameterRows -join "`n")
 </tbody></table>
+$(if (@($actionParameterRows).Count -gt 0) { "<h3>Action parameters</h3>`n<p>Validated against the action's own schema, not the scenario's.</p>`n<table><thead><tr><th>Parameter</th><th>Value</th></tr></thead><tbody>`n$($actionParameterRows -join "`n")`n</tbody></table>" } else { '' })
 $(if (@($blastRows).Count -gt 0) { "<h3>Blast radius</h3>`n<table><thead><tr><th>Constraint</th><th>Value</th></tr></thead><tbody>`n$($blastRows -join "`n")`n</tbody></table>" } else { '' })
 <h3>Abort conditions</h3>
 $(New-ChaosReportList -Items $Plan.safety.abortConditions)
@@ -340,7 +350,9 @@ $(New-ChaosSignalTable -Evidence $Evidence)
             $detail = if (-not [string]::IsNullOrWhiteSpace([string]$entry.error)) { [string]$entry.error }
             elseif (-not [string]::IsNullOrWhiteSpace([string]$entry.command)) { [string]$entry.command }
             else { 'no removal command recorded' }
-            $statusCell = if ([string]$entry.status -eq 'succeeded') {
+            # 'verified-absent' is the only status that means gone; see
+            # Test-ChaosResidueRemoved for why acceptance is not removal.
+            $statusCell = if ([string]$entry.status -eq 'verified-absent') {
                 ConvertTo-ChaosHtmlText -Text ([string]$entry.status)
             } else {
                 "<strong>$(ConvertTo-ChaosHtmlText -Text ([string]$entry.status))</strong>"
@@ -350,8 +362,8 @@ $(New-ChaosSignalTable -Evidence $Evidence)
     } else { @() }
     $residueSummaryText = if ($null -eq $residue) { 'not recorded' }
     elseif ([int]$residue.total -eq 0) { 'nothing was created' }
-    elseif ([int]$residue.unresolved -eq 0) { "$($residue.resolved) of $($residue.total) confirmed removed" }
-    else { "$($residue.unresolved) of $($residue.total) NOT confirmed removed - see the table below" }
+    elseif ([int]$residue.unresolved -eq 0) { "$($residue.resolved) of $($residue.total) verified absent" }
+    else { "$($residue.unresolved) of $($residue.total) NOT verified absent - see the table below" }
 
     # Appendix data is read back from artifacts written by earlier phases, and an
     # older or partially-written artifact legitimately lacks fields a newer phase

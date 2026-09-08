@@ -267,6 +267,17 @@ function Get-ChaosOperationRegistry {
             }
             external = @{ tool = 'az-chaos'; methodHint = 'scenario config show-permission-fix' }
         }
+        'config.show' = @{
+            localAz  = {
+                param($Arguments, $Body)
+                # Deliberately NOT -AllowFailure: this op exists to verify a
+                # deletion, and -AllowFailure collapses "not found" and "the
+                # call failed" into the same $null. The caller needs the error
+                # text to tell an observed absence from an unreadable answer.
+                Invoke-ChaosStudyAzChaos -ChaosArgs (Get-ChaosOperationCliArgs -Arguments $Arguments -Verb @('scenario', 'config', 'show'))
+            }
+            external = @{ tool = 'az-chaos'; methodHint = 'scenario config show' }
+        }
         'config.delete' = @{
             localAz  = {
                 param($Arguments, $Body)
