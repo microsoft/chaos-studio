@@ -393,6 +393,18 @@ def wait_for_lro(
 ) -> dict:
     """Poll an Azure LRO via Azure-AsyncOperation or Location header until terminal.
 
+    Azure exposes two poll styles that reach "done" differently, and conflating
+    them causes premature returns:
+
+    * **Azure-AsyncOperation** — the operation-status resource *always* carries a
+      ``status`` field. ``Succeeded`` is terminal-done; ``Failed``/``Canceled``
+      raise; an empty/missing/unknown ``status`` means "not terminal yet", so we
+      MUST keep polling rather than treat it as done.
+    * **Location** — per the Azure REST guidelines a non-202 success (200/201)
+      *is* the terminal completion and the body may legitimately be empty, so an
+      empty/unknown body is done. An explicit ``Failed``/``Canceled``
+      provisioningState in the body still raises.
+
     Returns the final body (best-effort) as a dict, or {} when none.
     """
     if response.status_code != 202 and response.is_success:
@@ -401,14 +413,18 @@ def wait_for_lro(
         except Exception:  # noqa: BLE001 - best-effort parse; empty body is acceptable
             return {}
 
-    poll_url = (
+    async_op_url = (
         response.headers.get("Azure-AsyncOperation")
         or response.headers.get("azure-asyncoperation")
-        or response.headers.get("Location")
-        or response.headers.get("location")
     )
+    location_url = response.headers.get("Location") or response.headers.get("location")
+    poll_url = async_op_url or location_url
     if not poll_url:
         raise AzureError("LRO response missing Azure-AsyncOperation / Location header.")
+    # Azure-AsyncOperation takes precedence when both headers are present and
+    # terminates on its own ``status``; a Location poll instead terminates on a
+    # non-202 success (empty body OK).
+    polled_async_operation = async_op_url is not None
 
     deadline = time.monotonic() + timeout_s
     last_body: dict = {}
@@ -425,16 +441,67 @@ def wait_for_lro(
             last_body = poll.json() if poll.content else {}
         except Exception:  # noqa: BLE001 - best-effort parse; empty body is acceptable
             last_body = {}
-        status = (last_body.get("status") or last_body.get("properties", {}).get("provisioningState") or "").lower()
-        if status in ("succeeded", "failed", "canceled", "cancelled"):
-            if status in ("failed", "canceled", "cancelled"):
-                raise AzureError(f"LRO terminated with status '{status}': {json.dumps(last_body)}")
+        status = (
+            last_body.get("status")
+            or (last_body.get("properties") or {}).get("provisioningState")
+            or ""
+        ).lower()
+        # An explicit failure is terminal for either poll style.
+        if status in ("failed", "canceled", "cancelled"):
+            raise AzureError(f"LRO terminated with status '{status}': {json.dumps(last_body)}")
+        if status == "succeeded":
             return last_body
-        # No status field but 200 — treat as done.
-        if not status:
-            return last_body
-        response = poll
+        if polled_async_operation:
+            # Async-operation status resource: an empty/unknown status is "still
+            # running", never done. Keep polling until terminal or timeout.
+            response = poll
+            continue
+        # Location poll: a non-202 success is the terminal completion even when
+        # the body carries no recognizable status (it may be empty).
+        return last_body
     raise AzureError(f"LRO did not reach a terminal state within {timeout_s}s. Last body: {last_body}")
+
+
+def wait_until_provisioned(
+    path: str,
+    *,
+    timeout_s: int = DEFAULT_LRO_TIMEOUT_S,
+    interval_s: int = DEFAULT_LRO_INTERVAL_S,
+    api_version: str = DEFAULT_API_VERSION,
+    success_states: tuple[str, ...] = ("succeeded",),
+) -> dict:
+    """Poll a resource GET until its provisioning/operational state is terminal.
+
+    A belt-and-suspenders complement to :func:`wait_for_lro` for callers that,
+    after the LRO poll returns, must confirm the resource itself settled. The
+    terminal state is read from ``properties.provisioningState`` and, when that
+    is absent, ``properties.status`` (evaluations report progress under
+    ``status`` rather than ``provisioningState``).
+
+    Returns the final resource once its state is in ``success_states``. Raises
+    :class:`AzureError` on a terminal failure state (``Failed``/``Canceled``) or
+    if no terminal state is reached within ``timeout_s``.
+    """
+    normalized_success = tuple(s.lower() for s in success_states)
+    deadline = time.monotonic() + timeout_s
+    last: dict = {}
+    observed = ""
+    while time.monotonic() < deadline:
+        last = arm_get(path, api_version=api_version)
+        props = last.get("properties") or {}
+        observed = props.get("provisioningState") or props.get("status") or ""
+        state = observed.lower()
+        if state in normalized_success:
+            return last
+        if state in ("failed", "canceled", "cancelled"):
+            raise AzureError(
+                f"Resource provisioning ended in terminal state '{observed}': {path}"
+            )
+        time.sleep(max(1, interval_s))
+    raise AzureError(
+        f"Resource did not reach a terminal provisioning state within "
+        f"{timeout_s}s (last state '{observed or 'unknown'}'): {path}"
+    )
 
 
 # -----------------------------------------------------------------------------
