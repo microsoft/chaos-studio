@@ -2,3 +2,14 @@
 # One of these owners must approve every pull request into main
 # (enforced by the "require review from Code Owners" branch protection rule).
 * @nikhilkaul1234 @brrusino @abhiajm
+
+# CI/CD integrations (GitHub Action + Azure Pipelines task): shared TypeScript
+# core, committed bundles, extension manifests, root Action metadata, and the
+# release/publication pipelines.
+/packages/                  @nikhilkaul1234 @brrusino @abhiajm
+/dist/                      @nikhilkaul1234 @brrusino @abhiajm
+/azure-pipelines-extension/ @nikhilkaul1234 @brrusino @abhiajm
+/action.yml                 @nikhilkaul1234 @brrusino @abhiajm
+/.pipelines/                @nikhilkaul1234 @brrusino @abhiajm
+/.github/workflows/         @nikhilkaul1234 @brrusino @abhiajm
+/E1-INVENTORY.md            @nikhilkaul1234 @brrusino @abhiajm

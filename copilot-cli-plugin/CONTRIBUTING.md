@@ -110,19 +110,23 @@ Scope is the skill name or `mcp` for the Python package.
 
 ## Releasing
 
-Maintainers cut releases by tagging `vX.Y.Z`:
+Releases are cut by **dispatching** the `release.yml` workflow from the default
+branch — never by pushing a tag. (A tag-triggered workflow would load `release.yml`
+from the tagged commit, letting anyone who can create a tag ship an arbitrary release
+job; see the root [CONTRIBUTING.md](../CONTRIBUTING.md), "MCP release".) The `v*` tag
+namespace is reserved for the GitHub Action; the `chaos-mcp` PyPI package uses `mcp-v*`.
 
-```bash
-git tag -a v0.4.0 -m "v0.4.0"
-git push origin v0.4.0
-```
+1. Bump `mcp/pyproject.toml` `version` and merge it to the default branch.
+2. From the **Actions** tab, run the **release** workflow (`workflow_dispatch`) on the
+   default branch with `version` set to the matching tag, e.g. `mcp-v0.4.0`
+   (or `gh workflow run release.yml --ref <default-branch> -f version=mcp-v0.4.0`).
 
-The `release.yml` workflow then:
+The `release.yml` workflow then, running only on the default branch:
 
-1. Runs the full test matrix one more time.
-2. Builds the `chaos-mcp` wheel + sdist and uploads to PyPI.
-3. Publishes a GitHub Release with auto-generated notes.
-4. Notifies the Copilot CLI marketplace mirror to pick up the new version.
+1. Verifies the `version` input matches the committed `pyproject.toml` version.
+2. Builds the `chaos-mcp` wheel + sdist and uploads to PyPI (trusted publisher).
+3. Creates the protected `mcp-v*` tag at the default-branch tip and publishes a
+   GitHub Release with auto-generated notes.
 
 ## Microsoft CLA
 

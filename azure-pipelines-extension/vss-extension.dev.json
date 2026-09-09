@@ -1,0 +1,60 @@
+{
+  "manifestVersion": 1,
+  "id": "ChaosStudioWorkspacesDev",
+  "publisher": "AzureChaosStudio",
+  "version": "1.0.0",
+  "name": "Azure Chaos Studio Workspaces (Dev)",
+  "description": "Private development build of the Azure Chaos Studio v2 Azure Pipelines integration. Shared only with test organizations; not for production use.",
+  "public": false,
+  "icons": {
+    "default": "images/icon.png"
+  },
+  "content": {
+    "details": {
+      "path": "overview.md"
+    }
+  },
+  "galleryFlags": [
+    "Preview"
+  ],
+  "categories": [
+    "Azure Pipelines"
+  ],
+  "targets": [
+    {
+      "id": "Microsoft.VisualStudio.Services"
+    }
+  ],
+  "tags": [
+    "Azure",
+    "Chaos Studio",
+    "Resilience",
+    "Chaos Engineering",
+    "Reliability"
+  ],
+  "files": [
+    {
+      "path": "tasks/AzureChaosStudioScenarioV1Dev"
+    },
+    {
+      "path": "overview.md",
+      "addressable": true
+    },
+    {
+      "path": "images/icon.png",
+      "addressable": true
+    }
+  ],
+  "contributions": [
+    {
+      "id": "AzureChaosStudioScenarioDev",
+      "type": "ms.vss-distributed-task.task",
+      "targets": [
+        "ms.vss-distributed-task.tasks"
+      ],
+      "properties": {
+        "name": "tasks/AzureChaosStudioScenarioV1Dev"
+      }
+    }
+  ]
+}

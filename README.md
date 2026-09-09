@@ -12,9 +12,38 @@ recovers.
 
 | Component | Path | What it is |
 |---|---|---|
+| **GitHub Action + Azure Pipelines task** | [`action.yml`](action.yml) · [`packages/`](packages/) · [`azure-pipelines-extension/`](azure-pipelines-extension/) | Validate and run a Chaos Studio v2 scenario configuration from CI/CD with workload identity — one step instead of a page of raw ARM calls. A shared TypeScript core drives both platforms. _(In active development — preview.)_ |
 | **Copilot CLI plugin + MCP server** | [`copilot-cli-plugin/`](copilot-cli-plugin/) | Create workspaces, configure scenarios, run experiments, and analyze impact — from a conversation or an autonomous agent. |
 | **Scenarios** | [`scenarios/`](scenarios/) | Shareable custom Scenario definitions (Bicep/JSON) beyond the built-in templates. |
 | **Samples** | [`samples/`](samples/) | Sample apps and infrastructure you can deploy and break to practice. |
+
+## GitHub Action quickstart
+
+> The Action is in active development. Names and behavior are stabilizing under
+> the shared contract in [`packages/core`](packages/core/); the runtime bundle is
+> published with the first preview release.
+
+```yaml
+# Validate a Chaos Studio v2 scenario configuration and run it, failing the job
+# unless the run reaches Succeeded. Uses workload identity (no long-lived secret).
+permissions:
+  id-token: write   # required for OIDC sign-in
+  contents: read
+steps:
+  - uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
+    with:
+      client-id: ${{ secrets.AZURE_CLIENT_ID }}
+      tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+      subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  - uses: microsoft/chaos-studio@v1
+    with:
+      subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      resource-group: my-rg
+      workspace-name: my-workspace
+      scenario-name: my-scenario
+      scenario-configuration-name: my-config
+      mode: validate-and-execute
+```
 
 ## New to Chaos Studio?
 

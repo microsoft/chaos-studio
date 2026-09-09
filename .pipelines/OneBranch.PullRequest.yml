@@ -1,0 +1,105 @@
+# OneBranch PR validation pipeline for the Azure Chaos Studio Workspaces
+# extension. Consumed by the Squall `ADO-Plugin-PullRequest`-equivalent pipeline
+# definition. Builds the shared core, runs checks, and packages the private
+# development VSIX (vss-extension.dev.json) to prove it packages cleanly. It does
+# NOT publish. Publication happens only from the Official pipeline.
+
+# Three-part, strictly increasing build number (see OneBranch.Official.yml).
+# The two-part ADO default fails `PackageAzureDevOpsExtension` even for the dev
+# VSIX, so pin a valid major.minor.patch here too.
+name: 1.$(Date:yyyyMMdd).$(Rev:r)
+
+trigger: none
+pr:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - package.json
+      - package-lock.json
+      - tsconfig.base.json
+      - tsconfig.json
+      - .gitattributes
+      - action.yml
+      - packages/**
+      - scripts/**
+      - dist/**
+      - azure-pipelines-extension/**
+      - .config/**
+      - .pipelines/**
+
+resources:
+  repositories:
+    - repository: templates
+      type: git
+      name: OneBranch.Pipelines/GovernedTemplates
+      ref: refs/heads/main
+
+variables:
+  - group: ADO-plugin-variable-group
+  - name: system.debug
+    value: false
+  - name: ExtensionRoot
+    value: '$(Build.SourcesDirectory)/azure-pipelines-extension'
+
+extends:
+  template: v2/OneBranch.NonOfficial.CrossPlat.yml@templates
+  parameters:
+    globalSdl:
+      tsa:
+        enabled: false
+      credscan:
+        suppressionsFile: $(Build.SourcesDirectory)/.config/CredScanSuppressions.json
+      policheck:
+        break: true
+    stages:
+      - stage: build_validate
+        jobs:
+          - job: package_dev_vsix
+            pool:
+              type: linux
+            variables:
+              ob_outputDirectory: '$(Build.SourcesDirectory)/out'
+            steps:
+              - task: NodeTool@0
+                displayName: Use Node 24
+                inputs:
+                  versionSpec: '24.x'
+
+              - script: npm ci
+                displayName: Install workspace dependencies
+
+              - script: npm run typecheck
+                displayName: Type-check
+
+              - script: npm test
+                displayName: Test shared core
+
+              - script: npm run build
+                displayName: Build committed bundles
+
+              - script: |
+                  set -euo pipefail
+                  # Stage the built task runtime into EVERY task folder so the
+                  # dev extension (distinct task GUID for side-by-side install)
+                  # packages a runnable bundle.
+                  for d in azure-pipelines-extension/tasks/*/ ; do
+                    cp -r dist/azure-pipelines-task/. "$d"
+                  done
+                displayName: Stage task runtime into every task folder
+
+              - task: TfxInstaller@4
+                displayName: Install tfx-cli
+                inputs:
+                  version: 'v0.x'
+
+              - task: PackageAzureDevOpsExtension@4
+                displayName: Package development VSIX
+                inputs:
+                  rootFolder: '$(ExtensionRoot)'
+                  patternManifest: 'vss-extension.dev.json'
+                  extensionVersion: '$(Build.BuildNumber)'
+                  updateTasksVersion: false
+                  extensionVisibility: private
+                  outputPath: '$(ob_outputDirectory)/ChaosStudioWorkspacesDev.vsix'

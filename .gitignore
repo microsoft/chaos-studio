@@ -3,6 +3,34 @@
 ##
 ## Get latest from https://github.com/github/gitignore/blob/main/VisualStudio.gitignore
 
+# ── npm-workspace re-inclusion (MUST precede the global artifact rules below) ──
+# The TypeScript CI/CD-integrations workspace lives at /packages. The NuGet
+# "packages folder" rule would otherwise ignore it, so here we (1) keep ignoring
+# NuGet restore output in any packages/ folder and (2) re-include the root
+# workspace. This block is placed BEFORE all the global build/secret/artifact
+# rules that follow, so EVERY one of those later rules (compiler output, publishing
+# profiles/scripts, BuildLog, BenchmarkDotNet, bin/obj, Debug/Release, symbols,
+# NuGet, VS, logs, test results, secrets) re-applies to files under /packages —
+# because a later matching rule wins. Only workspace SOURCE (never matched by any
+# ignore rule) is therefore tracked. A Node/JS-ecosystem safety net for categories
+# the VisualStudio rules don't cover is appended at the END of this file.
+**/[Pp]ackages/*
+!**/[Pp]ackages/build/
+!/packages/*
+!/packages/**
+# Re-ignore NuGet restore output NESTED inside the workspace (e.g. a nested C#
+# project's `packages/` restore dir), which the broad `!/packages/**` re-inclusion
+# above would otherwise EXPOSE. The workspace ROOT `/packages` stays included; only the
+# CONTENTS of a `packages/`/`Packages/` directory nested BELOW it are ignored again. We
+# ignore `.../[Pp]ackages/*` (the contents) rather than the directory itself, because
+# git will not descend into an IGNORED DIRECTORY, so the `build/` re-inclusion below
+# could never take effect if the directory were ignored. A `**` here matches zero or
+# more intermediate segments, so both `/packages/packages/` and `/packages/<proj>/packages/`
+# are covered. Its own `build/` stays re-included.
+/packages/**/[Pp]ackages/*
+!/packages/**/[Pp]ackages/build/
+
+
 # User-specific files
 *.rsuser
 *.suo
@@ -226,10 +254,6 @@ PublishScripts/
 *.nupkg
 # NuGet Symbol Packages
 *.snupkg
-# The packages folder can be ignored because of Package Restore
-**/[Pp]ackages/*
-# except build/, which is used as an MSBuild target.
-!**/[Pp]ackages/build/
 # Uncomment if necessary however generally it will be regenerated when needed
 #!**/[Pp]ackages/repositories.config
 # NuGet v3's project.json files produces more ignorable files
@@ -427,3 +451,39 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# ── npm-workspace: Node/JS-ecosystem artifacts the VisualStudio rules don't cover ──
+# The workspace re-inclusion at the TOP of this file lets every VisualStudio rule
+# re-ignore VS build artifacts under /packages. These categories have NO VisualStudio
+# global rule, so they are scoped-ignored here (at the END, guaranteed last word) so
+# a secret or generated artifact can never be committed under the workspace.
+/packages/**/node_modules/
+/packages/**/.npm/
+/packages/**/.npmrc
+/packages/**/.cache/
+/packages/**/.nyc_output/
+/packages/**/coverage/
+/packages/**/coverage*.json
+/packages/**/coverage*.xml
+/packages/**/coverage*.info
+/packages/**/*.lcov
+/packages/**/.env
+/packages/**/.env.*
+/packages/**/*.pfx
+/packages/**/*.snk
+/packages/**/*.pem
+/packages/**/*.key
+/packages/**/secrets.json
+/packages/**/[Bb]in/
+/packages/**/[Oo]ut/
+
+# ── npm-workspace: re-include the SOURCE directory literally named `release` ──
+# The shared release-protection evaluator lives at `packages/core/src/release/`
+# (TypeScript source, NOT build output). The VisualStudio `[Rr]elease/` build-results
+# rule far above matches ANY directory named `release`/`Release` at any depth, so it
+# would ignore this source directory (git will not descend into an ignored directory,
+# which would silently drop `tagRulesetEval.ts` from commits despite it being imported
+# and inventoried). Re-include that specific workspace SOURCE directory as the last
+# word. This is scoped to the one known source path, so genuine VS build output named
+# `release/` elsewhere in the workspace is still ignored by the rule above.
+!/packages/core/src/release/

@@ -1,0 +1,386 @@
+{
+  "apiVersion": "2026-05-01-preview",
+  "note": "Provenance manifest for the source-contract fixtures. Each fixture is bound to a named Tier 1/2 source-of-truth artifact (SOURCES) via a commit-pinned permalink (immutable sourceSnapshot.commitId + per-source url) and a canonical content hash for tamper-evidence. Generated sources also carry a committed reviewed extract under source-extracts/ (recorded path + extractSha256); provenance.test.ts parses those extracts and authenticates BOTH the contract.ts constants AND the fixtures against them (enum values, wire field names, exact operation set). Regenerate with `node packages/core/fixtures/scripts/generate-provenance.mjs`.",
+  "sourceSnapshot": {
+    "repo": "Squall",
+    "commitId": "94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+    "baseUrl": "https://dev.azure.com/msazure/One/_git/Squall",
+    "capturedAt": "2026-05-01"
+  },
+  "sources": {
+    "gw.operations.getOperationsSnapshot": {
+      "repo": "Squall/services/GW",
+      "path": "services/GW/src/ArmGatewayService/ArmGatewayService.Resources.Operation.Tests/Api/IntegrationTests/Snapshots/OperationIntegrationTestsV2026_05_01_preview.GetOperations.verified.txt",
+      "symbol": "GetOperations verified snapshot",
+      "kind": "generated-snapshot",
+      "tier": 1,
+      "pinnedApiVersion": "2026-05-01-preview",
+      "extract": "source-extracts/OperationIntegrationTestsV2026_05_01_preview.GetOperations.verified.txt",
+      "commitId": "94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "url": "https://dev.azure.com/msazure/One/_git/Squall?path=/services/GW/src/ArmGatewayService/ArmGatewayService.Resources.Operation.Tests/Api/IntegrationTests/Snapshots/OperationIntegrationTestsV2026_05_01_preview.GetOperations.verified.txt&version=GC94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "extractSha256": "0753baf46d73e3b51e6d5a017fd6555b771f3f3f2cb82215ebf4b86249c03190"
+    },
+    "gw.validation.properties": {
+      "repo": "Squall/services/GW",
+      "path": "services/GW/src/ArmGatewayService/ArmGatewayService.Resources/Models/Preview/V2026_05_01_preview/ValidationProperties.g.cs",
+      "symbol": "ValidationProperties",
+      "kind": "generated-model",
+      "tier": 1,
+      "pinnedApiVersion": "2026-05-01-preview",
+      "extract": "source-extracts/ValidationProperties.g.cs",
+      "commitId": "94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "url": "https://dev.azure.com/msazure/One/_git/Squall?path=/services/GW/src/ArmGatewayService/ArmGatewayService.Resources/Models/Preview/V2026_05_01_preview/ValidationProperties.g.cs&version=GC94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "extractSha256": "c6654d440735745c25e8941de37db40f7204985522296f948e2042b87ec91da6"
+    },
+    "gw.validation.state": {
+      "repo": "Squall/services/GW",
+      "path": "services/GW/src/ArmGatewayService/ArmGatewayService.Resources/Models/Preview/V2026_05_01_preview/ScenarioValidationState.g.cs",
+      "symbol": "ScenarioValidationState",
+      "kind": "generated-enum",
+      "tier": 1,
+      "pinnedApiVersion": "2026-05-01-preview",
+      "extract": "source-extracts/ScenarioValidationState.g.cs",
+      "commitId": "94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "url": "https://dev.azure.com/msazure/One/_git/Squall?path=/services/GW/src/ArmGatewayService/ArmGatewayService.Resources/Models/Preview/V2026_05_01_preview/ScenarioValidationState.g.cs&version=GC94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "extractSha256": "7edfd97faf30bce69c00823eeceee13181b10bde2b099732f049eccf7156ff04"
+    },
+    "gw.run.properties": {
+      "repo": "Squall/services/GW",
+      "path": "services/GW/src/ArmGatewayService/ArmGatewayService.Resources/Models/Preview/V2026_05_01_preview/ScenarioRunProperties.g.cs",
+      "symbol": "ScenarioRunProperties",
+      "kind": "generated-model",
+      "tier": 1,
+      "pinnedApiVersion": "2026-05-01-preview",
+      "extract": "source-extracts/ScenarioRunProperties.g.cs",
+      "commitId": "94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "url": "https://dev.azure.com/msazure/One/_git/Squall?path=/services/GW/src/ArmGatewayService/ArmGatewayService.Resources/Models/Preview/V2026_05_01_preview/ScenarioRunProperties.g.cs&version=GC94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "extractSha256": "ab1acc6d0f44494459a613eee8214099e540a07200012c3f9ad5535764c67ae2"
+    },
+    "gw.run.state": {
+      "repo": "Squall/services/GW",
+      "path": "services/GW/src/ArmGatewayService/ArmGatewayService.Resources/Models/Preview/V2026_05_01_preview/ScenarioRunState.g.cs",
+      "symbol": "ScenarioRunState",
+      "kind": "generated-enum",
+      "tier": 1,
+      "pinnedApiVersion": "2026-05-01-preview",
+      "extract": "source-extracts/ScenarioRunState.g.cs",
+      "commitId": "94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "url": "https://dev.azure.com/msazure/One/_git/Squall?path=/services/GW/src/ArmGatewayService/ArmGatewayService.Resources/Models/Preview/V2026_05_01_preview/ScenarioRunState.g.cs&version=GC94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "extractSha256": "a93a2e358a8ba875064e95848127f3f72f07fa06f43a8a9ff02286c949b36629"
+    },
+    "gw.configuration.domainLogic": {
+      "repo": "Squall/services/GW",
+      "path": "services/GW/src/ArmGatewayService/ArmGatewayService.Resources.Workspace.Scenario.Configuration/Api/DomainLogic/ConfigurationDomainLogicV1.cs",
+      "symbol": "ConfigurationDomainLogicV1.ValidateAsync / ExecuteAsync",
+      "kind": "domain-logic",
+      "tier": 1,
+      "pinnedApiVersion": "2026-05-01-preview",
+      "extract": "source-extracts/ConfigurationDomainLogicV1.cs",
+      "commitId": "94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "url": "https://dev.azure.com/msazure/One/_git/Squall?path=/services/GW/src/ArmGatewayService/ArmGatewayService.Resources.Workspace.Scenario.Configuration/Api/DomainLogic/ConfigurationDomainLogicV1.cs&version=GC94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "extractSha256": "aff44c29df49b9d3c22e8d619c9b175213eb0822cb832dac7de90f45dc58219a"
+    },
+    "gw.run.domainLogic": {
+      "repo": "Squall/services/GW",
+      "path": "services/GW/src/ArmGatewayService/ArmGatewayService.Resources.Workspace.Scenario.Run/Api/DomainLogic/RunDomainLogicV1.cs",
+      "symbol": "RunDomainLogicV1.CancelRunAsync / GetRunAsync",
+      "kind": "domain-logic",
+      "tier": 1,
+      "pinnedApiVersion": "2026-05-01-preview",
+      "extract": "source-extracts/RunDomainLogicV1.cs",
+      "commitId": "94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "url": "https://dev.azure.com/msazure/One/_git/Squall?path=/services/GW/src/ArmGatewayService/ArmGatewayService.Resources.Workspace.Scenario.Run/Api/DomainLogic/RunDomainLogicV1.cs&version=GC94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "extractSha256": "ef1d50c291050cecac19c8b7273685c9428e35f7683d72a68c04e2d4af2ae7e2"
+    },
+    "be.validation.command": {
+      "repo": "Squall/services/BE",
+      "path": "services/BE/src/Chaos.Workspaces.Application/Commands/StartScenarioValidationCommand.cs",
+      "symbol": "StartScenarioValidationCommand (lines 59-90)",
+      "kind": "command-handler",
+      "tier": 1,
+      "pinnedApiVersion": "2026-05-01-preview",
+      "extract": "source-extracts/StartScenarioValidationCommand.cs",
+      "commitId": "94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "url": "https://dev.azure.com/msazure/One/_git/Squall?path=/services/BE/src/Chaos.Workspaces.Application/Commands/StartScenarioValidationCommand.cs&version=GC94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "extractSha256": "5b39f2df8f851b2e2af5435eaf4de9959bab171c77098ac395ae5fabd959654b"
+    },
+    "be.execution.command": {
+      "repo": "Squall/services/BE",
+      "path": "services/BE/src/Chaos.Workspaces.Application/Commands/StartScenarioExecutionCommand.cs",
+      "symbol": "StartScenarioExecutionCommand (lines 60-87)",
+      "kind": "command-handler",
+      "tier": 1,
+      "pinnedApiVersion": "2026-05-01-preview",
+      "extract": "source-extracts/StartScenarioExecutionCommand.cs",
+      "commitId": "94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "url": "https://dev.azure.com/msazure/One/_git/Squall?path=/services/BE/src/Chaos.Workspaces.Application/Commands/StartScenarioExecutionCommand.cs&version=GC94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "extractSha256": "9159b550b7e1dfa6ac2633beeb428eed52b360d3b8490971d4c9c729ac9b9c75"
+    },
+    "be.cancel.command": {
+      "repo": "Squall/services/BE",
+      "path": "services/BE/src/Chaos.Workspaces.Application/Commands/CancelScenarioRunCommand.cs",
+      "symbol": "CancelScenarioRunCommandHandler.Handle",
+      "kind": "command-handler",
+      "tier": 1,
+      "pinnedApiVersion": "2026-05-01-preview",
+      "extract": "source-extracts/CancelScenarioRunCommand.cs",
+      "commitId": "94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "url": "https://dev.azure.com/msazure/One/_git/Squall?path=/services/BE/src/Chaos.Workspaces.Application/Commands/CancelScenarioRunCommand.cs&version=GC94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "extractSha256": "17516513b775e92d270e86b8b68dbe16fba437e8158cf5326258c5b297ea434f"
+    },
+    "be.configuration.controller": {
+      "repo": "Squall/services/BE",
+      "path": "services/BE/src/Chaos.Workspaces.Api/Controllers/ScenarioConfigurationsController.cs",
+      "symbol": "ScenarioConfigurationsController (Validate / GetLatestValidation / Execute)",
+      "kind": "controller",
+      "tier": 2,
+      "pinnedApiVersion": "2026-05-01-preview",
+      "extract": "source-extracts/ScenarioConfigurationsController.cs",
+      "commitId": "94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "url": "https://dev.azure.com/msazure/One/_git/Squall?path=/services/BE/src/Chaos.Workspaces.Api/Controllers/ScenarioConfigurationsController.cs&version=GC94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "extractSha256": "acfb37247bb2d11613855a0de574dd71a0972eeb60dbf2bb1e77405f5fcee306"
+    },
+    "be.validation.store": {
+      "repo": "Squall/services/BE",
+      "path": "services/BE/src/Chaos.Workspaces.Infrastructure/Stores/ScenarioValidationStore.cs",
+      "symbol": "ScenarioValidationStore.UpsertLatestAsync / GetLatestAsync",
+      "kind": "store",
+      "tier": 2,
+      "pinnedApiVersion": "2026-05-01-preview",
+      "extract": "source-extracts/ScenarioValidationStore.cs",
+      "commitId": "94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "url": "https://dev.azure.com/msazure/One/_git/Squall?path=/services/BE/src/Chaos.Workspaces.Infrastructure/Stores/ScenarioValidationStore.cs&version=GC94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "extractSha256": "19e0aa042ea8d95e3a1e8fc1ae698a9da7906b7f28f4330aa57bf448571a1fce"
+    },
+    "be.exception.mapper": {
+      "repo": "Squall/services/BE",
+      "path": "services/BE/src/Chaos.Workspaces.Api/ErrorHandling/WorkspacesExceptionMapper.cs",
+      "symbol": "WorkspacesExceptionMapper.Map",
+      "kind": "exception-mapper",
+      "tier": 2,
+      "pinnedApiVersion": "2026-05-01-preview",
+      "extract": "source-extracts/WorkspacesExceptionMapper.cs",
+      "commitId": "94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "url": "https://dev.azure.com/msazure/One/_git/Squall?path=/services/BE/src/Chaos.Workspaces.Api/ErrorHandling/WorkspacesExceptionMapper.cs&version=GC94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "extractSha256": "b965ccdfa5f5ab02fefe595f93bfd2a790c962c16bf2c24f3c6bea49890f0d73"
+    },
+    "be.resource.resolver": {
+      "repo": "Squall/services/BE",
+      "path": "services/BE/src/Chaos.Workspaces.Application/Resolution/ResourceSelectorResolver.cs",
+      "symbol": "ResourceSelectorResolver.ResolveAsync",
+      "kind": "resolver",
+      "tier": 2,
+      "pinnedApiVersion": "2026-05-01-preview",
+      "extract": "source-extracts/ResourceSelectorResolver.cs",
+      "commitId": "94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "url": "https://dev.azure.com/msazure/One/_git/Squall?path=/services/BE/src/Chaos.Workspaces.Application/Resolution/ResourceSelectorResolver.cs&version=GC94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "extractSha256": "1ee01e6452af84ab240d3cd749ec9794f8c0108f8e55f2b701c992981ac5ad50"
+    },
+    "be.resource.evaluator": {
+      "repo": "Squall/services/BE",
+      "path": "services/BE/src/Chaos.Workspaces.Application/Resolution/SelectorEvaluator.cs",
+      "symbol": "SelectorEvaluator.ResolveLiveAsync",
+      "kind": "resolver",
+      "tier": 2,
+      "pinnedApiVersion": "2026-05-01-preview",
+      "extract": "source-extracts/SelectorEvaluator.cs",
+      "commitId": "94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "url": "https://dev.azure.com/msazure/One/_git/Squall?path=/services/BE/src/Chaos.Workspaces.Application/Resolution/SelectorEvaluator.cs&version=GC94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "extractSha256": "0e45b5f61272436899fcacc5f23e1f14c7089731dd2336c718f90f40e3697604"
+    },
+    "be.resource.targetQuery": {
+      "repo": "Squall/services/BE",
+      "path": "services/BE/src/Chaos.Workspaces.Application/Resolution/SelectorTargetQuery.cs",
+      "symbol": "SelectorTargetQuery.QueryAsync",
+      "kind": "resolver",
+      "tier": 2,
+      "pinnedApiVersion": "2026-05-01-preview",
+      "extract": "source-extracts/SelectorTargetQuery.cs",
+      "commitId": "94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "url": "https://dev.azure.com/msazure/One/_git/Squall?path=/services/BE/src/Chaos.Workspaces.Application/Resolution/SelectorTargetQuery.cs&version=GC94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "extractSha256": "58bbcd079fd80254b198cf8ed8d80679a409c9bc482f8685765b5f66b211cbe4"
+    },
+    "be.resource.diRegistration": {
+      "repo": "Squall/services/BE",
+      "path": "services/BE/src/Chaos.Workspaces.Application/Resolution/ResolutionServiceRegistration.cs",
+      "symbol": "ResolutionServiceRegistration.AddResolution",
+      "kind": "di-registration",
+      "tier": 2,
+      "pinnedApiVersion": "2026-05-01-preview",
+      "extract": "source-extracts/ResolutionServiceRegistration.cs",
+      "commitId": "94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "url": "https://dev.azure.com/msazure/One/_git/Squall?path=/services/BE/src/Chaos.Workspaces.Application/Resolution/ResolutionServiceRegistration.cs&version=GC94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "extractSha256": "293af22eb7f1d78d443907309ecdebee7ef72fd820080e68a3909fad291455fc"
+    },
+    "be.resource.targetStore": {
+      "repo": "Squall/services/BE",
+      "path": "services/BE/src/Chaos.Workspaces.Application/Resolution/SelectorTargetStore.cs",
+      "symbol": "SelectorTargetStore.ListTargetsAsync",
+      "kind": "store",
+      "tier": 2,
+      "pinnedApiVersion": "2026-05-01-preview",
+      "extract": "source-extracts/SelectorTargetStore.cs",
+      "commitId": "94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "url": "https://dev.azure.com/msazure/One/_git/Squall?path=/services/BE/src/Chaos.Workspaces.Application/Resolution/SelectorTargetStore.cs&version=GC94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "extractSha256": "634cdfcb07c150581e0c14d25c40a68b9d7467f2b33d955c7f6c12ecc1dcdc57"
+    },
+    "be.resource.mapFactories": {
+      "repo": "Squall/services/BE",
+      "path": "services/BE/src/Chaos.Workspaces.Application/Resolution/SelectorMaps.cs",
+      "symbol": "ResolvedSelectorMap.From / SelectorMap.FromLiveTargets",
+      "kind": "construction-helper",
+      "tier": 2,
+      "pinnedApiVersion": "2026-05-01-preview",
+      "extract": "source-extracts/SelectorMaps.cs",
+      "commitId": "94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "url": "https://dev.azure.com/msazure/One/_git/Squall?path=/services/BE/src/Chaos.Workspaces.Application/Resolution/SelectorMaps.cs&version=GC94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "extractSha256": "2d48eb05d4d1fab12842645f1d452342ade3cd598221a26331f0fa347cb50c5a"
+    },
+    "gw.error.models": {
+      "repo": "Squall/services/GW",
+      "path": "services/GW/src/ArmGatewayService/ArmGatewayService.Resources/Models/Preview/V2026_05_01_preview/ScenarioErrors.g.cs",
+      "symbol": "ScenarioError / ScenarioValidationError / ScenarioExecutionError",
+      "kind": "generated-model",
+      "tier": 1,
+      "pinnedApiVersion": "2026-05-01-preview",
+      "extract": "source-extracts/ScenarioErrors.g.cs",
+      "commitId": "94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "url": "https://dev.azure.com/msazure/One/_git/Squall?path=/services/GW/src/ArmGatewayService/ArmGatewayService.Resources/Models/Preview/V2026_05_01_preview/ScenarioErrors.g.cs&version=GC94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "extractSha256": "c69c374bec3da2538826a414ce84089d17d9bfa2306e0267efc1b0b3ada9c187"
+    },
+    "gw.run.resource": {
+      "repo": "Squall/services/GW",
+      "path": "services/GW/src/ArmGatewayService/ArmGatewayService.Resources/Models/Preview/V2026_05_01_preview/ScenarioRunResource.g.cs",
+      "symbol": "ScenarioRunResource",
+      "kind": "generated-model",
+      "tier": 1,
+      "pinnedApiVersion": "2026-05-01-preview",
+      "extract": "source-extracts/ScenarioRunResource.g.cs",
+      "commitId": "94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "url": "https://dev.azure.com/msazure/One/_git/Squall?path=/services/GW/src/ArmGatewayService/ArmGatewayService.Resources/Models/Preview/V2026_05_01_preview/ScenarioRunResource.g.cs&version=GC94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "extractSha256": "a91675396fc39ca75de829dd08f1839fc17745272497d302e1a48b43d15f43af"
+    },
+    "be.run.state.isTerminal": {
+      "repo": "Squall/services/BE",
+      "path": "services/BE/src/Chaos.Workspaces.Domain/ScenarioRunStateExtensions.cs",
+      "symbol": "ScenarioRunStateExtensions.IsTerminal",
+      "kind": "domain-logic",
+      "tier": 2,
+      "pinnedApiVersion": "2026-05-01-preview",
+      "extract": "source-extracts/ScenarioRunStateExtensions.cs",
+      "commitId": "94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "url": "https://dev.azure.com/msazure/One/_git/Squall?path=/services/BE/src/Chaos.Workspaces.Domain/ScenarioRunStateExtensions.cs&version=GC94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "extractSha256": "eff182145a6f41fd21d59d5132dde7dd2e0eae2150ec2d07e63d78ac09ba69b7"
+    },
+    "be.validation.state.isTerminal": {
+      "repo": "Squall/services/BE",
+      "path": "services/BE/src/Chaos.Workspaces.Domain/ScenarioValidationStateExtensions.cs",
+      "symbol": "ScenarioValidationStateExtensions.IsTerminal",
+      "kind": "domain-logic",
+      "tier": 2,
+      "pinnedApiVersion": "2026-05-01-preview",
+      "extract": "source-extracts/ScenarioValidationStateExtensions.cs",
+      "commitId": "94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "url": "https://dev.azure.com/msazure/One/_git/Squall?path=/services/BE/src/Chaos.Workspaces.Domain/ScenarioValidationStateExtensions.cs&version=GC94309b3d1a77d34bd20d0dd0fb1a7f930685050c",
+      "extractSha256": "aa8ff015d438208e16af311913a9ce71af6d951912db854c53694e6fa4535fe2"
+    }
+  },
+  "fixtures": [
+    {
+      "file": "cancel/accept-202.json",
+      "source": "gw.run.domainLogic",
+      "citation": "VF8, VF9",
+      "canonicalSha256": "0cc96edded7e114d3a4022b5c3d88495b86dd66558fccdfdfc25bfb6f84dc0dc"
+    },
+    {
+      "file": "cancel/run-canceled-200.json",
+      "source": "gw.run.state",
+      "citation": "VF7, VF8",
+      "canonicalSha256": "201f5f052f7bf680054e4d6aa81d288705fdb6dd70f1880c9b6b3935ec79497a"
+    },
+    {
+      "file": "cancel/run-transitions.json",
+      "source": "gw.run.state",
+      "citation": "VF7, VF8",
+      "canonicalSha256": "443064aefd9e43262dbd27834c8b5875af0b2da5778d9489a64dd0394b5749af"
+    },
+    {
+      "file": "execute/accept-202.json",
+      "source": "gw.configuration.domainLogic",
+      "citation": "VF5, DX3",
+      "canonicalSha256": "5922371eb7ad8225b06b4332b835a68535d55b025b296ff80a9e9269f2de80b2"
+    },
+    {
+      "file": "execute/accept-unevaluated-202.json",
+      "source": "be.execution.command",
+      "citation": "VF11",
+      "canonicalSha256": "b1da1ede6b840c9152d6f64205861f84bb7c27695e7b2420ac5eb65e665e021e"
+    },
+    {
+      "file": "execute/run-failed-200.json",
+      "source": "gw.run.state",
+      "citation": "VF6, VF7, VF10",
+      "canonicalSha256": "12e0ecbe6d01a8187384fa1c0a20a51fa042ed465177a044ca9d67c27c982386"
+    },
+    {
+      "file": "execute/run-nonterminal-202.json",
+      "source": "gw.run.properties",
+      "citation": "VF6, DX2",
+      "canonicalSha256": "004292825f7f873a8be453c57085b1d8292457dab7ab9a56456032cdf90ed261"
+    },
+    {
+      "file": "execute/run-succeeded-200.json",
+      "source": "gw.run.state",
+      "citation": "VF6, VF7",
+      "canonicalSha256": "570b0afc688aa1bf2f35c372554aadcc8d2b7a91042930401a9e6737e7df2dce"
+    },
+    {
+      "file": "execute/run-transitions.json",
+      "source": "gw.run.state",
+      "citation": "VF6, VF7",
+      "canonicalSha256": "81e47ca15dbcf069c477a54333d464c4303c9098352504b8784623f8ab936fa0"
+    },
+    {
+      "file": "operations/provider-operations.json",
+      "source": "gw.operations.getOperationsSnapshot",
+      "citation": "VF9, VF12, DX1",
+      "canonicalSha256": "218dd8bf5a50e1c1821cb4e20019f459d5f9f9dc890a259addb835f924089ffb"
+    },
+    {
+      "file": "validate/accept-202.json",
+      "source": "gw.configuration.domainLogic",
+      "citation": "VF1",
+      "canonicalSha256": "9fb7c4ad8271d8fe5d675dfdd549215d5ccb029e63f693185a2b84eb70b36557"
+    },
+    {
+      "file": "validate/accept-unevaluated-202.json",
+      "source": "be.validation.command",
+      "citation": "VF11",
+      "canonicalSha256": "258fa3931186cc76d2de833b2ae1cd3ccb5a5e7f754da2c3a2f0ba5287b05c64"
+    },
+    {
+      "file": "validate/plan-mutation-sequence.json",
+      "source": "gw.configuration.domainLogic",
+      "citation": "VF4",
+      "canonicalSha256": "f9f0cf58a2fa1a9fffed40222ecd716235bb0559a8e1d4809335fbbb814b89c6"
+    },
+    {
+      "file": "validate/validation-nonterminal-202.json",
+      "source": "gw.validation.properties",
+      "citation": "VF2, VF4, DX2",
+      "canonicalSha256": "ad91362b29ad67ae64251e548e828c4e7b433c39c1b8ea3cc762de3635bb34fa"
+    },
+    {
+      "file": "validate/validation-requires-attention-200.json",
+      "source": "gw.validation.state",
+      "citation": "VF3, VF10",
+      "canonicalSha256": "5ef873ee8797dd3a57666a3d781d0e5a71adf111e6bc37c0bf9875e5fde9cedd"
+    },
+    {
+      "file": "validate/validation-succeeded-200.json",
+      "source": "gw.validation.state",
+      "citation": "VF2, VF3",
+      "canonicalSha256": "d05c0814d754f22edda3d0f9d84401d8977ecb625bfeebbc3d3b52ecf990eb76"
+    }
+  ]
+}

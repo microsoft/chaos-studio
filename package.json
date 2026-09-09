@@ -1,0 +1,23 @@
+{
+  "name": "chaos-studio",
+  "version": "0.0.0",
+  "private": true,
+  "description": "npm-workspaces root for the Azure Chaos Studio v2 CI/CD integrations (shared TypeScript core + GitHub Action and Azure Pipelines task adapters). Coexists with the existing Python and PowerShell tooling.",
+  "license": "MIT",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --test \"packages/core/test/**/*.test.ts\"",
+    "test:core": "node --test \"packages/core/test/**/*.test.ts\""
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.8.0"
+  }
+}

@@ -1,0 +1,436 @@
+# OneBranch Official pipeline for the Azure Chaos Studio Workspaces extension.
+# Consumed by the Squall `ADO-Plugin-Official`-equivalent pipeline definition.
+# THREE isolated stages: `build` builds the shared core, runs checks, and packages an
+# UNSIGNED VSIX (holds NO Marketplace credential and does NO signing); `sign` is a
+# DEPLOYMENT job bound to the protected pipeline ENVIRONMENT `$(SigningEnvironment)` that
+# signs + cryptographically validates the VSIX (the environment's Approvals-and-checks are
+# an UNAVOIDABLE gate evaluated before the deployment runs); and `publish` is a OneBranch v2
+# `releaseJob` that declares the SIGNED VSIX as an explicit artifact input, disables
+# repository checkout, runs NO repository code, and publishes through the existing
+# AzureChaosStudio publisher using the `ADO-Plugin Publishing` Marketplace service
+# connection. Publish executes ONLY when `publishExtension` is set and the run is from the
+# trusted default branch.
+#
+# TRUST BOUNDARY — because a MANUAL run loads THIS YAML from the SELECTED branch, no
+# in-file condition or variable (PublishBranch, the stage conditions, even the `sign` stage's
+# `environment:` binding) is authoritative: a feature branch could edit or delete them. The
+# INDEPENDENTLY ENFORCED controls live OUTSIDE this YAML, on the platform and the protected
+# resources themselves:
+#   (1) SIGNING is gated by OneBranch PLATFORM GOVERNANCE, not by this file. A Real
+#       `external_distribution` SignType is granted by ESRP/OneBranch onboarding ONLY to the
+#       onboarded Official pipeline (by pipeline id / service tree) running the
+#       Production/Official template from the trusted branch. A feature branch that deletes the
+#       `environment:` binding and calls `onebranch.pipeline.signing@1` directly therefore
+#       cannot obtain a trusted signature — the broker issues at most a Test signature, which
+#       fails the CodeSign Validation gates below. The `sign` deployment job's binding to the
+#       `$(SigningEnvironment)` protected environment (ADO Approvals-and-checks: Branch Control
+#       = refs/heads/main + pipeline permissions restricted to this pipeline; the human Approval
+#       gate lives on the PUBLISH resource, not signing) is DEFENSE IN DEPTH layered on top of
+#       that platform gate.
+#   (2) PUBLISH is gated by the `ADO-Plugin Publishing` Marketplace SERVICE CONNECTION's own
+#       Approvals-and-checks (Branch Control limited to PublishBranch + a required Approval),
+#       which bind the credential regardless of which pipeline/branch YAML references it.
+#   (3) The `publish` stage INDEPENDENTLY RE-VERIFIES the signed-artifact HANDOFF: it runs
+#       CodeSign Validation on the artifact it actually received and fails closed unless that
+#       VSIX is validly signed — so a run that skipped or faked signing cannot publish.
+# Provision and confirm (1)+(2) live with scripts/verify-ado-signing-protections.sh (see
+# CONTRIBUTING.md, "Azure Pipelines extension publish security"). The in-YAML branch
+# conditions below are additional defense in depth. Signing uses the governed
+# `onebranch.pipeline.signing@1` task; the governed CodeSign Validation tool
+# (CodeSignValidation@0 + PostAnalysis@2, plus the job-level SDL gate) cryptographically
+# verifies the VSIX digest, signature, and certificate chain and blocks publication on any
+# failure — in BOTH the sign and publish stages.
+
+# Three-part, strictly increasing build number. `PackageAzureDevOpsExtension`
+# requires a `major.minor.patch` extensionVersion; the ADO default
+# ($(Date:yyyyMMdd)$(Rev:.r)) is only two parts and fails packaging. Major is
+# pinned to the extension's 1.x line; minor=date and patch=rev keep it ordered.
+name: 1.$(Date:yyyyMMdd).$(Rev:r)
+
+trigger: none
+pr: none
+
+parameters:
+  - name: publishExtension
+    displayName: Publish the VSIX to the Visual Studio Marketplace
+    type: boolean
+    default: false
+  - name: extensionManifest
+    displayName: Extension manifest to package
+    type: string
+    default: vss-extension.json
+    values:
+      - vss-extension.json
+      - vss-extension.dev.json
+
+resources:
+  repositories:
+    - repository: templates
+      type: git
+      name: OneBranch.Pipelines/GovernedTemplates
+      ref: refs/heads/main
+
+variables:
+  - group: ADO-plugin-variable-group
+  - name: system.debug
+    value: false
+  - name: ExtensionRoot
+    value: '$(Build.SourcesDirectory)/azure-pipelines-extension'
+  - name: VsixPath
+    value: '$(Build.SourcesDirectory)/out/ChaosStudioWorkspaces.vsix'
+  # The trusted branch publication and signing are allowed from. A manual run from any
+  # other branch builds an UNSIGNED VSIX and skips the publish stage (see conditions).
+  # NOTE: this variable — like every line in this file — comes from the SELECTED branch
+  # on a manual run, so a feature branch could redefine it or drop the conditions that
+  # reference it. It is therefore only a defense-in-depth convenience. The AUTHORITATIVE
+  # gates live OUTSIDE this YAML: branch control + approvals on the `ADO-Plugin
+  # Publishing` service connection (Marketplace credential) AND branch control on the
+  # ESRP signing service connection / OneBranch signing environment (external_distribution
+  # signing), both limited to refs/heads/main, so neither the signing certificate nor the
+  # publish credential can be brokered off the trusted branch regardless of the running
+  # YAML (see CONTRIBUTING.md, "Azure Pipelines extension publish security").
+  - name: PublishBranch
+    value: 'refs/heads/main'
+  # CONCRETE, IDENTIFIABLE protected resources (named here so they are statically
+  # referenceable, auditable, and carry ADO Approvals-and-checks). The
+  # `onebranch.pipeline.signing@1` task does NOT accept a pipeline service connection — ESRP
+  # signing is brokered by the governed OneBranch signing environment. The ADO-gateable
+  # protected resource for signing is therefore a pipeline ENVIRONMENT (`SigningEnvironment`)
+  # that the `sign` DEPLOYMENT job TARGETS; the Marketplace PUBLISH uses a real ADO
+  # service connection (`ADO-Plugin Publishing`). BOTH must have, in Azure DevOps,
+  # Approvals-and-checks -> Branch Control = refs/heads/main, Security -> Pipeline permissions
+  # restricted to THIS official pipeline, and (publish) a required Approval. Verify live with
+  # `scripts/verify-ado-signing-protections.sh` (see CONTRIBUTING.md, "Azure Pipelines
+  # extension publish security").
+  - name: SigningEnvironment
+    value: 'ChaosStudio-ESRP-Signing-Prod'
+
+extends:
+  template: v2/OneBranch.Official.CrossPlat.yml@templates
+  parameters:
+    # Linux signing setup is gated behind this feature flag on the CrossPlat
+    # template; without it the `onebranch.pipeline.signing@1` task is not wired up
+    # on the linux pool and ESRP signing silently does not run.
+    featureFlags:
+      linuxEsrpSigning: true
+    globalSdl:
+      tsa:
+        enabled: true
+      credscan:
+        suppressionsFile: $(Build.SourcesDirectory)/.config/CredScanSuppressions.json
+      policheck:
+        break: true
+      codeSign:
+        enabled: true
+    stages:
+      # STAGE 1 — build & package the (UNSIGNED) VSIX. This stage runs REPOSITORY CODE
+      # (npm ci/build/test) but holds NO Marketplace publishing credential and does NO
+      # signing, so a compromised build cannot sign or publish. The packaged VSIX is
+      # emitted to $(ob_outputDirectory) and published as the stage drop for the sign stage.
+      - stage: build
+        jobs:
+          - job: package
+            pool:
+              type: linux
+            variables:
+              ob_outputDirectory: '$(Build.SourcesDirectory)/out'
+            steps:
+              - task: NodeTool@0
+                displayName: Use Node 24
+                inputs:
+                  versionSpec: '24.x'
+
+              - script: npm ci
+                displayName: Install workspace dependencies
+
+              - script: npm run typecheck
+                displayName: Type-check
+
+              - script: npm test
+                displayName: Test shared core
+
+              - script: npm run build
+                displayName: Build committed bundles
+
+              - script: |
+                  set -euo pipefail
+                  # Stage the built task runtime into EVERY task folder so both
+                  # the production and dev extensions (which carry distinct task
+                  # GUIDs for side-by-side install) package a runnable bundle.
+                  for d in azure-pipelines-extension/tasks/*/ ; do
+                    cp -r dist/azure-pipelines-task/. "$d"
+                  done
+                displayName: Stage task runtime into every task folder
+
+              - script: |
+                  set -euo pipefail
+                  BUNDLE="azure-pipelines-extension/tasks/AzureChaosStudioScenarioV1/index.js"
+                  SENTINEL='__CHAOS_STUDIO_PLACEHOLDER_BUNDLE__'
+                  # Block publishing the fail-fast placeholder task bundle. The
+                  # placeholder carries a machine-detectable sentinel; a real built
+                  # bundle must not contain it. Static check + the DETERMINISTIC
+                  # smoke harness (isolated self-test mode, requires exit 0, kills
+                  # the whole process tree on timeout, and propagates crashes/
+                  # timeouts) — never suppressing failures with `|| true`.
+                  if [ ! -f "$BUNDLE" ]; then
+                    echo "##vso[task.logissue type=error]Task bundle '$BUNDLE' is missing; nothing to package."
+                    exit 1
+                  fi
+                  if grep -q "$SENTINEL" "$BUNDLE"; then
+                    echo "##vso[task.logissue type=error]Refusing to package the placeholder task bundle ('$BUNDLE'). Build the real bundle first."
+                    exit 1
+                  fi
+                  node scripts/smoke-action-bundle.mjs "$BUNDLE"
+                  echo "Task bundle passed the placeholder guard and deterministic smoke test."
+                displayName: Refuse to publish a placeholder bundle
+
+              - task: NodeTool@0
+                displayName: Use Node 20 (Node20_1 task-handler runtime parity)
+                inputs:
+                  versionSpec: '20.x'
+
+              - script: |
+                  set -euo pipefail
+                  # The Azure Pipelines task declares the `Node20_1` execution handler, so
+                  # the bundle RUNS on Node 20 on the agent — NOT the Node 24 used for the
+                  # build/typecheck/test above. Validate the built bundle under Node 20 to
+                  # catch Node-24-only syntax/APIs that would break at task runtime: confirm
+                  # the interpreter IS Node 20, `node --check` PARSES every staged task bundle
+                  # under the Node 20 engine (type/syntax gate), and the DETERMINISTIC smoke
+                  # harness RUNS the primary bundle under Node 20 (runtime gate, no `|| true`).
+                  node --version
+                  case "$(node --version)" in
+                    v20.*) : ;;
+                    *) echo "##vso[task.logissue type=error]Expected Node 20 for the Node20_1 runtime parity check, got $(node --version)."; exit 1 ;;
+                  esac
+                  for d in azure-pipelines-extension/tasks/*/ ; do
+                    node --check "${d}index.js"
+                  done
+                  node scripts/smoke-action-bundle.mjs "azure-pipelines-extension/tasks/AzureChaosStudioScenarioV1/index.js"
+                  echo "Task bundle parses and runs under Node 20 (Node20_1 handler parity)."
+                displayName: Validate task bundle under Node 20 (Node20_1 parity)
+
+              - task: NodeTool@0
+                displayName: Restore Node 24 for packaging
+                inputs:
+                  versionSpec: '24.x'
+
+              - task: TfxInstaller@4
+                displayName: Install tfx-cli
+                inputs:
+                  version: 'v0.x'
+
+              - task: PackageAzureDevOpsExtension@4
+                displayName: Package VSIX
+                inputs:
+                  rootFolder: '$(ExtensionRoot)'
+                  patternManifest: '${{ parameters.extensionManifest }}'
+                  extensionVersion: '$(Build.BuildNumber)'
+                  # Stamp each published release with a distinct, increasing task
+                  # version so agents never retain a cached older task
+                  # implementation under the same version. `minor` keeps the
+                  # permanent major from task.json (pinned by `Task@1`, VF15) and
+                  # advances minor+patch from the extension version.
+                  updateTasksVersion: true
+                  updateTasksVersionType: minor
+                  outputPath: '$(ob_outputDirectory)/ChaosStudioWorkspaces.vsix'
+
+      # STAGE 2 — SIGN the VSIX inside a DEPLOYMENT job bound to the protected pipeline
+      # ENVIRONMENT `$(SigningEnvironment)`. Binding the signing to a deployment job that
+      # TARGETS the environment is what makes the environment's Approvals-and-checks
+      # (Branch Control = refs/heads/main + pipeline-permissions; the human Approval gate is on
+      # the PUBLISH resource, not signing) an UNAVOIDABLE gate: Azure DevOps evaluates those
+      # checks BEFORE the deployment job runs, so a feature-branch run (or any non-official
+      # pipeline) can never reach the signing task.
+      # This closes the gap where the environment was named but never consumed. The stage
+      # also carries an in-YAML branch condition as defense in depth. The build stage
+      # produced an UNSIGNED VSIX (so feature-branch builds still validate); only this
+      # environment-gated stage grants the `external_distribution` signature. Verify the
+      # environment's live checks with scripts/verify-ado-signing-protections.sh (see
+      # CONTRIBUTING.md, "Azure Pipelines extension publish security").
+      - stage: sign
+        dependsOn: build
+        condition: and(succeeded(), eq(variables['Build.SourceBranch'], variables['PublishBranch']))
+        jobs:
+          - deployment: sign_vsix
+            # UNAVOIDABLE protected-resource binding: the deployment targets the signing
+            # environment, so ADO enforces that environment's Branch Control +
+            # pipeline-permission checks before any signing step runs (the human Approval gate
+            # is on the publish resource, not signing).
+            environment: $(SigningEnvironment)
+            pool:
+              type: linux
+            variables:
+              ob_outputDirectory: '$(Build.SourcesDirectory)/out'
+              # Governed CodeSign Validation is the authoritative cryptographic gate; it is
+              # enabled for this signing job and invoked as an explicit, blocking step
+              # (CodeSignValidation@0 + PostAnalysis@2) so the VSIX digest, signature, trust
+              # chain, and leaf signer are cryptographically verified by the supported
+              # Guardian/ESRP verifier before the VSIX is eligible for the publish stage.
+              ob_sdl_codeSignValidation_enabled: true
+            # Declare the build stage's packaged (unsigned) VSIX as a governed artifact input
+            # (checkout disabled — signing needs no repository source, only the artifact).
+            templateContext:
+              type: releaseJob
+              isProduction: true
+              inputs:
+                - input: pipelineArtifact
+                  artifactName: drop_build_package
+                  targetPath: $(ob_outputDirectory)
+            strategy:
+              runOnce:
+                deploy:
+                  steps:
+                    - task: onebranch.pipeline.signing@1
+                      displayName: Sign the VSIX (ESRP via the governed OneBranch signing environment)
+                      # The `onebranch.pipeline.signing@1` task takes NO pipeline service
+                      # connection (ESRP is brokered by the governed OneBranch signing
+                      # environment). The authoritative external control is this deployment
+                      # job's binding to the `$(SigningEnvironment)` protected environment
+                      # (ADO Approvals-and-checks: Branch Control = refs/heads/main
+                      # + pipeline permissions restricted to this pipeline; the human Approval
+                      # gate is on the publish resource, not signing), PLUS OneBranch
+                      # platform governance (Production/Official template + repo onboarding
+                      # gate a Real/external_distribution SignType to the official pipeline).
+                      inputs:
+                        command: sign
+                        # SUPPORTED inputs only. `signing_environment: azure_devops` selects
+                        # the governed OneBranch signing environment that brokers the ESRP
+                        # certificate; external_distribution is the profile for a publicly
+                        # distributed artifact. The VSIX in $(ob_outputDirectory) is signed in place.
+                        signing_environment: azure_devops
+                        signing_profile: external_distribution
+                        files_to_sign: '**/*.vsix'
+                        search_root: '$(ob_outputDirectory)'
+
+                    - task: securedevelopmentteam.vss-secure-development-tools.build-task-codesignvalidation.CodeSignValidation@0
+                      displayName: CodeSign Validation (cryptographic digest + signature + chain)
+                      inputs:
+                        # The supported Guardian/ESRP CodeSign Validation tool cryptographically
+                        # verifies each artifact under $(ob_outputDirectory): the embedded
+                        # signature is validated against the signed content (digest/tamper
+                        # check), the signature itself is checked, and the signer certificate is
+                        # validated up its trust chain to an approved Microsoft signing root.
+                        # This trust-chain check IS the SignType discriminator: a Real
+                        # (external_distribution) signature chains to the approved Microsoft
+                        # PRODUCTION signing root, whereas the Test signature a bypassing
+                        # feature-branch run would obtain uses a non-production certificate that
+                        # does NOT chain — so it fails this gate. The Real SignType ENTITLEMENT
+                        # itself is granted by ESRP/OneBranch onboarding (portal-confirmed, not
+                        # REST-queryable); this gate proves the ARTIFACT actually carries it.
+                        path: '$(ob_outputDirectory)'
+                        onlyGreenResult: false
+                        verboseOutput: true
+
+                    - task: securedevelopmentteam.vss-secure-development-tools.build-task-postanalysis.PostAnalysis@2
+                      displayName: Fail the build if the VSIX signature is not cryptographically valid
+                      inputs:
+                        # Break the build (before publish) using the documented CodeSign
+                        # severity threshold: WarningAbove fails on any CodeSign Validation
+                        # finding at Warning severity or higher (an unsigned, tampered,
+                        # wrongly-chained, or non-Microsoft-signed VSIX). ToolLogsNotFoundAction
+                        # = Error fails closed when the CodeSign Validation logs are missing,
+                        # so a silently skipped verifier can never be mistaken for a pass.
+                        CodesignValidation: true
+                        CodesignValidationBreakOn: WarningAbove
+                        ToolLogsNotFoundAction: Error
+
+      # STAGE 2 — publish the already-signed VSIX. This stage is ISOLATED from
+      # repository-code execution: it uses the OneBranch v2 `releaseJob` contract,
+      # which declares the SIGNED ARTIFACT as an explicit input, disables repository
+      # checkout, and runs no npm/build/test — it only consumes the signed drop and
+      # publishes it. It runs ONLY when publishExtension is set AND the run is from
+      # the trusted default branch. Defense in depth: the run also targets a
+      # PROTECTED ADO environment, AND — critically, because a feature-branch YAML
+      # could otherwise define its own job that consumes the Marketplace service
+      # connection and skips the environment — BRANCH CONTROL + APPROVALS MUST also
+      # be configured on the `ADO-Plugin Publishing` service connection itself
+      # (ADO → Service connections → Approvals and checks → Branch control limited to
+      # PublishBranch, plus required approvals). That binds the credential regardless
+      # of which pipeline/branch YAML references it. See CONTRIBUTING.md.
+      - stage: publish
+        dependsOn: sign
+        condition: >-
+          and(succeeded(),
+              eq('${{ parameters.publishExtension }}', true),
+              eq(variables['Build.SourceBranch'], variables['PublishBranch']))
+        jobs:
+          - job: publish_vsix
+            pool:
+              type: linux
+            variables:
+              ob_outputDirectory: '$(Build.SourcesDirectory)/out'
+            # OneBranch v2 release contract: declare the SIGNED VSIX produced by the sign
+            # stage's deployment job as a pipeline-artifact INPUT (governed download), mark
+            # the job as a production release, and let the template disable checkout.
+            templateContext:
+              type: releaseJob
+              isProduction: true
+              inputs:
+                - input: pipelineArtifact
+                  # OneBranch publishes each job's ob_outputDirectory as `drop_<stage>_<job>`;
+                  # the signed VSIX comes from the environment-gated sign/sign_vsix deployment.
+                  artifactName: drop_sign_sign_vsix
+                  targetPath: $(Pipeline.Workspace)/signed
+            steps:
+              # Explicitly disable repository checkout: no repo code on disk in the
+              # secret-bearing publish stage (belt-and-suspenders with releaseJob).
+              - checkout: none
+
+              - script: |
+                  set -euo pipefail
+                  # Bind exactly one signed VSIX to publish; fail closed on zero or
+                  # multiple matches so an ambiguous artifact set can never publish
+                  # the wrong file.
+                  mapfile -t vsixes < <(find "$(Pipeline.Workspace)/signed" -name '*.vsix' -type f)
+                  if [ "${#vsixes[@]}" -ne 1 ]; then
+                    echo "##vso[task.logissue type=error]Expected exactly one signed VSIX, found ${#vsixes[@]}."
+                    printf '%s\n' "${vsixes[@]}"
+                    exit 1
+                  fi
+                  echo "##vso[task.setvariable variable=SignedVsix]${vsixes[0]}"
+                  echo "Publishing signed VSIX: ${vsixes[0]}"
+                displayName: Resolve the single signed VSIX
+
+              # INDEPENDENT signed-artifact HANDOFF verification. The publish stage does NOT
+              # trust that the sign stage ran — it re-verifies, cryptographically, that the
+              # artifact it actually received is validly signed BEFORE spending the Marketplace
+              # credential. A feature-branch YAML that skipped or faked the sign stage would
+              # hand this stage an UNSIGNED VSIX, which this gate rejects (fail closed). This is
+              # the in-pipeline half of "verify signed-artifact handoff in a live run"; the
+              # operator confirms it once per CONTRIBUTING.md ("live signing verification").
+              - task: securedevelopmentteam.vss-secure-development-tools.build-task-codesignvalidation.CodeSignValidation@0
+                displayName: Re-verify the consumed VSIX is cryptographically signed (independent handoff check)
+                inputs:
+                  path: '$(Pipeline.Workspace)/signed'
+                  onlyGreenResult: false
+                  verboseOutput: true
+
+              - task: securedevelopmentteam.vss-secure-development-tools.build-task-postanalysis.PostAnalysis@2
+                displayName: Fail publish if the consumed VSIX is not validly signed (independent gate)
+                inputs:
+                  # Same fail-closed thresholds as the sign stage: break on any CodeSign
+                  # finding at Warning+ (unsigned/tampered/wrong-chain/non-Microsoft signer) and
+                  # ERROR when the validation logs are missing, so a skipped verifier cannot pass.
+                  CodesignValidation: true
+                  CodesignValidationBreakOn: WarningAbove
+                  ToolLogsNotFoundAction: Error
+
+              - task: TfxInstaller@4
+                displayName: Install tfx-cli
+                inputs:
+                  version: 'v0.x'
+
+              - task: PublishAzureDevOpsExtension@4
+                displayName: Publish VSIX to Visual Studio Marketplace
+                inputs:
+                  connectTo: 'VsTeam'
+                  # Hardcoded (NOT variable-bound) so Azure DevOps can statically
+                  # discover the service connection and enforce its Approvals and
+                  # checks (branch control + approvals) at queue time. A `$(var)`
+                  # reference is resolved too late for that discovery.
+                  connectedServiceName: 'ADO-Plugin Publishing'
+                  fileType: 'vsix'
+                  vsixFile: '$(SignedVsix)'
+                  updateTasksVersion: true
+                  updateTasksVersionType: minor

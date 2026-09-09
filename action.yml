@@ -1,0 +1,73 @@
+# Root GitHub Action metadata for the Azure Chaos Studio v2 CI/CD integration.
+#
+# This is the single root action.yml GitHub Marketplace lists automatically
+# (VF16). It targets the node24 runtime (VF17, D19) and runs the reproducibly
+# built adapter bundle from packages/action-github (finalized in a later epic).
+#
+# The canonical inputs/outputs below are the shared contract defined in
+# packages/core/src/contract.ts; names and semantics are identical to the
+# Azure Pipelines task (NFR5).
+name: 'Azure Chaos Studio'
+description: >-
+  Validate and run an Azure Chaos Studio v2 scenario configuration from your
+  pipeline with workload identity — no raw ARM scripting.
+author: 'Microsoft'
+
+branding:
+  icon: 'zap'
+  color: 'blue'
+
+inputs:
+  subscription-id:
+    description: 'Azure subscription ID (GUID) that contains the Chaos Studio workspace.'
+    required: true
+  resource-group:
+    description: 'Resource group of the Chaos Studio workspace.'
+    required: true
+  workspace-name:
+    description: 'Chaos Studio workspace name.'
+    required: true
+  scenario-name:
+    description: 'Scenario name within the workspace.'
+    required: true
+  scenario-configuration-name:
+    description: 'Scenario configuration name to validate and/or execute.'
+    required: true
+  mode:
+    description: 'One of validate-and-execute, validate-only, or execute-only.'
+    required: false
+    default: 'validate-and-execute'
+  wait-for-completion:
+    description: 'Wait for the scenario run to reach a terminal state before finishing.'
+    required: false
+    default: 'true'
+  completion-timeout-seconds:
+    description: 'End-to-end deadline for validate + execute + run polling.'
+    required: false
+    default: '2700'
+  cancel-on-timeout-or-cancellation:
+    description: 'Cancel the in-flight run on timeout or step cancellation (applies only when waiting).'
+    required: false
+    default: 'true'
+
+outputs:
+  validation-state:
+    description: 'Terminal validation state string.'
+  run-id:
+    description: 'Scenario run GUID.'
+  run-resource-id:
+    description: 'Full ARM resource ID of the run.'
+  run-state:
+    description: 'Terminal run state (wait) or last-observed run state (no-wait).'
+  started-at:
+    description: 'Run start timestamp (ISO 8601).'
+  completed-at:
+    description: 'Run completion timestamp (ISO 8601).'
+  correlation-id:
+    description: 'Safe ARM x-ms-correlation-request-id from the last relevant response.'
+  request-id:
+    description: 'Safe ARM x-ms-request-id from the last relevant response.'
+
+runs:
+  using: 'node24'
+  main: 'dist/github-action/index.js'

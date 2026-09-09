@@ -1,0 +1,97 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/azure-pipelines-task-lib/master/tasks.schema.json",
+  "id": "83c40b4c-e5bb-4045-9cb2-ce389248b386",
+  "name": "AzureChaosStudioScenario",
+  "friendlyName": "Azure Chaos Studio Scenario",
+  "description": "Validate and run an Azure Chaos Studio v2 scenario configuration with workload identity.",
+  "helpMarkDown": "Validate and run an Azure Chaos Studio v2 scenario configuration. See https://learn.microsoft.com/azure/chaos-studio.",
+  "category": "Utility",
+  "author": "Microsoft",
+  "version": {
+    "Major": 1,
+    "Minor": 0,
+    "Patch": 0
+  },
+  "preview": true,
+  "instanceNameFormat": "Azure Chaos Studio: $(mode)",
+  "minimumAgentVersion": "4.248.0",
+  "inputs": [
+    {
+      "name": "azureSubscription",
+      "type": "connectedService:AzureRM",
+      "label": "Azure Resource Manager connection",
+      "required": true,
+      "helpMarkDown": "Workload-identity-federated ARM service connection used to authenticate to Chaos Studio."
+    },
+    {
+      "name": "subscriptionId",
+      "type": "string",
+      "label": "Subscription ID",
+      "required": true,
+      "helpMarkDown": "Azure subscription ID (GUID) that contains the Chaos Studio workspace."
+    },
+    {
+      "name": "resourceGroup",
+      "type": "string",
+      "label": "Resource group",
+      "required": true,
+      "helpMarkDown": "Resource group of the Chaos Studio workspace."
+    },
+    {
+      "name": "workspaceName",
+      "type": "string",
+      "label": "Workspace name",
+      "required": true
+    },
+    {
+      "name": "scenarioName",
+      "type": "string",
+      "label": "Scenario name",
+      "required": true
+    },
+    {
+      "name": "scenarioConfigurationName",
+      "type": "string",
+      "label": "Scenario configuration name",
+      "required": true
+    },
+    {
+      "name": "mode",
+      "type": "pickList",
+      "label": "Mode",
+      "required": false,
+      "defaultValue": "validate-and-execute",
+      "options": {
+        "validate-and-execute": "Validate and execute",
+        "validate-only": "Validate only",
+        "execute-only": "Execute only"
+      }
+    },
+    {
+      "name": "waitForCompletion",
+      "type": "boolean",
+      "label": "Wait for completion",
+      "required": false,
+      "defaultValue": "true"
+    },
+    {
+      "name": "completionTimeoutSeconds",
+      "type": "int",
+      "label": "Completion timeout (seconds)",
+      "required": false,
+      "defaultValue": "2700"
+    },
+    {
+      "name": "cancelOnTimeoutOrCancellation",
+      "type": "boolean",
+      "label": "Cancel on timeout or cancellation",
+      "required": false,
+      "defaultValue": "true"
+    }
+  ],
+  "execution": {
+    "Node20_1": {
+      "target": "index.js"
+    }
+  }
+}

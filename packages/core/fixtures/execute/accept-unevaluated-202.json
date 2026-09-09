@@ -1,0 +1,24 @@
+{
+  "description": "VF11: representative EXPECTED wire shape for execute against a workspace with NO evaluation snapshot. This is a hand-authored contract fixture, not a runtime-observed capture: the reviewed BE extracts establish STATICALLY that StartScenarioExecutionCommand accepts a null discovery/evaluation snapshot and resolves the resource-selector map on the fly, and no evaluation-required conflict is mapped, so the DOCUMENTED contract for an unevaluated workspace is the normal external 202 (run Location + default Retry-After 10) rather than a 409. It confirms evaluation is not a prerequisite in the inspected code, not a proven end-to-end runtime response.",
+  "provenance": { "source": "be.execution.command", "citation": "VF11" },
+  "operationId": "ScenarioConfigurations_Execute",
+  "context": "Workspace ws-unevaluated has never been evaluated (null discovery/evaluation snapshot).",
+  "request": {
+    "method": "POST",
+    "url": "https://management.azure.com/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-chaos/providers/Microsoft.Chaos/workspaces/ws-unevaluated/scenarios/scn-demo/configurations/cfg-demo/execute?api-version=2026-05-01-preview"
+  },
+  "response": {
+    "status": 202,
+    "headers": {
+      "Location": "https://management.azure.com/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-chaos/providers/Microsoft.Chaos/workspaces/ws-unevaluated/scenarios/scn-demo/runs/33333333-3333-3333-3333-333333333333?api-version=2026-05-01-preview",
+      "Retry-After": "10",
+      "x-ms-correlation-request-id": "aaaaaaaa-0000-0000-0000-000000000012",
+      "x-ms-request-id": "bbbbbbbb-0000-0000-0000-000000000012"
+    },
+    "body": null
+  },
+  "expected": {
+    "runId": "33333333-3333-3333-3333-333333333333",
+    "runResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-chaos/providers/Microsoft.Chaos/workspaces/ws-unevaluated/scenarios/scn-demo/runs/33333333-3333-3333-3333-333333333333"
+  }
+}

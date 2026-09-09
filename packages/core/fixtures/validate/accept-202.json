@@ -1,0 +1,19 @@
+{
+  "description": "Validate acceptance (VF1). External 202 with no body. Location points directly to validations/latest for the same configuration; Retry-After defaults to 10. There is no separate operation-status resource to discover first.",
+  "provenance": { "source": "gw.configuration.domainLogic", "citation": "VF1" },
+  "operationId": "ScenarioConfigurations_Validate",
+  "request": {
+    "method": "POST",
+    "url": "https://management.azure.com/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-chaos/providers/Microsoft.Chaos/workspaces/ws-demo/scenarios/scn-demo/configurations/cfg-demo/validate?api-version=2026-05-01-preview"
+  },
+  "response": {
+    "status": 202,
+    "headers": {
+      "Location": "https://management.azure.com/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-chaos/providers/Microsoft.Chaos/workspaces/ws-demo/scenarios/scn-demo/configurations/cfg-demo/validations/latest?api-version=2026-05-01-preview",
+      "Retry-After": "10",
+      "x-ms-correlation-request-id": "aaaaaaaa-0000-0000-0000-000000000001",
+      "x-ms-request-id": "bbbbbbbb-0000-0000-0000-000000000001"
+    },
+    "body": null
+  }
+}

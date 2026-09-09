@@ -1,0 +1,35 @@
+{
+  "description": "GET ScenarioRun terminal success (VF6, VF7). Returns HTTP 200 with properties.status = Succeeded, startTime + endTime, empty error channels, and a source-backed resources array whose element matches the ScenarioRunResource model (DX2, VF10).",
+  "provenance": { "source": "gw.run.state", "citation": "VF6, VF7" },
+  "operationId": "ScenarioRuns_Get",
+  "request": {
+    "method": "GET",
+    "url": "https://management.azure.com/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-chaos/providers/Microsoft.Chaos/workspaces/ws-demo/scenarios/scn-demo/runs/22222222-2222-2222-2222-222222222222?api-version=2026-05-01-preview"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "x-ms-correlation-request-id": "aaaaaaaa-0000-0000-0000-000000000007",
+      "x-ms-request-id": "bbbbbbbb-0000-0000-0000-000000000007"
+    },
+    "body": {
+      "id": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-chaos/providers/Microsoft.Chaos/workspaces/ws-demo/scenarios/scn-demo/runs/22222222-2222-2222-2222-222222222222",
+      "name": "22222222-2222-2222-2222-222222222222",
+      "type": "Microsoft.Chaos/workspaces/scenarios/runs",
+      "properties": {
+        "status": "Succeeded",
+        "startTime": "2026-05-01T12:01:00Z",
+        "endTime": "2026-05-01T12:11:00Z",
+        "errors": [],
+        "executionErrors": [],
+        "resources": [
+          {
+            "resourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-chaos/providers/Microsoft.Compute/virtualMachines/vm-demo",
+            "targetType": "Microsoft-VirtualMachine",
+            "selectors": ["selector-primary"]
+          }
+        ]
+      }
+    }
+  }
+}

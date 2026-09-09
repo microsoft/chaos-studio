@@ -1,23 +1,131 @@
 name: release
 
+# Protected release workflow for the chaos-mcp Python package. The mcp-v* tag
+# namespace is reserved for this package (the root GitHub Action uses v*).
+#
+# SECURITY MODEL — dispatch-only from the trusted default branch. A push-triggered
+# `tags: [mcp-v*]` workflow loads THIS FILE FROM THE TAGGED COMMIT, so anyone able to
+# create an mcp-v* tag could point it at a commit whose release.yml strips every guard
+# and exfiltrates the PyPI trusted-publisher identity / GITHUB_TOKEN — the ancestry
+# guard would be in the attacker-controlled file and thus worthless. workflow_dispatch
+# instead always runs the workflow DEFINITION from the dispatched ref, and every job
+# additionally requires (via if:) that ref to be the default branch, so publication can
+# only ever run the reviewed-and-merged workflow against reviewed-and-merged code.
+# Creation/update/deletion of mcp-v* tags is SEPARATELY restricted by a repository tag
+# ruleset (see CONTRIBUTING.md, "MCP release tag protection") whose only bypass actor is
+# the dedicated release identity, so an out-of-band mcp-v* tag cannot be forged either.
+#
+# Shell-injection hygiene: NO github.*/inputs.* expression is interpolated into any
+# `run:` body; every value a script reads is passed through `env:` and referenced as a
+# quoted shell variable. Expression interpolation appears only in non-shell positions
+# (env, with, if), which the Actions engine evaluates.
+
 on:
-  push:
-    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'chaos-mcp version to release, e.g. mcp-v0.4.0 (must match pyproject.toml).'
+        required: true
 
 permissions:
   contents: read
 
+concurrency:
+  group: release-mcp-${{ github.event.inputs.version }}
+  cancel-in-progress: false
+
 jobs:
   build:
+    name: Build the chaos-mcp package (no publication secret)
+    # BRANCH ref only, and exactly the default branch. ref_type guards a tag/other ref
+    # type; the full-ref comparison guards the branch name. Dispatch-only already forces
+    # the workflow definition to come from the dispatched ref; this pins it to default.
+    if: ${{ github.ref_type == 'branch' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      # The commit the release is BUILT and SHIPPED from. On a first release this is the
+      # default-branch tip; on a RETRY where an mcp-v* tag already exists it is that tag's
+      # (ancestor-verified) commit, so the artifacts always match the shipped tag even after
+      # the default branch has advanced. github-release re-resolves and cross-checks this.
+      release_commit: ${{ steps.resolve.outputs.release_commit }}
+    env:
+      REF: ${{ github.ref }}
+      REF_TYPE: ${{ github.ref_type }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      DEFAULT_TIP: ${{ github.sha }}
+      REPO: ${{ github.repository }}
+      VERSION: ${{ github.event.inputs.version }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # Full history so an already-shipped tag's commit (an ancestor of the tip) can be
+          # resolved, ancestry-verified, and checked out for a recovery build.
+          fetch-depth: 0
+
+      - name: Enforce trusted default-branch execution
+        run: |
+          set -euo pipefail
+          # Defense in depth on top of the job-level if. Values come from env, never
+          # inline expression interpolation, so a crafted ref cannot inject shell.
+          if [[ "$REF_TYPE" != "branch" || "$REF" != "refs/heads/${DEFAULT_BRANCH}" ]]; then
+            echo "::error::The MCP release must be dispatched from branch refs/heads/${DEFAULT_BRANCH}, not ${REF} (type ${REF_TYPE})."
+            exit 1
+          fi
+
+      - name: Resolve the release commit (recover an existing tag; verify ancestry)
+        id: resolve
+        run: |
+          set -euo pipefail
+          # VERSION is validated to a canonical mcp-v<M.N.P> before any tag write in the
+          # github-release job; here it only names a ref to read, so a fetch of a bad ref
+          # is an inert no-op. Fetch ONLY the one tag ref (no other refs), if it exists.
+          git fetch --quiet --no-tags origin "refs/tags/${VERSION}:refs/tags/${VERSION}" 2>/dev/null || true
+          # Peel an annotated tag to its commit; a lightweight tag resolves directly.
+          tagCommit="$(git rev-parse -q --verify "refs/tags/${VERSION}^{commit}" 2>/dev/null || true)"
+          if [[ -n "$tagCommit" ]]; then
+            # RETRY / RECOVERY: the mcp-v* tag already exists (a prior run created it). The
+            # default branch may have advanced since, so github.sha != the tagged commit. Ship
+            # the TAGGED commit — never the newer tip — but first require it to be an ANCESTOR
+            # of the current (trusted, reviewed) default-branch tip. A tag pointing OUTSIDE
+            # that history is untrusted and rejected (fail closed).
+            if ! git merge-base --is-ancestor "$tagCommit" "$DEFAULT_TIP"; then
+              echo "::error::Existing tag ${VERSION} points at ${tagCommit}, which is NOT an ancestor of the default-branch tip ${DEFAULT_TIP}. Refusing to build an untrusted commit."
+              exit 1
+            fi
+            RELEASE_COMMIT="$tagCommit"
+            echo "::notice::Recovering release ${VERSION} from its existing tagged commit ${tagCommit} (ancestor of ${DEFAULT_TIP})."
+          else
+            RELEASE_COMMIT="$DEFAULT_TIP"
+            echo "First release of ${VERSION}; building from the default-branch tip ${DEFAULT_TIP}."
+          fi
+          # Build from EXACTLY the release commit (detached), so artifacts match the tag.
+          git checkout --quiet --force --detach "$RELEASE_COMMIT"
+          echo "release_commit=${RELEASE_COMMIT}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: '3.12'
+
+      - name: Verify the requested version matches the committed package version
+        working-directory: copilot-cli-plugin/mcp
+        run: |
+          set -euo pipefail
+          # VERSION comes from env, never inline interpolation. Strip the mcp-v prefix
+          # and require it to equal the version declared in the committed pyproject.toml,
+          # so a dispatch cannot ship a version other than the reviewed, merged one.
+          want="${VERSION#mcp-v}"
+          if [[ "$want" == "$VERSION" ]]; then
+            echo "::error::version input '${VERSION}' must be an mcp-v* tag name (e.g. mcp-v0.4.0)."
+            exit 1
+          fi
+          have="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')"
+          if [[ "$want" != "$have" ]]; then
+            echo "::error::Requested version '${want}' does not match the committed pyproject.toml version '${have}'."
+            exit 1
+          fi
+          echo "MCP release version check passed: ${have}."
 
       - name: Build sdist + wheel
         working-directory: copilot-cli-plugin/mcp
@@ -26,53 +134,843 @@ jobs:
           python -m build
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dist
           path: copilot-cli-plugin/mcp/dist/
 
   publish-pypi:
-    needs: build
+    # Depends on github-release so the PyPI upload is gated behind the fail-closed
+    # ENVIRONMENT-PROTECTION preflight there (which verifies BOTH the mcp-release and the
+    # pypi environments have required reviewers + prevent_self_review + can_admins_bypass=false
+    # + a default-branch-only policy). publish-pypi holds no PAT and cannot self-preflight,
+    # so this ordering is what makes an absent/unprotected `pypi` environment fail closed
+    # before any upload — GitHub's native gate on the `pypi` environment is defense in depth.
+    needs: [build, github-release]
+    if: ${{ github.ref_type == 'branch' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       id-token: write
+    # PROTECTED ENVIRONMENT (finding: feature-branch dispatch bypass). The `pypi`
+    # environment MUST be configured (repo settings) with a deployment-branch policy of
+    # type "Selected branches and tags" naming ONLY the default branch — see
+    # CONTRIBUTING.md ("MCP release"). That EXTERNAL policy is GitHub-enforced and blocks
+    # this privileged job on any non-default ref, even if a feature-branch dispatch
+    # removed the in-file `if:` guard above. The PyPI trusted-publisher binding is scoped
+    # to (this repo, workflow file `release.yml`, environment `pypi`).
     environment:
       name: pypi
       url: https://pypi.org/p/chaos-mcp
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: dist
           path: dist/
+
+      - name: Reconcile against PyPI — verify existing digests, keep only missing dists
+        id: reconcile
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+        run: |
+          set -euo pipefail
+          # RETRY-SAFETY + SUPPLY-CHAIN INTEGRITY. After a PARTIAL upload (e.g. the sdist
+          # landed but the wheel failed), a re-run must not 409 on an already-present file,
+          # and must NEVER accept a same-NAMED file whose CONTENT differs from what we built.
+          # Reconcile BEFORE uploading: query PyPI for the files already published for THIS
+          # version, and for each locally built dist —
+          #   * if PyPI has that filename, its sha256 MUST equal ours (else FAIL CLOSED); a
+          #     digest match means it is already published, so drop it from the upload set;
+          #   * otherwise it is missing and is kept for upload.
+          # The FULL expected name->sha256 manifest (every built dist) is persisted for the
+          # authoritative post-upload verification step. VERSION comes from env; strip mcp-v.
+          want="${VERSION#mcp-v}"
+          api="https://pypi.org/pypi/chaos-mcp/${want}/json"
+          shopt -s nullglob
+          local_files=(dist/*)
+          shopt -u nullglob
+          if [[ ${#local_files[@]} -eq 0 ]]; then
+            echo "::error::No local distributions in dist/ to publish."
+            exit 1
+          fi
+          # Persist the expected manifest (name<TAB>sha256) for EVERY built dist BEFORE any
+          # deletion, so the post-upload step can assert the full published set + digests. Also
+          # build the set of EXPECTED (built) filenames so the reconcile can reject an UNEXPECTED
+          # or DUPLICATE remote distribution BEFORE any irreversible upload (pass 46 finding #8).
+          expected="${RUNNER_TEMP}/pypi-expected.tsv"
+          : > "$expected"
+          declare -A expected_names=()
+          for f in "${local_files[@]}"; do
+            bn="$(basename "$f")"
+            expected_names["$bn"]=1
+            printf '%s\t%s\n' "$bn" "$(sha256sum "$f" | awk '{print $1}')" >> "$expected"
+          done
+          published="$(mktemp)"
+          code="$(curl -sSL -o "$published" -w '%{http_code}' "$api")" || code="000"
+          declare -A remote_sha=()
+          if [[ "$code" == "200" ]]; then
+            # Parse SEPARATELY with jq -e so a malformed/empty PyPI JSON FAILS CLOSED rather
+            # than looking like "nothing published" (a jq error inside a process substitution
+            # is swallowed, so we avoid that): validate .urls is an array with `jq -ec`, then
+            # stream entries from a HERE-STRING (not process substitution) so jq's exit is
+            # not lost. Every entry is validated: a plausible filename and an EXACT 64-hex
+            # sha256, else fail closed.
+            urls_json="$(jq -ec '.urls | if type=="array" then . else error("urls not array") end' "$published")" \
+              || { echo "::error::PyPI returned malformed JSON for chaos-mcp ${want}; refusing to publish blindly."; exit 1; }
+            entries="$(jq -r '.[] | [.filename, (.digests.sha256 // "")] | @tsv' <<< "$urls_json")" \
+              || { echo "::error::Could not read file entries from PyPI JSON for chaos-mcp ${want}."; exit 1; }
+            while IFS=$'\t' read -r fn sh; do
+              # A wholly empty line is the empty-array sentinel; a null filename with data is malformed.
+              if [[ -z "$fn" && -z "$sh" ]]; then continue; fi
+              if [[ -z "$fn" || "$fn" == */* ]]; then
+                echo "::error::PyPI listed an implausible filename '${fn}'."; exit 1
+              fi
+              if [[ ! "$sh" =~ ^[0-9a-f]{64}$ ]]; then
+                echo "::error::PyPI listed '${fn}' without a valid 64-hex sha256 (got '${sh}'); refusing to publish blindly."; exit 1
+              fi
+              # DUPLICATE remote filename (a filename listed twice by PyPI) FAILS CLOSED BEFORE the
+              # upload — an ambiguous listing must never be trusted to reconcile against.
+              if [[ -n "${remote_sha[$fn]:-}" ]]; then
+                echo "::error::PyPI listed DUPLICATE filename '${fn}' for chaos-mcp ${want}; refusing to publish blindly (pass 46 finding #8)."; exit 1
+              fi
+              # UNEXPECTED remote distribution: a published file whose name is NOT in the built set.
+              # Rejecting it BEFORE upload prevents publishing alongside an artifact we did not build
+              # (a hijacked/foreign distribution), rather than only detecting it post-upload.
+              if [[ -z "${expected_names[$fn]:-}" ]]; then
+                echo "::error::PyPI already holds an UNEXPECTED distribution '${fn}' for chaos-mcp ${want} that is not in the built set; refusing to publish alongside it (pass 46 finding #8)."; exit 1
+              fi
+              remote_sha["$fn"]="$sh"
+            done <<< "$entries"
+          elif [[ "$code" == "404" ]]; then
+            echo "::notice::No chaos-mcp ${want} files published yet; all built distributions will be uploaded."
+          else
+            echo "::error::Could not query PyPI for existing chaos-mcp ${want} files (HTTP ${code}); refusing to publish blindly."
+            exit 1
+          fi
+          kept=0
+          for f in "${local_files[@]}"; do
+            base="$(basename "$f")"
+            if [[ -n "${remote_sha[$base]:-}" ]]; then
+              local_sha="$(sha256sum "$f" | awk '{print $1}')"
+              if [[ "${remote_sha[$base]}" != "$local_sha" ]]; then
+                echo "::error::PyPI already has ${base} with a DIFFERENT sha256 (remote=${remote_sha[$base]} local=${local_sha}). Refusing to proceed — the published artifact does not match the built one."
+                exit 1
+              fi
+              echo "::notice::${base} is already on PyPI with a matching sha256; not re-uploading."
+              rm -f "$f"
+            else
+              kept=$((kept + 1))
+            fi
+          done
+          echo "Reconcile complete: ${kept} distribution(s) remain to upload."
+          echo "to_upload=${kept}" >> "$GITHUB_OUTPUT"
 
       # Trusted publisher: configure on PyPI under
       # https://pypi.org/manage/project/chaos-mcp/settings/publishing/
-      # No API token needed.
+      # bound to (repo, workflow file `release.yml`, environment `pypi`). No API token.
+      # Runs ONLY when the reconcile left missing distributions to upload (a fully
+      # already-published version is a no-op success, making the publish idempotent).
+      # `skip-existing` is DELIBERATELY NOT set: reconcile already dropped digest-matching
+      # already-published files, so the only files uploaded here are ones PyPI does not yet
+      # have. If a race uploaded one of those filenames with DIFFERENT bytes between
+      # reconcile and this step, the upload 409s and the job FAILS (races fail loudly)
+      # instead of silently skipping a mismatched artifact.
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        if: ${{ steps.reconcile.outputs.to_upload != '0' }}
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
           packages-dir: dist/
 
+      - name: Verify PyPI holds EXACTLY our built distributions (authoritative post-upload digest check)
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+        run: |
+          set -euo pipefail
+          # AUTHORITATIVE post-upload verification: re-query PyPI and require that the
+          # COMPLETE published file set for this version EQUALS our built manifest EXACTLY —
+          # every built distribution present with OUR sha256, NO unexpected/extra remote
+          # distribution, and NO duplicate filename in the listing. Because skip-existing is
+          # disabled, a race that uploaded a same-named file with different bytes would have
+          # failed the upload; this closes the reconcile->publish gap AND additionally rejects
+          # an unexpected/duplicate file appearing on the version. Missing files are retried
+          # (PyPI JSON propagation lag); an EXTRA file, a DUPLICATE filename, or a DIGEST
+          # MISMATCH fails immediately (never a transient condition in a correct release).
+          want="${VERSION#mcp-v}"
+          api="https://pypi.org/pypi/chaos-mcp/${want}/json"
+          expected="${RUNNER_TEMP}/pypi-expected.tsv"
+          [[ -s "$expected" ]] || { echo "::error::Missing expected-dist manifest ${expected}."; exit 1; }
+          # Expected name->sha256 map + expected COUNT from the build manifest.
+          declare -A want_sha=()
+          expected_count=0
+          while IFS=$'\t' read -r base sha; do
+            [[ -z "$base" ]] && continue
+            want_sha["$base"]="$sha"
+            expected_count=$((expected_count + 1))
+          done < "$expected"
+          attempt=0
+          max_attempts=6
+          while :; do
+            attempt=$((attempt + 1))
+            published="$(mktemp)"
+            code="$(curl -sSL -o "$published" -w '%{http_code}' "$api")" || code="000"
+            if [[ "$code" == "200" ]] \
+               && urls_json="$(jq -ec '.urls | if type=="array" then . else error("urls not array") end' "$published" 2>/dev/null)" \
+               && entries="$(jq -r '.[] | [.filename, (.digests.sha256 // "")] | @tsv' <<< "$urls_json" 2>/dev/null)"; then
+              declare -A remote_sha=()
+              remote_count=0
+              while IFS=$'\t' read -r fn sh; do
+                if [[ -z "$fn" && -z "$sh" ]]; then continue; fi
+                if [[ -z "$fn" || "$fn" == */* || ! "$sh" =~ ^[0-9a-f]{64}$ ]]; then
+                  echo "::error::PyPI listed a malformed file entry ('${fn}' / '${sh}'); refusing to trust the publish."
+                  exit 1
+                fi
+                # DUPLICATE filename in the listing is anomalous — fail closed.
+                if [[ -n "${remote_sha[$fn]:-}" ]]; then
+                  echo "::error::PyPI listed DUPLICATE filename '${fn}' for chaos-mcp ${want}; refusing to trust the publish."
+                  exit 1
+                fi
+                # An UNEXPECTED remote file (not in our built manifest) is never valid.
+                if [[ -z "${want_sha[$fn]:-}" ]]; then
+                  echo "::error::PyPI holds an UNEXPECTED distribution '${fn}' for chaos-mcp ${want} that is not in the built set; refusing to trust the publish."
+                  exit 1
+                fi
+                # A same-named file with a DIFFERENT digest is tampering — fail closed.
+                if [[ "${want_sha[$fn]}" != "$sh" ]]; then
+                  echo "::error::PyPI file '${fn}' sha256 ${sh} != built ${want_sha[$fn]}; refusing to trust the publish."
+                  exit 1
+                fi
+                remote_sha["$fn"]="$sh"
+                remote_count=$((remote_count + 1))
+              done <<< "$entries"
+              # EXACT set: every remote file matched an expected one above, so success iff
+              # the counts are equal (every expected file is also present). Fewer remote than
+              # expected = propagation lag (retry); it can NEVER exceed expected here because
+              # an extra/duplicate file already failed closed above.
+              if [[ "$remote_count" -eq "$expected_count" ]]; then
+                echo "Post-upload verification passed: PyPI holds EXACTLY the ${expected_count} built distribution(s) with matching sha256 (no extra, no duplicate)."
+                break
+              fi
+              unset remote_sha
+            fi
+            if [[ "$attempt" -ge "$max_attempts" ]]; then
+              echo "::error::Post-upload verification failed after ${attempt} attempts: PyPI does not (yet) hold exactly the built set (HTTP ${code})."
+              exit 1
+            fi
+            echo "::notice::PyPI metadata not yet consistent with the built set (attempt ${attempt}/${max_attempts}); retrying in 10s."
+            sleep 10
+          done
+
   github-release:
     needs: build
+    if: ${{ github.ref_type == 'branch' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      contents: write
+      contents: read
+    # PROTECTED ENVIRONMENT (finding: feature-branch dispatch bypass). The `mcp-release`
+    # environment MUST be configured with a deployment-branch policy naming ONLY the
+    # default branch AND hold `ACTION_RELEASE_TOKEN` as an ENVIRONMENT-scoped secret (see
+    # CONTRIBUTING.md, "MCP release"). GitHub blocks this job — and withholds the secret —
+    # on any non-default ref, so a feature-branch dispatch that stripped the in-file guard
+    # still cannot reach the tag-writing credential.
+    environment:
+      name: mcp-release
+    env:
+      REF: ${{ github.ref }}
+      REF_TYPE: ${{ github.ref_type }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      DEFAULT_TIP: ${{ github.sha }}
+      # The commit the build job resolved and SHIPPED from (the existing tag's ancestor-
+      # verified commit on a retry, else the tip). This job re-resolves the actual tag and
+      # cross-checks it against this value, so a stale/racing tag fails closed.
+      RELEASE_COMMIT: ${{ needs.build.outputs.release_commit }}
+      REPO: ${{ github.repository }}
+      VERSION: ${{ github.event.inputs.version }}
+      RELEASE_IDENTITY_ACTOR_ID: ${{ vars.RELEASE_IDENTITY_ACTOR_ID }}
     steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: dist
           path: dist/
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v3
-        with:
-          generate_release_notes: true
-          files: |
-            dist/*
+      - name: Enforce trusted default-branch execution and a CANONICAL version
+        run: |
+          set -euo pipefail
+          # Defense in depth on top of the job-level if AND the external environment
+          # policy. Values come from env, never inline interpolation, so a crafted ref /
+          # version cannot inject shell.
+          if [[ "$REF_TYPE" != "branch" || "$REF" != "refs/heads/${DEFAULT_BRANCH}" ]]; then
+            echo "::error::The MCP release must be dispatched from branch refs/heads/${DEFAULT_BRANCH}, not ${REF} (type ${REF_TYPE})."
+            exit 1
+          fi
+          # A STABLE CANONICAL version: mcp-v<MAJOR.MINOR.PATCH> with NO leading zeros
+          # (mcp-v01.2.3 rejected). This bounds VERSION to `mcp-v` + digits + dots, so it
+          # is safe to use in the git/gh commands below (no metacharacters).
+          if [[ ! "$VERSION" =~ ^mcp-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::version '${VERSION}' must be a canonical mcp-v<MAJOR.MINOR.PATCH> with no leading zeros (e.g. mcp-v0.4.0)."
+            exit 1
+          fi
+
+      - name: Preflight — verify the mcp-release and pypi environment protections
+        env:
+          GH_TOKEN: ${{ secrets.ACTION_RELEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          # A NON-EXISTENT environment provides NO protection: GitHub would create an
+          # unprotected environment implicitly and run the job anyway. Fail CLOSED — before
+          # any tag/Release/PyPI write — unless BOTH publication environments exist with
+          # (a) at least one required reviewer, (b) prevent_self_review=true, (c) an
+          # explicit can_admins_bypass=false, and (d) a deployment policy limited to EXACTLY
+          # the default branch. publish-pypi `needs:` this job, so this check gates the
+          # PyPI upload too. See CONTRIBUTING.md ("MCP release") for the `gh` provisioning.
+          for envname in mcp-release pypi; do
+            if ! envjson="$(gh api "repos/${REPO}/environments/${envname}" 2>/dev/null)"; then
+              echo "::error::The '${envname}' environment does not exist or is not readable by ACTION_RELEASE_TOKEN. Provision it (required reviewers + prevent_self_review + can_admins_bypass=false + default-branch-only) per CONTRIBUTING.md."
+              exit 1
+            fi
+            reviewerRule="$(printf '%s' "$envjson" | jq -c '.protection_rules[]? | select(.type=="required_reviewers")')"
+            if [[ -z "$reviewerRule" ]]; then
+              echo "::error::The '${envname}' environment has no required reviewers."
+              exit 1
+            fi
+            if [[ "$(printf '%s' "$reviewerRule" | jq -r '.prevent_self_review // false')" != "true" ]]; then
+              echo "::error::The '${envname}' environment must set prevent_self_review=true so the dispatcher cannot approve their own deployment."
+              exit 1
+            fi
+            # jq's `//` treats a literal false as absent, so test presence AND equality.
+            if [[ "$(printf '%s' "$envjson" | jq -r 'has("can_admins_bypass") and (.can_admins_bypass == false)')" != "true" ]]; then
+              echo "::error::The '${envname}' environment must set can_admins_bypass=false so admins cannot bypass the reviewer gate."
+              exit 1
+            fi
+            if [[ "$(printf '%s' "$envjson" | jq -r '.deployment_branch_policy.custom_branch_policies // false')" != "true" ]]; then
+              echo "::error::The '${envname}' environment must restrict deployments to selected branches/tags (custom_branch_policies=true)."
+              exit 1
+            fi
+            polJson="$(gh api "repos/${REPO}/environments/${envname}/deployment-branch-policies")"
+            total="$(printf '%s' "$polJson" | jq -r '.total_count')"
+            if [[ "$total" != "1" ]]; then
+              echo "::error::The '${envname}' environment must have EXACTLY one deployment policy, found ${total}."
+              exit 1
+            fi
+            ptype="$(printf '%s' "$polJson" | jq -r '.branch_policies[0].type // "null"')"
+            pname="$(printf '%s' "$polJson" | jq -r '.branch_policies[0].name // "null"')"
+            if [[ "$ptype" != "branch" || "$pname" != "$DEFAULT_BRANCH" ]]; then
+              echo "::error::The '${envname}' deployment policy must be a single BRANCH policy named exactly '${DEFAULT_BRANCH}', got type='${ptype}' name='${pname}'."
+              exit 1
+            fi
+            echo "Environment preflight passed for '${envname}'."
+          done
+
+      - name: Preflight — verify the mcp-v* tag ruleset locks tag writes to the release identity
+        env:
+          GH_TOKEN: ${{ secrets.ACTION_RELEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          # The environment gate protects the WORKFLOW; a repository TAG RULESET is what
+          # stops a direct `git push origin mcp-v1.2.3` OUTSIDE this pipeline. Fail CLOSED
+          # unless the ACTUAL ref this job writes (refs/tags/<VERSION>) is protected
+          # (creation AND update AND deletion) with a bypass of EXACTLY the one dedicated
+          # release identity, and the release TOKEN is that identity. See CONTRIBUTING.md.
+          if [[ -z "${RELEASE_IDENTITY_ACTOR_ID:-}" ]]; then
+            echo "::error::vars.RELEASE_IDENTITY_ACTOR_ID is not set (the numeric actor id of the release identity on the mcp-v* tag ruleset bypass list)."
+            exit 1
+          fi
+          # Verify the release TOKEN's own identity; FAIL CLOSED if it cannot be determined
+          # (an API error must not early-exit past the comparison, and empty/null is rejected).
+          if ! tokenId="$(gh api user --jq '.id' 2>/dev/null)"; then
+            echo "::error::Could not read the release token identity (gh api user failed); the token needs read access to its own user. Refusing to proceed."
+            exit 1
+          fi
+          if [[ -z "$tokenId" || "$tokenId" == "null" ]]; then
+            echo "::error::The release token identity is empty/null; refusing to proceed (cannot confirm the token is the ruleset bypass actor)."
+            exit 1
+          fi
+          if [[ "$tokenId" != "$RELEASE_IDENTITY_ACTOR_ID" ]]; then
+            echo "::error::The release token identity (id=${tokenId}) does not match vars.RELEASE_IDENTITY_ACTOR_ID (${RELEASE_IDENTITY_ACTOR_ID}); the token that writes the tag must be the ruleset's bypass actor."
+            exit 1
+          fi
+          ids="$(gh api --paginate "repos/${REPO}/rulesets" --jq '.[] | select(.target=="tag" and .enforcement=="active") | .id')"
+          if [[ -z "$ids" ]]; then
+            echo "::error::No ACTIVE tag ruleset found. Create the refs/tags/mcp-v* ruleset per CONTRIBUTING.md."
+            exit 1
+          fi
+          details="$(mktemp)"; : > "$details"
+          while read -r id; do
+            [[ -z "$id" ]] && continue
+            gh api "repos/${REPO}/rulesets/${id}" >> "$details"
+          done <<< "$ids"
+          rulesets_arr="$(mktemp)"
+          jq -s '.' "$details" > "$rulesets_arr"
+          # Faithful GitHub fnmatch (FNM_PATHNAME) + bypass evaluation for the single
+          # concrete ref this job writes. No single quotes / no ${{ }} in this body.
+          TAG_REF="refs/tags/${VERSION}" RID="$RELEASE_IDENTITY_ACTOR_ID" RULESETS_FILE="$rulesets_arr" NAMESPACE_PREFIX="mcp-v" \
+          node -e '
+            const fs = require("fs");
+            const rid = String(process.env.RID || "");
+            const ref = process.env.TAG_REF;
+            const rulesets = JSON.parse(fs.readFileSync(process.env.RULESETS_FILE, "utf8"));
+            function reLit(ch) { return ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+            // Inside a regex character class the significant chars differ: only ] \ ^ and -
+            // change meaning. In particular an ESCAPED literal from the pattern (Ruby
+            // File.fnmatch treats `\X` as a literal X inside [...]) must NOT be able to form
+            // a JS regex RANGE — e.g. `[a\-z]` means the three chars a, -, z, not a..z. So
+            // an escaped literal is emitted via classLit (which escapes ] \ ^ - ), never via
+            // reLit (which leaves `-` bare and would wrongly create a range that over-matches
+            // and could let an inapplicable ruleset be counted as covering the ref).
+            function classLit(ch) { return ch.replace(/[\]\\^-]/g, "\\$&"); }
+            function segToRegex(seg) {
+              let re = "^";
+              for (let i = 0; i < seg.length; i++) {
+                const c = seg[i];
+                if (c === "*") { re += "[^/]*"; }
+                else if (c === "?") { re += "[^/]"; }
+                else if (c === "[") {
+                  // GitHub ruleset fnmatch class subset (NO backslash escaping; only `!`
+                  // negation — `[^...]` is unsupported and rejected up front by
+                  // assertSupported). A `]` in the FIRST position (after `[`, or after a
+                  // leading `!`) CLOSES an EMPTY set — positive `[]` matches NOTHING, negated
+                  // `[!]` matches ANY single non-`/` char. Otherwise members are read until
+                  // `]`; `X-Y` is a RANGE only when the char after `-` EXISTS and is NOT `]`
+                  // (else `-` is a LITERAL member). A REVERSED range (`[z-a]`) matches EXACTLY
+                  // its two ENDPOINTS {z,a} (Ruby byte-compares bounds). An UNTERMINATED class
+                  // (no closing `]`) matches NOTHING (Ruby returns no match), so the whole
+                  // segment becomes a never-match regex. A `/` member is inert (segments carry
+                  // no `/`), matching FNM_PATHNAME where a class never matches the separator.
+                  let j = i + 1, neg = false;
+                  if (seg[j] === "!") { neg = true; j++; }
+                  if (seg[j] === "]") { re += neg ? "[^/]" : "[^\\s\\S]"; i = j; }
+                  else {
+                    let out = "", closed = false, members = 0;
+                    while (j < seg.length) {
+                      if (seg[j] === "]") { closed = true; break; }
+                      const lo = seg[j]; j += 1;
+                      if (seg[j] === "-" && seg[j + 1] !== undefined && seg[j + 1] !== "]") {
+                        j += 1; const hi = seg[j]; j += 1;
+                        // Forward range -> [lo-hi]; reversed range -> its two endpoints {lo,hi}.
+                        if (lo.charCodeAt(0) <= hi.charCodeAt(0)) { out += classLit(lo) + "-" + classLit(hi); members++; }
+                        else { out += classLit(lo) + classLit(hi); members += 2; }
+                      } else { out += classLit(lo); members++; }
+                    }
+                    if (!closed) { return /[^\s\S]/; } // UNTERMINATED class -> NO MATCH (Ruby)
+                    // A class with NO effective member: positive -> matches nothing; negated
+                    // -> matches any single non-`/` char (negation of empty).
+                    if (neg) re += members ? "[^" + out + "]" : "[^/]";
+                    else re += members ? "[" + out + "]" : "[^\\s\\S]";
+                    i = j;
+                  }
+                }
+                else { re += reLit(c); }
+              }
+              return new RegExp(re + "$");
+            }
+            function segMatch(pat, r, pi, ri) {
+              while (pi < pat.length) {
+                const p = pat[pi];
+                // Terminal `**` is NOT recursive in Ruby File.fnmatch FNM_PATHNAME (it
+                // behaves like `*`, one within-segment); only a NON-terminal `**` (from
+                // `**/`) matches zero or more whole segments. This prevents a `refs/**`
+                // rule from being wrongly accepted as protecting a nested tag ref.
+                if (p === "**" && pi < pat.length - 1) { for (let k = ri; k <= r.length; k++) { if (segMatch(pat, r, pi + 1, k)) return true; } return false; }
+                if (ri >= r.length) return false;
+                if (!segToRegex(p).test(r[ri])) return false;
+                pi++; ri++;
+              }
+              return ri === r.length;
+            }
+            function classEnd(p, i) {
+              // Index just past a bracket class opened at i (`[`), or -1 if UNTERMINATED.
+              // GitHub subset: NO backslash escaping; optional leading `!`; a leading `]`
+              // closes an EMPTY set; otherwise scan to the first closing `]`.
+              let j = i + 1;
+              if (p[j] === "!") j++;
+              if (p[j] === "]") return j + 1;
+              while (j < p.length) {
+                if (p[j] === "]") return j + 1;
+                j++;
+              }
+              return -1;
+            }
+            function splitSegments(p) {
+              // Split a PATTERN into path segments on `/`, but NEVER on a `/` INSIDE a
+              // TERMINATED bracket class (class-aware). GitHub rulesets do not support
+              // backslash escaping, so there is no escaped-slash separator; an UNTERMINATED
+              // `[` is scanned as a literal here (classEnd returns -1) and its own segment
+              // then never matches in segToRegex, so its following `/`s ARE separators.
+              const segs = []; let cur = "";
+              for (let i = 0; i < p.length; i++) {
+                const c = p[i];
+                if (c === "/") { segs.push(cur); cur = ""; continue; }
+                if (c === "[") {
+                  const end = classEnd(p, i);
+                  if (end >= 0) { cur += p.slice(i, end); i = end - 1; continue; }
+                }
+                cur += c;
+              }
+              segs.push(cur);
+              return segs;
+            }
+            function matchesPattern(p) {
+              if (p === "~ALL") return true;
+              if (p.charAt(0) === "~") return false;
+              // Class-aware segmentation for the PATTERN so a `/` inside `[...]` is not a
+              // separator; the REF is concrete (no brackets) so a plain split is correct.
+              return segMatch(splitSegments(p), ref.split("/"), 0, 0);
+            }
+            function covers(rs) {
+              // DETAIL ENFORCEMENT + TARGET (mirror the shared evaluator): count a ruleset as
+              // applicable ONLY when it is an ACTIVE TAG ruleset. Re-check per-ruleset here (not
+              // solely via the jq `select` on the list) so a DISABLED (enforcement != "active")
+              // or RETARGETED (target != "tag") ruleset in the fetched details can never be
+              // counted, even if the upstream filter is bypassed or the API changes.
+              if (rs.target !== "tag" || rs.enforcement !== "active") return false;
+              const cond = (rs.conditions && rs.conditions.ref_name) || {};
+              const inc = cond.include || [], exc = cond.exclude || [];
+              return inc.some(matchesPattern) && !exc.some(matchesPattern);
+            }
+            function restricts(rs, t) { return (rs.rules || []).some((x) => x.type === t); }
+            function isReleaseActor(a) { return a && a.actor_type === "User" && String(a.actor_id) === rid && a.bypass_mode === "always"; }
+            function assertSupported(pattern) {
+              // GitHub rulesets use a RESTRICTED fnmatch: NO backslash escaping and NO
+              // `[^...]` class negation (only `[!...]`). Evaluating such syntax OUR way could
+              // DIVERGE from GitHub and FALSELY APPROVE (or deny) a ruleset, so FAIL CLOSED.
+              if (pattern.indexOf("\\") !== -1) throw { pattern: pattern, why: "backslash escapes are not supported by GitHub rulesets" };
+              for (let i = 0; i < pattern.length; i++) {
+                if (pattern[i] === "[" && pattern[i + 1] === "^") throw { pattern: pattern, why: "[^...] class negation is not supported by GitHub rulesets (use [!...])" };
+              }
+            }
+            try {
+              for (const rs of rulesets) {
+                const cond = (rs.conditions && rs.conditions.ref_name) || {};
+                const pats = (cond.include || []).concat(cond.exclude || []);
+                // Validate EVERY pattern for unsupported syntax FIRST — before any special
+                // `~`-token handling — so a pattern that merely BEGINS with `~` (but is not a
+                // real `~ALL`/`~DEFAULT_BRANCH` token) cannot smuggle a backslash or `[^...]`
+                // past the preflight. The real `~` tokens contain neither, so validating them
+                // is harmless; matchesPattern below still treats them as the ref-name tokens.
+                for (const p of pats) assertSupported(p);
+              }
+            } catch (e) {
+              console.error("::error::mcp tag ruleset preflight: unsupported fnmatch syntax (" + e.why + ") in pattern " + JSON.stringify(e.pattern) + "; cannot faithfully evaluate coverage. Fix the ruleset to use supported syntax.");
+              process.exit(1);
+            }
+            const app = rulesets.filter(covers);
+            const errors = [];
+            if (app.length === 0) errors.push("no active tag ruleset applies to " + ref);
+            for (const t of ["creation", "update", "deletion", "non_fast_forward"]) {
+              if (!app.some((rs) => restricts(rs, t))) errors.push(ref + " is not restricted for " + t);
+            }
+            // LAYERED rulesets are ANDed by GitHub: EVERY applicable ruleset independently
+            // enforces its rules, so the release identity must be a bypass actor in EVERY
+            // applicable RESTRICTING ruleset (one that restricts creation/update/deletion),
+            // and NO applicable ruleset may grant a foreign bypass. A UNION check
+            // (`app.some(... grants identity ...)`) would FALSELY certify when one layer
+            // grants the identity a bypass while another restricting layer blocks it.
+            for (const rs of app) {
+              if (!Object.prototype.hasOwnProperty.call(rs, "bypass_actors") || rs.bypass_actors === null) {
+                errors.push(ref + " ruleset id=" + rs.id + " did not return bypass_actors (insufficient API visibility)");
+                continue;
+              }
+              const foreign = rs.bypass_actors.filter((a) => !isReleaseActor(a));
+              if (foreign.length > 0) errors.push(ref + " ruleset id=" + rs.id + " grants a bypass to " + foreign.length + " actor(s) other than the User release identity " + rid);
+              const restrictsAny = ["creation", "update", "deletion", "non_fast_forward"].some((t) => restricts(rs, t));
+              const grantsIdentity = Array.isArray(rs.bypass_actors) && rs.bypass_actors.some(isReleaseActor);
+              if (restrictsAny && !grantsIdentity) {
+                errors.push(ref + " applicable RESTRICTING ruleset id=" + rs.id + " does not grant the User release identity " + rid + " a bypass (layered rulesets are ANDed — the identity must bypass EVERY restricting layer)");
+              }
+            }
+            // NAMESPACE-WIDE coverage (release-time). The per-ref checks above prove the
+            // CONCRETE ref this run writes is locked, but a ruleset whose include is a finite
+            // LIST of exact tags would pass that probe while leaving FUTURE tags in the
+            // namespace unprotected. NAMESPACE_PREFIX is ALWAYS set by the committed
+            // invocation (a test asserts its presence), so this block runs at release time;
+            // it additionally requires, for EACH op, an ACTIVE tag ruleset whose include
+            // COVERS the whole refs/tags/<prefix>* namespace (a single-segment wildcard whose
+            // literal prefix is a prefix of <prefix>, or ~ALL), carries NO excludes, restricts
+            // that op, and — layered — grants the release identity the sole always-User bypass.
+            const nsPrefix = process.env.NAMESPACE_PREFIX;
+            if (nsPrefix) {
+              const ns = "refs/tags/" + nsPrefix + "*";
+              const patternCoversNamespace = (pattern, pfx) => {
+                if (pattern === "~ALL") return true;
+                const m = /^refs\/tags\/([^*?[\]/]*)(\*\*?)$/.exec(pattern);
+                if (!m) return false;
+                return pfx.startsWith(m[1]);
+              };
+              // A pattern OVERLAPS the namespace iff it could match at least one tag in it — a
+              // sound over-approximation so a RESTRICTIVE LAYER covering only PART of the
+              // namespace (e.g. refs/tags/mcp-v1*) is NOT ignored.
+              const patternOverlapsNamespace = (pattern, pfx) => {
+                if (pattern === "~ALL") return true;
+                if (pattern.charAt(0) === "~") return false;
+                // CLASS-AWARE segmentation: a `/` inside a `[…]` class is inert under FNM_PATHNAME,
+                // so splitSegments keeps `refs/tags/[a/b]v*` as a single tag segment (a `[^/]*`
+                // split would misread it as multi-segment and let a partial ruleset escape).
+                const segs = splitSegments(pattern);
+                if (segs.length !== 3 || segs[0] !== "refs" || segs[1] !== "tags") {
+                  return /\*\*/.test(pattern) && pattern.indexOf("refs/") === 0;
+                }
+                const seg = segs[2];
+                const w = seg.search(/[*?[]/);
+                if (w < 0) return seg.indexOf(pfx) === 0;
+                const lit = seg.slice(0, w);
+                return lit.indexOf(pfx) === 0 || pfx.indexOf(lit) === 0;
+              };
+              const activeNs = rulesets.filter((rs) => rs.target === "tag" && rs.enforcement === "active");
+              const covering = activeNs.filter((rs) => {
+                const cond = (rs.conditions && rs.conditions.ref_name) || {};
+                const inc = cond.include || [], exc = cond.exclude || [];
+                if (exc.length > 0) return false;
+                return inc.some((p) => patternCoversNamespace(p, nsPrefix));
+              });
+              // OVERLAPPING active tag rulesets (partial or whole) whose bypass must be audited;
+              // an exclude that fully covers the namespace removes the overlap.
+              const overlapping = activeNs.filter((rs) => {
+                const cond = (rs.conditions && rs.conditions.ref_name) || {};
+                const inc = cond.include || [], exc = cond.exclude || [];
+                if (!inc.some((p) => patternOverlapsNamespace(p, nsPrefix))) return false;
+                if (exc.some((p) => patternCoversNamespace(p, nsPrefix))) return false;
+                return true;
+              });
+              if (covering.length === 0) errors.push("no active tag ruleset include pattern covers the entire " + ns + " namespace (a finite list of exact tags does not protect future tags)");
+              for (const t of ["creation", "update", "deletion", "non_fast_forward"]) {
+                if (!covering.some((rs) => restricts(rs, t))) errors.push("the " + ns + " namespace is not restricted for " + t + " by a namespace-covering ruleset");
+              }
+              for (const rs of overlapping) {
+                if (!Object.prototype.hasOwnProperty.call(rs, "bypass_actors") || rs.bypass_actors === null) { errors.push(ns + " ruleset id=" + rs.id + " did not return bypass_actors (insufficient API visibility)"); continue; }
+                const foreign = rs.bypass_actors.filter((a) => !isReleaseActor(a));
+                if (foreign.length > 0) errors.push(ns + " ruleset id=" + rs.id + " grants a bypass to " + foreign.length + " actor(s) other than the User release identity " + rid);
+                const restrictsAny = ["creation", "update", "deletion", "non_fast_forward"].some((t) => restricts(rs, t));
+                const grantsIdentity = Array.isArray(rs.bypass_actors) && rs.bypass_actors.some(isReleaseActor);
+                if (restrictsAny && !grantsIdentity) errors.push(ns + " applicable RESTRICTING ruleset id=" + rs.id + " does not grant the User release identity " + rid + " a bypass (layered rulesets are ANDed — the identity must bypass EVERY restricting layer)");
+              }
+            }
+            if (errors.length) { for (const e of errors) console.error("::error::mcp tag ruleset preflight: " + e); process.exit(1); }
+            console.log("mcp tag ruleset preflight passed: " + ref + " is restricted (creation+update+deletion+non_fast_forward), grants no foreign bypass, and EVERY applicable restricting ruleset authorizes the User release identity " + rid + ".");
+          '
+
+      - name: Preflight — require repository immutable releases (before any tag write)
+        env:
+          GH_TOKEN: ${{ secrets.ACTION_RELEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Repository-level immutable releases must be ENABLED before we write the mcp-v*
+          # tag or the GitHub Release. This gate runs BEFORE the tag creation (and before the
+          # release publish), so a disabled setting can never leave a MUTABLE public tag /
+          # release behind (a post-write check would). GET the repo setting (API version
+          # pinned); fail CLOSED unless enabled==true. Requires the release token's
+          # Administration: read permission (see CONTRIBUTING.md).
+          en="$(gh api "repos/${REPO}/immutable-releases" -H "X-GitHub-Api-Version: 2022-11-28" --jq ".enabled == true" 2>/dev/null || echo false)"
+          if [[ "$en" != "true" ]]; then
+            echo "::error::Repository immutable releases are NOT enabled; refusing to write any tag or release. Enable it (see CONTRIBUTING.md) before releasing."
+            exit 1
+          fi
+          echo "Repository immutable releases are enabled; safe to write the tag and release."
+
+      - name: Create the mcp-v* tag ATOMICALLY and verify immutability
+        env:
+          RELEASE_TOKEN: ${{ secrets.ACTION_RELEASE_TOKEN }}
+          GH_TOKEN: ${{ secrets.ACTION_RELEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          # BARE Git only: no working tree, so no repository file/hook/script runs in this
+          # secret-bearing step. The tag is written by the dedicated release identity.
+          origin="https://x-access-token:${RELEASE_TOKEN}@github.com/${REPO}.git"
+          # The build job shipped artifacts from RELEASE_COMMIT (the existing tag's commit on
+          # a retry, else the default-branch tip). Require it to be a full sha in TRUSTED
+          # history — reachable from and an ancestor of (or equal to) the default-branch tip.
+          # This is what lets a RETRY recover a tag created BEFORE the branch advanced
+          # (github.sha != the tagged commit) without ever adopting an off-branch commit.
+          if [[ ! "$RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::release_commit '${RELEASE_COMMIT}' from the build job is not a full commit sha."
+            exit 1
+          fi
+          bare="$(mktemp -d)"
+          git -C "$bare" init --quiet --bare
+          # Fetch the tip; this brings its full ancestry, including RELEASE_COMMIT when it is
+          # an ancestor, so the reachability + ancestry checks below are decidable locally.
+          git -C "$bare" fetch --quiet --no-tags "$origin" "$DEFAULT_TIP"
+          if ! git -C "$bare" cat-file -e "${RELEASE_COMMIT}^{commit}" 2>/dev/null; then
+            echo "::error::release_commit ${RELEASE_COMMIT} is not reachable from the default-branch tip ${DEFAULT_TIP} (untrusted history)."
+            exit 1
+          fi
+          if ! git -C "$bare" merge-base --is-ancestor "$RELEASE_COMMIT" "$DEFAULT_TIP"; then
+            echo "::error::release_commit ${RELEASE_COMMIT} is NOT an ancestor of the default-branch tip ${DEFAULT_TIP} (untrusted)."
+            exit 1
+          fi
+          # RESERVE the release OBJECT for the release identity BEFORE the tag is public.
+          # GitHub allows only ONE release per tag, so creating our DRAFT release first
+          # narrows the race window in which another writer could create a PUBLISHED
+          # (immutable) release with unintended assets on this tag. The draft is not public;
+          # its assets are staged, verified, and published (which gates PyPI) in the next
+          # step. An existing release is NOT mutated here. NOTE: the draft-reserve is a
+          # best-effort race-NARROWER, not an ownership guarantee — the release environment,
+          # tag ruleset, and dedicated identity are the trust boundary, and the publish-time
+          # asset + digest + immutability verification is the actual gate (see CONTRIBUTING.md
+          # "MCP release").
+          if gh release view "$VERSION" --repo "$REPO" --json isDraft >/dev/null 2>&1; then
+            echo "::notice::A release object for $VERSION already exists; not re-reserving (the publish step verifies/reconciles it)."
+          else
+            gh release create "$VERSION" --repo "$REPO" --draft --target "$RELEASE_COMMIT" --title "$VERSION" --notes "Release $VERSION (staging; assets verified before publish)."
+            echo "Reserved DRAFT release $VERSION (staged by the release identity) at ${RELEASE_COMMIT} before making the tag public."
+          fi
+          # Resolve any existing tag to its target commit (annotated -> ^{} peels to commit).
+          remoteTagCommit="$(git ls-remote "$origin" "refs/tags/${VERSION}^{}" | awk '{print $1}')"
+          if [[ -z "$remoteTagCommit" ]]; then
+            remoteTagCommit="$(git ls-remote "$origin" "refs/tags/${VERSION}" | awk '{print $1}')"
+          fi
+          if [[ -n "$remoteTagCommit" ]]; then
+            # IMMUTABLE: the tag is NEVER moved. It must point at the SHIPPED commit
+            # (RELEASE_COMMIT) the build produced artifacts from — a mismatch means the tag
+            # and artifacts disagree (e.g. a concurrent run tagged a different commit), so
+            # fail closed. The tag may legitimately PREDATE the current tip (a retry after the
+            # branch advanced); we proved RELEASE_COMMIT is trusted ancestry above, so equality
+            # with DEFAULT_TIP is NOT required — equality with the shipped commit is.
+            if [[ "$remoteTagCommit" != "$RELEASE_COMMIT" ]]; then
+              echo "::error::Immutability/consistency violation: tag ${VERSION} points at ${remoteTagCommit}, but the build shipped ${RELEASE_COMMIT}. Refusing to publish mismatched artifacts."
+              exit 1
+            fi
+            echo "::notice::Tag ${VERSION} already exists at the shipped commit ${RELEASE_COMMIT} (immutable; not recreating)."
+          else
+            # ATOMIC create: push a new tag ref at the shipped commit only. If it lost a race
+            # (created meanwhile), the push fails; re-run to verify the existing tag rather
+            # than overwrite.
+            git -C "$bare" tag "$VERSION" "$RELEASE_COMMIT"
+            if ! git -C "$bare" push --quiet "$origin" "refs/tags/${VERSION}"; then
+              echo "::error::Failed to create tag ${VERSION} atomically (possibly a concurrent create). Re-run to verify its target."
+              exit 1
+            fi
+            echo "Created immutable tag ${VERSION} at ${RELEASE_COMMIT}."
+          fi
+
+      - name: Reconcile + verify assets while DRAFT, publish, and require GitHub immutability (gates PyPI)
+        env:
+          GH_TOKEN: ${{ secrets.ACTION_RELEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          # publish-pypi `needs:` this job, so this step gates the PyPI publish: it fails
+          # closed unless the GitHub Release contains EXACTLY the locally built dist (the
+          # same artifact set PyPI would publish) — reconciled and verified WHILE STILL A
+          # DRAFT, then published, then confirmed IMMUTABLE by GitHub. We never trust an
+          # existing published release blindly, and we never publish a draft before its
+          # asset set (names + count + hashes) is verified.
+
+          # Expected asset set + sha256 digests + names + count from the locally BUILT dist.
+          expected="$(mktemp)"
+          shopt -s nullglob
+          built=(dist/*)
+          shopt -u nullglob
+          if [[ ${#built[@]} -eq 0 ]]; then
+            echo "::error::No build artifacts in dist/ to publish/verify."
+            exit 1
+          fi
+          for f in "${built[@]}"; do
+            printf '%s  %s\n' "$(sha256sum "$f" | awk '{print $1}')" "$(basename "$f")"
+          done | LC_ALL=C sort > "$expected"
+          expected_names="$(awk '{print $2}' "$expected" | LC_ALL=C sort)"
+          expected_count=${#built[@]}
+
+          reconcile_draft_assets() {
+            # Bring a (possibly partial) DRAFT's assets to EXACTLY the built set: DELETE any
+            # asset NOT in the built set (a prior partial run's leftover/unexpected asset
+            # must never ship), then (re)upload the built set. Safe ONLY on a draft (not public).
+            local existing name
+            existing="$(gh release view "$VERSION" --repo "$REPO" --json assets --jq '.assets[].name' 2>/dev/null || true)"
+            while IFS= read -r name; do
+              [[ -z "$name" ]] && continue
+              if ! grep -qxF -- "$name" <<<"$expected_names"; then
+                echo "::notice::Removing unexpected asset '${name}' from draft ${VERSION}."
+                gh release delete-asset "$VERSION" "$name" --repo "$REPO" --yes
+              fi
+            done <<<"$existing"
+            gh release upload "$VERSION" dist/* --repo "$REPO" --clobber
+          }
+
+          verify_assets() {
+            # Download the release's assets and require the EXACT set: NAME set, COUNT, and
+            # every sha256 DIGEST equal the built dist. Fails closed on extra/missing/tampered.
+            local dir actual got
+            dir="$(mktemp -d)"
+            gh release download "$VERSION" --repo "$REPO" --dir "$dir" --clobber
+            shopt -s nullglob
+            got=("$dir"/*)
+            shopt -u nullglob
+            if [[ ${#got[@]} -ne $expected_count ]]; then
+              echo "::error::Release ${VERSION} has ${#got[@]} downloadable assets, expected ${expected_count}."
+              exit 1
+            fi
+            actual="$(mktemp)"
+            for f in "${got[@]}"; do
+              printf '%s  %s\n' "$(sha256sum "$f" | awk '{print $1}')" "$(basename "$f")"
+            done | LC_ALL=C sort > "$actual"
+            if ! diff -u "$expected" "$actual"; then
+              echo "::error::Release ${VERSION} asset set/digests do NOT match the built dist. Refusing to proceed (PyPI would publish mismatched artifacts)."
+              exit 1
+            fi
+            echo "Release ${VERSION} verified: ${expected_count} assets, names + sha256 digests match the built dist."
+          }
+
+          require_immutable() {
+            # GitHub release immutability (a repository setting) FREEZES a published
+            # release's assets AND tag. Require GitHub to report the release as immutable so
+            # "immutable" is ENFORCED by the platform, not merely asserted by this workflow.
+            # (Provisioning: enable release immutability in repo settings — see CONTRIBUTING.md.)
+            local imm
+            imm="$(gh api "repos/${REPO}/releases/tags/${VERSION}" --jq '(.immutable // .is_immutable) // false' 2>/dev/null || echo false)"
+            if [[ "$imm" != "true" ]]; then
+              echo "::error::Release ${VERSION} is NOT immutable (isImmutable=${imm}). Enable repository release immutability so published releases (assets + tag) are frozen (see CONTRIBUTING.md)."
+              exit 1
+            fi
+            echo "Release ${VERSION} is immutable (isImmutable=true)."
+          }
+
+          require_repo_immutability_enabled() {
+            # Repository-level immutable releases must be ENABLED *before* we make ANY release
+            # write. Otherwise a publish/flip would create a MUTABLE public release and the
+            # per-release require_immutable check would only fail AFTER the mutable release is
+            # already public. GET the repo setting (returns { enabled, enforced_by_owner });
+            # fail CLOSED unless enabled==true so no mutable public release is ever produced.
+            local en
+            en="$(gh api "repos/${REPO}/immutable-releases" -H "X-GitHub-Api-Version: 2022-11-28" --jq ".enabled == true" 2>/dev/null || echo false)"
+            if [[ "$en" != "true" ]]; then
+              echo "::error::Repository immutable releases are NOT enabled; refusing to write any release (a published release would be mutable). Enable it (see CONTRIBUTING.md) before releasing."
+              exit 1
+            fi
+            echo "Repository immutable releases are enabled."
+          }
+
+          # Fail CLOSED before ANY release write if repository immutable releases are off,
+          # so a publish can never leave a MUTABLE public release behind.
+          require_repo_immutability_enabled
+
+          if isDraft="$(gh release view "$VERSION" --repo "$REPO" --json isDraft --jq '.isDraft' 2>/dev/null)"; then
+            if [[ "$isDraft" == "false" ]]; then
+              # Already published: CONFIRM GitHub immutability FIRST, then verify assets.
+              # Immutability freezes the assets+tag, so establishing it before reading the
+              # asset set guarantees the bytes cannot change between verification and PyPI.
+              echo "::notice::Release ${VERSION} is already published; confirming GitHub immutability, then verifying assets before allowing PyPI publication."
+              require_immutable
+              verify_assets
+            else
+              # DRAFT (incomplete prior run): reconcile + verify WHILE STILL DRAFT, then publish.
+              echo "::notice::Repairing DRAFT release ${VERSION}: reconciling assets and verifying BEFORE publish."
+              reconcile_draft_assets
+              verify_assets
+              gh release edit "$VERSION" --repo "$REPO" --draft=false
+              # After PUBLICATION: require GitHub immutability, THEN RE-VERIFY the exact asset
+              # set + digests on the now-public release before PyPI (never trust the draft-time
+              # verification blindly once the release is public).
+              require_immutable
+              verify_assets
+            fi
+          else
+            # First publish: create a DRAFT carrying the assets, verify WHILE STILL DRAFT,
+            # then publish atomically. A failure before the flip leaves only a repairable draft.
+            gh release create "$VERSION" dist/* --repo "$REPO" --target "$RELEASE_COMMIT" --title "$VERSION" --generate-notes --draft
+            verify_assets
+            gh release edit "$VERSION" --repo "$REPO" --draft=false
+            # After PUBLICATION: require immutability, THEN RE-VERIFY exact assets + digests
+            # on the public release before PyPI.
+            require_immutable
+            verify_assets
+            echo "Published immutable release ${VERSION}."
+          fi

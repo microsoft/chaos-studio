@@ -1,0 +1,16 @@
+# Keep the committed runtime bundles byte-stable so the release "dist integrity"
+# gate — a clean `npm run build` compared against the committed files — is
+# reproducible on every platform regardless of core.autocrlf.
+dist/github-action/index.js text eol=lf
+dist/github-action/README.md text eol=lf
+dist/azure-pipelines-task/index.js text eol=lf
+dist/azure-pipelines-task/README.md text eol=lf
+
+# Keep the reviewed source extracts byte-stable so their recorded provenance
+# hashes and the parsed contract/fixture authentication are reproducible on every
+# platform regardless of core.autocrlf.
+packages/core/fixtures/source-extracts/** text eol=lf
+
+# Keep the release-tooling shell script LF so it runs on the release runner / any
+# POSIX operator shell regardless of core.autocrlf (a CRLF checkout would break it).
+scripts/*.sh text eol=lf

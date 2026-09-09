@@ -1,0 +1,23 @@
+{
+  "description": "Execute acceptance (VF5, DX3). External 202 with no body. BE generates the run GUID before persistence; GW returns Location pointing directly to the full run resource (.../scenarios/{scenario}/runs/{runId}) with default Retry-After 10. The client obtains both run resource ID and run ID deterministically from Location — no hidden body or redirect.",
+  "provenance": { "source": "gw.configuration.domainLogic", "citation": "VF5, DX3" },
+  "operationId": "ScenarioConfigurations_Execute",
+  "request": {
+    "method": "POST",
+    "url": "https://management.azure.com/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-chaos/providers/Microsoft.Chaos/workspaces/ws-demo/scenarios/scn-demo/configurations/cfg-demo/execute?api-version=2026-05-01-preview"
+  },
+  "response": {
+    "status": 202,
+    "headers": {
+      "Location": "https://management.azure.com/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-chaos/providers/Microsoft.Chaos/workspaces/ws-demo/scenarios/scn-demo/runs/22222222-2222-2222-2222-222222222222?api-version=2026-05-01-preview",
+      "Retry-After": "10",
+      "x-ms-correlation-request-id": "aaaaaaaa-0000-0000-0000-000000000005",
+      "x-ms-request-id": "bbbbbbbb-0000-0000-0000-000000000005"
+    },
+    "body": null
+  },
+  "expected": {
+    "runId": "22222222-2222-2222-2222-222222222222",
+    "runResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-chaos/providers/Microsoft.Chaos/workspaces/ws-demo/scenarios/scn-demo/runs/22222222-2222-2222-2222-222222222222"
+  }
+}

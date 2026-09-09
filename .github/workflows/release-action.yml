@@ -1,0 +1,1227 @@
+name: release-action
+
+# Protected release workflow for the root GitHub Action. The `v*` tag namespace
+# is reserved for the Action (the chaos-mcp Python package uses `mcp-v*`).
+# Exact tags (v1.2.3) are IMMUTABLE releases; the floating major tag (v1) is
+# advanced only across compatible releases.
+#
+# SECURITY MODEL — THREE isolated jobs so release-commit code can never influence
+# the bytes that get published or the secret-bearing step:
+#
+#   * validate (no secret, RUNS repo code): checks out the release commit and runs
+#     npm ci / typecheck / test, then proves the committed dist tree equals a clean
+#     rebuild by building into an EMPTY directory and comparing the COMPLETE file
+#     set and per-file git blob hashes (so a stale tracked output the build stopped
+#     emitting is detected). It publishes only inert string outputs (release commit
+#     + major). It never produces the bytes that get shipped.
+#   * package (no secret, RUNS NO repo code): authenticates the committed dist
+#     blobs DIRECTLY from the immutable commit object via bare Git — `git ls-tree`
+#     for a structured, NUL-safe manifest of git blob object-ids and `git archive`
+#     for a deterministic gzip archive of the entire verified tree. No working tree
+#     is materialized, no npm/script/hook runs, so repo code cannot forge these.
+#   * publish (SECRET, RUNS NO repo code): downloads the package artifact,
+#     re-verifies the archive digest and re-derives the manifest from the tag
+#     commit, performs tag writes with bare Git, then creates/refreshes the GitHub
+#     Release, ATTACHES the full deterministic archive + manifest, and reconciles
+#     (deletes) stale assets from prior runs.
+#
+# Shell-injection hygiene: NO `github.*` / `inputs.*` expression is interpolated
+# into any `run:` body. Every value a script reads is passed through the step/job
+# `env:` map and referenced as a quoted shell variable ("$VAR"). Expression
+# interpolation appears only in non-shell positions (env, with, if, concurrency),
+# which the Actions engine evaluates.
+#
+# Branch restriction (authoritative + in-file): dispatch-only means the workflow
+# definition always comes from the trusted default branch. Both jobs additionally
+# require, via `if:`, that this is a BRANCH ref (github.ref_type == 'branch') whose
+# full ref is refs/heads/<default-branch>. The protected `release` environment MUST
+# also be configured (repository settings) with required reviewers and a
+# deployment-branch policy of type "Selected branches and tags" naming ONLY the
+# exact default branch — see CONTRIBUTING.md ("Action release environment"). That
+# out-of-YAML policy is the control a modified in-file guard cannot bypass; the
+# in-file `if:` gates are defense in depth. Because a MISSING environment provides
+# no protection (GitHub would create an unprotected one implicitly), the publish
+# job runs a fail-closed PREFLIGHT that verifies those environment rules via the
+# API before any write.
+#
+# GITHUB_TOKEN stays read-only. Every ref write and the GitHub Release is performed
+# with an AUTHORIZED RELEASE IDENTITY — `secrets.ACTION_RELEASE_TOKEN`, a
+# fine-grained token for a dedicated release principal that (a) holds
+# `contents: write` and (b) is on the tag ruleset bypass list.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Exact release tag to publish or re-publish, e.g. v1.0.0'
+        required: true
+      commit:
+        description: >-
+          Commit SHA to release for a FIRST publish of this tag. Ignored when the
+          tag already exists (an immutable tag pins its own release commit).
+          Defaults to the dispatched ref when empty.
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  # One queue PER RELEASE TAG so distinct releases each run to completion while a
+  # given tag never runs twice concurrently. Floating-major ordering safety does
+  # NOT rely on this: the publish job additionally serializes per MAJOR line and
+  # re-validates the highest version immediately before the lease push.
+  group: release-action-${{ github.event.inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate the release commit (no publication secret)
+    # BRANCH ref only, and exactly the default branch. ref_type guards against a
+    # tag/other ref type; the full-ref comparison guards the branch name.
+    if: ${{ github.ref_type == 'branch' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      REF: ${{ github.ref }}
+      REF_TYPE: ${{ github.ref_type }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      DEFAULT_TIP: ${{ github.sha }}
+      REPO: ${{ github.repository }}
+      ACTOR: ${{ github.actor }}
+      TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+      TAG: ${{ github.event.inputs.tag }}
+      INPUT_COMMIT: ${{ github.event.inputs.commit }}
+    outputs:
+      releaseCommit: ${{ steps.resolve.outputs.releaseCommit }}
+      major: ${{ steps.fmt.outputs.major }}
+    steps:
+      - name: Enforce trusted default-branch execution
+        run: |
+          # Defense in depth on top of the job-level if. Values come from env,
+          # never inline expression interpolation, so a crafted ref cannot inject.
+          if [[ "$REF_TYPE" != "branch" || "$REF" != "refs/heads/${DEFAULT_BRANCH}" ]]; then
+            echo "::error::Release must be dispatched from branch refs/heads/${DEFAULT_BRANCH}, not ${REF} (type ${REF_TYPE})."
+            exit 1
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate tag format (SemVer vMAJOR.MINOR.PATCH, no leading zeros)
+        id: fmt
+        run: |
+          # SemVer numeric identifiers with NO leading zeros (v01.2.3 rejected).
+          if [[ ! "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::Release tag '$TAG' must be an exact SemVer like v1.0.0 with no leading zeros (e.g. v01.2.3 is invalid)."
+            exit 1
+          fi
+          echo "major=${TAG%%.*}" >> "$GITHUB_OUTPUT"
+
+      - name: Require repository admin
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Require admin for EVERY principal that can cause this run to execute: the
+          # dispatcher (github.actor) AND, on a RE-RUN, the person who re-ran it
+          # (github.triggering_actor). A re-run is performed by the triggering_actor, so
+          # checking only the original dispatcher would let a non-admin re-run a release.
+          require_admin() {
+            local who="$1" level
+            level="$(gh api "repos/${REPO}/collaborators/${who}/permission" --jq '.permission')"
+            echo "Actor ${who} permission: ${level}"
+            if [[ "$level" != "admin" ]]; then
+              echo "::error::Only repository admins may publish an Action release (actor '${who}' is '${level}')."
+              exit 1
+            fi
+          }
+          require_admin "$ACTOR"
+          if [[ -n "${TRIGGERING_ACTOR:-}" && "$TRIGGERING_ACTOR" != "$ACTOR" ]]; then
+            require_admin "$TRIGGERING_ACTOR"
+          fi
+
+      - name: Resolve the immutable release commit
+        id: resolve
+        run: |
+          git fetch --tags --force --quiet
+          # An existing exact tag is immutable and is the sole source of truth for
+          # its release commit; a first publish tags the requested commit (or the
+          # dispatched ref when none is given).
+          if git rev-parse --verify --quiet "refs/tags/${TAG}^{commit}" >/dev/null; then
+            releaseCommit="$(git rev-parse --verify "refs/tags/${TAG}^{commit}")"
+          else
+            base="${INPUT_COMMIT:-$DEFAULT_TIP}"
+            releaseCommit="$(git rev-parse --verify "${base}^{commit}")"
+          fi
+          echo "releaseCommit=$releaseCommit" >> "$GITHUB_OUTPUT"
+          echo "Release tag $TAG -> commit $releaseCommit"
+
+      - name: Enforce the release commit is reviewed default-branch history
+        env:
+          RELEASE_COMMIT: ${{ steps.resolve.outputs.releaseCommit }}
+        run: |
+          if ! git merge-base --is-ancestor "$RELEASE_COMMIT" "$DEFAULT_TIP"; then
+            echo "::error::Release commit $RELEASE_COMMIT is not an ancestor of the default branch ($DEFAULT_TIP). Only reviewed, merged commits may be released."
+            exit 1
+          fi
+
+      - name: Check out the release commit
+        env:
+          RELEASE_COMMIT: ${{ steps.resolve.outputs.releaseCommit }}
+        run: |
+          git checkout --quiet --force "$RELEASE_COMMIT"
+          git submodule sync --recursive || true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+
+      - name: Install workspace dependencies
+        run: npm ci
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Test shared core
+        run: npm test
+
+      - name: Verify committed dist equals a clean rebuild (empty-dir, full-set + modes + hashes)
+        run: |
+          set -euo pipefail
+          # Capture the committed dist tree as "<mode>\t<oid>\t<path>". git ls-tree
+          # yields "<mode> <type> <oid>\t<path>"; the mode is git-normalized
+          # (100644 regular, 100755 executable). Reject symlinks (120000) and
+          # submodules/gitlinks (160000) outright.
+          committed="$(git ls-tree -r "HEAD" -- dist \
+            | while IFS=$'\t' read -r meta path; do
+                mode="${meta%% *}"; oid="${meta##* }"
+                case "$mode" in
+                  120000|160000)
+                    echo "::error::Committed dist entry '$path' is a symlink/submodule (mode $mode); not publishable." >&2
+                    exit 1 ;;
+                esac
+                printf '%s\t%s\t%s\n' "$mode" "$oid" "$path"
+              done | LC_ALL=C sort)"
+          # A drift check over an EMPTY committed set would trivially pass; require
+          # the committed dist and the expected entrypoints to actually exist.
+          if [[ -z "$committed" ]]; then
+            echo "::error::No committed files under dist/; nothing to release."
+            exit 1
+          fi
+          for ep in dist/github-action/index.js dist/azure-pipelines-task/index.js; do
+            if ! printf '%s\n' "$committed" | grep -qF "	${ep}"; then
+              echo "::error::Committed dist is missing the required entrypoint '${ep}'."
+              exit 1
+            fi
+          done
+          # Rebuild into an EMPTY dist so a stale tracked output the build no longer
+          # emits is DETECTED (absent from the rebuilt set).
+          rm -rf dist
+          npm run build
+          # Explicitly REJECT every non-regular, non-directory entry the build may
+          # have produced (symlink, fifo, socket, device) rather than silently
+          # skipping it via `-type f`.
+          if find dist -mindepth 1 ! -type d ! -type f -print | grep -q .; then
+            echo "::error::Rebuilt dist contains a non-regular entry (symlink/special file); not publishable."
+            find dist -mindepth 1 ! -type d ! -type f -print
+            exit 1
+          fi
+          # Emit each rebuilt regular file as "<normalized-mode>\t<oid>\t<path>" so
+          # the comparison includes the git-normalized file mode, not just content.
+          built="$(find dist -type f -print0 \
+            | while IFS= read -r -d '' f; do
+                if [[ -x "$f" ]]; then mode=100755; else mode=100644; fi
+                printf '%s\t%s\t%s\n' "$mode" "$(git hash-object "$f")" "$f"
+              done | LC_ALL=C sort)"
+          if [[ -z "$built" ]]; then
+            echo "::error::Clean rebuild produced no dist files."
+            exit 1
+          fi
+          if [[ "$committed" != "$built" ]]; then
+            echo "::error::Committed dist tree does not match a clean rebuild (mode, content, or file set differs)."
+            diff <(printf '%s\n' "$committed") <(printf '%s\n' "$built") || true
+            exit 1
+          fi
+          echo "Committed dist equals a clean rebuild (exact file set + modes + blob hashes)."
+
+      - name: Refuse to release a placeholder bundle (syntax + runtime smoke)
+        env:
+          BUNDLE: dist/github-action/index.js
+        run: |
+          set -euo pipefail
+          # The authoritative placeholder gate is the STATIC sentinel grep below —
+          # it fails closed for E1's fail-fast placeholder. This step also runs the
+          # bundle, executing release-commit code, so it lives HERE in the non-secret
+          # job — never in package/publish.
+          SENTINEL='__CHAOS_STUDIO_PLACEHOLDER_BUNDLE__'
+          if [[ ! -f "$BUNDLE" ]]; then
+            echo "::error::Action bundle '$BUNDLE' is missing; nothing to release."
+            exit 1
+          fi
+          # Syntax gate: a real bundle must at least parse.
+          node --check "$BUNDLE"
+          if grep -q "$SENTINEL" "$BUNDLE"; then
+            echo "::error::Refusing to release the placeholder Action bundle ('$BUNDLE'). Build the real bundle first."
+            exit 1
+          fi
+          # Deterministic runtime smoke via a committed harness. The harness runs
+          # the bundle in an isolated self-test mode (CHAOS_STUDIO_SMOKE_CHECK=1,
+          # scrubbed env) and requires EXACTLY exit 0 — no tolerance for ordinary
+          # runtime exceptions (1..123), timeouts (killed), or crash signals.
+          node scripts/smoke-action-bundle.mjs "$BUNDLE"
+          echo "Action bundle passed the placeholder guard and deterministic smoke test."
+
+  package:
+    name: Package the committed dist from git (no repo code, no secret)
+    needs: validate
+    if: ${{ github.ref_type == 'branch' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      REPO: ${{ github.repository }}
+      RELEASE_COMMIT: ${{ needs.validate.outputs.releaseCommit }}
+    steps:
+      - name: Authenticate + deterministically archive the committed dist from git objects
+        run: |
+          set -euo pipefail
+          # RUNS NO REPOSITORY CODE: bare Git only (fetch objects, cat-file blobs,
+          # tar). No working tree, no checkout, no npm, no hooks. Every byte comes
+          # from git OBJECTS whose ids are content hashes chained to the immutable
+          # commit, so repo code cannot forge the archive and manifest consistently.
+          origin="https://github.com/${REPO}.git"
+          bare="${RUNNER_TEMP}/pkg-bare.git"
+          out="${RUNNER_TEMP}/pkg-out"
+          stage="${RUNNER_TEMP}/pkg-stage"
+          rm -rf "$bare" "$out" "$stage"; mkdir -p "$out" "$stage"
+          git init --bare --quiet "$bare"
+          git -C "$bare" fetch --quiet --no-tags "$origin" "$RELEASE_COMMIT"
+
+          subtree="dist/github-action"
+          # CANONICAL, NUL-safe manifest: one record per file as "<mode> <oid>\t<path>\0"
+          # (full repo path). Both this job and the publish job derive it identically
+          # from `git ls-tree -r -z` so they byte-compare. Reject symlinks/submodules.
+          # Each blob is materialized into the staging tree BY CONTENT via cat-file so
+          # git archive attributes (export-ignore / export-subst / clean filters)
+          # cannot omit or transform a file — the archive is built from raw blobs.
+          man="$out/dist-manifest.tsv"
+          : > "$man"
+          count=0
+          while IFS= read -r -d '' rec; do
+            meta="${rec%%$'\t'*}"          # "<mode> <type> <oid>"
+            path="${rec#*$'\t'}"           # "<path>"
+            mode="$(printf '%s' "$meta" | cut -d' ' -f1)"
+            oid="$(printf '%s' "$meta" | cut -d' ' -f3)"
+            case "$mode" in
+              120000|160000)
+                echo "::error::Committed '$path' is a symlink/submodule (mode $mode); not publishable."
+                exit 1 ;;
+              100644|100755) : ;;
+              *)
+                echo "::error::Committed '$path' has an unexpected mode '$mode'; refusing."
+                exit 1 ;;
+            esac
+            printf '%s %s\t%s\0' "$mode" "$oid" "$path" >> "$man"
+            rel="${path#"$subtree"/}"
+            dest="$stage/$rel"
+            mkdir -p "$(dirname "$dest")"
+            git -C "$bare" cat-file blob "$oid" > "$dest"
+            if [[ "$mode" == "100755" ]]; then chmod 0755 "$dest"; else chmod 0644 "$dest"; fi
+            count=$((count + 1))
+          done < <(git -C "$bare" ls-tree -r -z "${RELEASE_COMMIT}" -- "$subtree")
+          if [[ "$count" -eq 0 ]]; then
+            echo "::error::No committed files under ${subtree} at ${RELEASE_COMMIT}."
+            exit 1
+          fi
+          echo "Manifest ($count files):"; tr '\0' '\n' < "$man" || true
+
+          # DETERMINISTIC archive: a commit-derived mtime + normalized owner/sort so
+          # rerun digests are byte-reproducible (git archive of a bare TREE would use
+          # the current time). GNU tar honors --sort/--mtime/--owner/--group;
+          # `gzip -n` strips gzip's own name/timestamp.
+          cdate="$(git -C "$bare" show -s --format=%cI "$RELEASE_COMMIT")"
+          tar --sort=name --format=gnu --numeric-owner --owner=0 --group=0 \
+              --mtime="$cdate" -C "$stage" -cf "$out/action-bundle.tar" .
+          gzip -n -9 "$out/action-bundle.tar"
+          ( cd "$out" && sha256sum action-bundle.tar.gz > action-bundle.tar.gz.sha256 )
+          echo "Archive digest:"; cat "$out/action-bundle.tar.gz.sha256"
+          echo "PKG_OUT=$out" >> "$GITHUB_ENV"
+
+      - name: Upload the authenticated package (archive + manifest + digest)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-package
+          path: ${{ env.PKG_OUT }}
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 1
+
+  publish:
+    name: Publish tags and release (secret-bearing, no repo code)
+    needs: [validate, package]
+    if: ${{ github.ref_type == 'branch' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: release
+    # Serialize ALL publishes within a MAJOR line so two releases in the same major
+    # (e.g. v1.2.0 and v1.3.0) can never advance the floating major concurrently.
+    # cancel-in-progress: false queues rather than cancels. This complements the
+    # per-attempt re-validation below (defense in depth against the read-highest /
+    # lease-a-newer-target regression).
+    concurrency:
+      group: release-major-${{ needs.validate.outputs.major }}
+      cancel-in-progress: false
+    env:
+      REF: ${{ github.ref }}
+      REF_TYPE: ${{ github.ref_type }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      DEFAULT_TIP: ${{ github.sha }}
+      REPO: ${{ github.repository }}
+      ACTOR: ${{ github.actor }}
+      TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+      TAG: ${{ github.event.inputs.tag }}
+      MAJOR: ${{ needs.validate.outputs.major }}
+      RELEASE_COMMIT: ${{ needs.validate.outputs.releaseCommit }}
+      RELEASE_IDENTITY_ACTOR_ID: ${{ vars.RELEASE_IDENTITY_ACTOR_ID }}
+    steps:
+      - name: Require repository admin (dispatcher AND rerun triggering actor)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # The validate job's admin check does NOT protect a RE-RUN of only this failed
+          # publish job: a non-admin with re-run rights could re-run publish alone, so the
+          # validate-job authorization would be skipped entirely. Re-authorize HERE, as
+          # publish's FIRST step, against the LIVE permission of EVERY principal that can
+          # cause this job to execute — the dispatcher (github.actor) AND, on a re-run, the
+          # person who re-ran it (github.triggering_actor).
+          require_admin() {
+            local who="$1" level
+            level="$(gh api "repos/${REPO}/collaborators/${who}/permission" --jq '.permission')"
+            echo "Actor ${who} permission: ${level}"
+            if [[ "$level" != "admin" ]]; then
+              echo "::error::Only repository admins may publish an Action release (actor '${who}' is '${level}')."
+              exit 1
+            fi
+          }
+          require_admin "$ACTOR"
+          if [[ -n "${TRIGGERING_ACTOR:-}" && "$TRIGGERING_ACTOR" != "$ACTOR" ]]; then
+            require_admin "$TRIGGERING_ACTOR"
+          fi
+
+      - name: Ensure the authorized release identity is configured
+        env:
+          RELEASE_TOKEN: ${{ secrets.ACTION_RELEASE_TOKEN }}
+        run: |
+          if [[ -z "$RELEASE_TOKEN" ]]; then
+            echo "::error::secrets.ACTION_RELEASE_TOKEN is not set. Configure the authorized release identity (contents:write + tag-ruleset bypass) in the protected 'release' environment before publishing."
+            exit 1
+          fi
+
+      - name: Preflight — verify the 'release' environment is correctly protected
+        env:
+          GH_TOKEN: ${{ secrets.ACTION_RELEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          # A NON-EXISTENT environment provides NO protection: GitHub would create an
+          # unprotected 'release' environment implicitly and run this job anyway. So
+          # fail CLOSED here — before any tag/Release write — unless the environment
+          # exists with (a) at least one required reviewer and (b) a deployment
+          # branch/tag policy limited to EXACTLY the default branch. See CONTRIBUTING.md
+          # ("Action release environment") for the one-time `gh` provisioning.
+          if ! envjson="$(gh api "repos/${REPO}/environments/release" 2>/dev/null)"; then
+            echo "::error::The 'release' environment does not exist or is not readable by ACTION_RELEASE_TOKEN. Provision it (required reviewers + prevent_self_review + can_admins_bypass=false + default-branch-only deployment rule + env-scoped ACTION_RELEASE_TOKEN) per CONTRIBUTING.md."
+            exit 1
+          fi
+          reviewerRule="$(printf '%s' "$envjson" | jq -c '.protection_rules[]? | select(.type=="required_reviewers")')"
+          if [[ -z "$reviewerRule" ]]; then
+            echo "::error::The 'release' environment has no required reviewers. Add at least one required reviewer."
+            exit 1
+          fi
+          # Self-approval MUST be prevented, or the dispatcher could rubber-stamp their
+          # own release. Require prevent_self_review==true on the reviewer rule.
+          if [[ "$(printf '%s' "$reviewerRule" | jq -r '.prevent_self_review // false')" != "true" ]]; then
+            echo "::error::The 'release' environment must set prevent_self_review=true so the release dispatcher cannot approve their own deployment."
+            exit 1
+          fi
+          # Admin bypass MUST be disabled, or a repository admin could skip the reviewer
+          # gate entirely. Require an EXPLICIT can_admins_bypass==false. jq's `//`
+          # operator treats a literal `false` as absent (so `.can_admins_bypass // true`
+          # would wrongly yield `true` for the correct value), so test presence AND
+          # equality directly: `has(...) and (... == false)` is `true` only when the
+          # field is present and literally false (absent/true both fail closed).
+          if [[ "$(printf '%s' "$envjson" | jq -r 'has("can_admins_bypass") and (.can_admins_bypass == false)')" != "true" ]]; then
+            echo "::error::The 'release' environment must set can_admins_bypass=false so administrators cannot bypass the required-reviewer gate."
+            exit 1
+          fi
+          custom="$(printf '%s' "$envjson" | jq -r '.deployment_branch_policy.custom_branch_policies // false')"
+          if [[ "$custom" != "true" ]]; then
+            echo "::error::The 'release' environment must restrict deployments to selected branches/tags (custom_branch_policies=true), not all branches."
+            exit 1
+          fi
+          # Require EXACTLY ONE policy, of type 'branch', named the default branch.
+          # (A tag-type policy named like the default branch, or extra policies, must
+          # not pass — so total_count and type are checked, not just names.)
+          polJson="$(gh api "repos/${REPO}/environments/release/deployment-branch-policies")"
+          total="$(printf '%s' "$polJson" | jq -r '.total_count')"
+          if [[ "$total" != "1" ]]; then
+            echo "::error::The 'release' environment must have EXACTLY one deployment policy, found ${total}."
+            exit 1
+          fi
+          ptype="$(printf '%s' "$polJson" | jq -r '.branch_policies[0].type // "null"')"
+          pname="$(printf '%s' "$polJson" | jq -r '.branch_policies[0].name // "null"')"
+          if [[ "$ptype" != "branch" || "$pname" != "$DEFAULT_BRANCH" ]]; then
+            echo "::error::The 'release' deployment policy must be a single BRANCH policy named exactly '${DEFAULT_BRANCH}', got type='${ptype}' name='${pname}'."
+            exit 1
+          fi
+          echo "Release environment preflight passed (required reviewers + prevent_self_review + can_admins_bypass=false + single default-branch policy)."
+
+      - name: Preflight — verify the v* tag ruleset locks tag writes to the release identity
+        env:
+          GH_TOKEN: ${{ secrets.ACTION_RELEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          # The environment gate protects the WORKFLOW, but a repository TAG RULESET is
+          # what stops a direct `git push origin v1.2.3` (or an admin hand-moving the
+          # floating major) OUTSIDE this pipeline. Fail CLOSED unless the tag rulesets
+          # protect the ACTUAL refs this release writes — the EXACT tag (refs/tags/v1.2.3)
+          # AND the FLOATING major (refs/tags/v1) — each evaluated INDEPENDENTLY with
+          # GitHub fnmatch semantics (not a literal `refs/tags/v*` string / prefix guess),
+          # honoring excludes, and requiring every applicable ruleset to restrict creation
+          # AND update AND deletion with a bypass list of EXACTLY the one dedicated release
+          # identity (actor_type User, bypass_mode always). The token that performs the
+          # write MUST itself be that identity. See CONTRIBUTING.md ("Release tag
+          # protection") for the one-time provisioning.
+          if [[ -z "${RELEASE_IDENTITY_ACTOR_ID:-}" ]]; then
+            echo "::error::vars.RELEASE_IDENTITY_ACTOR_ID is not set. Set it to the numeric actor id of the dedicated release identity on the v* tag ruleset bypass list (see CONTRIBUTING.md)."
+            exit 1
+          fi
+          # Verify the release TOKEN's own identity equals the configured actor id, so the
+          # bypass actor the ruleset trusts IS the principal that writes the tag (a stale
+          # or mismatched vars value cannot silently authorize a different actor). Capture
+          # the identity EXPLICITLY and FAIL CLOSED if it cannot be determined (an API error
+          # must not early-exit past the comparison, and an empty/null id must be rejected).
+          if ! tokenId="$(gh api user --jq '.id' 2>/dev/null)"; then
+            echo "::error::Could not read the release token identity (gh api user failed); the token needs read access to its own user. Refusing to proceed."
+            exit 1
+          fi
+          if [[ -z "$tokenId" || "$tokenId" == "null" ]]; then
+            echo "::error::The release token identity is empty/null; refusing to proceed (cannot confirm the token is the ruleset bypass actor)."
+            exit 1
+          fi
+          if [[ "$tokenId" != "$RELEASE_IDENTITY_ACTOR_ID" ]]; then
+            echo "::error::The release token identity (id=${tokenId}) does not match vars.RELEASE_IDENTITY_ACTOR_ID (${RELEASE_IDENTITY_ACTOR_ID}); the token that writes the tag must be the ruleset's bypass actor."
+            exit 1
+          fi
+          # ALL active tag ruleset ids (paginated — never miss a ruleset past page 1).
+          ids="$(gh api --paginate "repos/${REPO}/rulesets" --jq '.[] | select(.target=="tag" and .enforcement=="active") | .id')"
+          if [[ -z "$ids" ]]; then
+            echo "::error::No ACTIVE tag ruleset found. Create the refs/tags/v* ruleset per CONTRIBUTING.md."
+            exit 1
+          fi
+          # The list endpoint omits rules/conditions/bypass_actors; fetch each ruleset's
+          # FULL detail, then slurp the stream of objects into a single JSON ARRAY.
+          details="$(mktemp)"; : > "$details"
+          while read -r id; do
+            [[ -z "$id" ]] && continue
+            gh api "repos/${REPO}/rulesets/${id}" >> "$details"
+          done <<< "$ids"
+          rulesets_arr="$(mktemp)"
+          jq -s '.' "$details" > "$rulesets_arr"
+          # Evaluate applicability with a FAITHFUL GitHub fnmatch (FNM_PATHNAME) matcher
+          # against BOTH concrete refs. The evaluator reads everything from env / the
+          # array file (no ${{ }} in this body) and contains NO single quotes.
+          EXACT_REF="refs/tags/${TAG}" FLOATING_REF="refs/tags/${MAJOR}" \
+          RID="$RELEASE_IDENTITY_ACTOR_ID" RULESETS_FILE="$rulesets_arr" NAMESPACE_PREFIX="v" \
+          node -e '
+            const fs = require("fs");
+            const rid = String(process.env.RID || "");
+            const refs = { exact: process.env.EXACT_REF, floating: process.env.FLOATING_REF };
+            const rulesets = JSON.parse(fs.readFileSync(process.env.RULESETS_FILE, "utf8"));
+            // GitHub matches ref_name patterns with Ruby File.fnmatch FNM_PATHNAME: `*`
+            // and `?` and `[...]` match WITHIN a path segment (never `/`); a `**` segment
+            // is RECURSIVE (matches zero or more whole segments, crossing `/`) ONLY when
+            // it is NON-TERMINAL (came from a `**/` prefix). A TERMINAL `**` (the last
+            // pattern segment) is NOT recursive — it behaves like `*` (one within-segment).
+            // We match SEGMENT-BY-SEGMENT so `refs/tags/v*` cannot match refs/tags/v1/2,
+            // `refs/*` cannot match refs/tags/x, and a terminal `refs/**` does NOT protect
+            // a nested refs/tags/v1.2.3 — the over-matching a single .*/[^/]* regex would
+            // wrongly accept, letting a non-applicable ruleset count as cover.
+            function reLit(ch) { return ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+            // Inside a regex character class the significant chars differ: only ] \ ^ and -
+            // change meaning. In particular an ESCAPED literal from the pattern (Ruby
+            // File.fnmatch treats `\X` as a literal X inside [...]) must NOT be able to form
+            // a JS regex RANGE — e.g. `[a\-z]` means the three chars a, -, z, not a..z. So
+            // an escaped literal is emitted via classLit (which escapes ] \ ^ - ), never via
+            // reLit (which leaves `-` bare and would wrongly create a range that over-matches
+            // and could let an inapplicable ruleset be counted as covering the ref).
+            function classLit(ch) { return ch.replace(/[\]\\^-]/g, "\\$&"); }
+            function segToRegex(seg) {
+              let re = "^";
+              for (let i = 0; i < seg.length; i++) {
+                const c = seg[i];
+                if (c === "*") { re += "[^/]*"; }
+                else if (c === "?") { re += "[^/]"; }
+                else if (c === "[") {
+                  // GitHub ruleset fnmatch class subset (NO backslash escaping; only `!`
+                  // negation — `[^...]` is unsupported and rejected up front by
+                  // assertSupported). A `]` in the FIRST position (after `[`, or after a
+                  // leading `!`) CLOSES an EMPTY set — positive `[]` matches NOTHING, negated
+                  // `[!]` matches ANY single non-`/` char. Otherwise members are read until
+                  // `]`; `X-Y` is a RANGE only when the char after `-` EXISTS and is NOT `]`
+                  // (else `-` is a LITERAL member). A REVERSED range (`[z-a]`) matches EXACTLY
+                  // its two ENDPOINTS {z,a} (Ruby byte-compares bounds). An UNTERMINATED class
+                  // (no closing `]`) matches NOTHING (Ruby returns no match), so the whole
+                  // segment becomes a never-match regex. A `/` member is inert (segments carry
+                  // no `/`), matching FNM_PATHNAME where a class never matches the separator.
+                  let j = i + 1, neg = false;
+                  if (seg[j] === "!") { neg = true; j++; }
+                  if (seg[j] === "]") { re += neg ? "[^/]" : "[^\\s\\S]"; i = j; }
+                  else {
+                    let out = "", closed = false, members = 0;
+                    while (j < seg.length) {
+                      if (seg[j] === "]") { closed = true; break; }
+                      const lo = seg[j]; j += 1;
+                      if (seg[j] === "-" && seg[j + 1] !== undefined && seg[j + 1] !== "]") {
+                        j += 1; const hi = seg[j]; j += 1;
+                        // Forward range -> [lo-hi]; reversed range -> its two endpoints {lo,hi}.
+                        if (lo.charCodeAt(0) <= hi.charCodeAt(0)) { out += classLit(lo) + "-" + classLit(hi); members++; }
+                        else { out += classLit(lo) + classLit(hi); members += 2; }
+                      } else { out += classLit(lo); members++; }
+                    }
+                    if (!closed) { return /[^\s\S]/; } // UNTERMINATED class -> NO MATCH (Ruby)
+                    // A class with NO effective member: positive -> matches nothing; negated
+                    // -> matches any single non-`/` char (negation of empty).
+                    if (neg) re += members ? "[^" + out + "]" : "[^/]";
+                    else re += members ? "[" + out + "]" : "[^\\s\\S]";
+                    i = j;
+                  }
+                }
+                else { re += reLit(c); }
+              }
+              return new RegExp(re + "$");
+            }
+            function classEnd(p, i) {
+              // Index just past a bracket class opened at i (`[`), or -1 if UNTERMINATED.
+              // GitHub subset: NO backslash escaping; optional leading `!`; a leading `]`
+              // closes an EMPTY set; otherwise scan to the first closing `]`.
+              let j = i + 1;
+              if (p[j] === "!") j++;
+              if (p[j] === "]") return j + 1;
+              while (j < p.length) {
+                if (p[j] === "]") return j + 1;
+                j++;
+              }
+              return -1;
+            }
+            function splitSegments(p) {
+              // Split a PATTERN into path segments on `/`, but NEVER on a `/` INSIDE a
+              // TERMINATED bracket class (class-aware). GitHub rulesets do not support
+              // backslash escaping, so there is no escaped-slash separator; an UNTERMINATED
+              // `[` is scanned as a literal here (classEnd returns -1) and its own segment
+              // then never matches in segToRegex, so its following `/`s ARE separators.
+              const segs = []; let cur = "";
+              for (let i = 0; i < p.length; i++) {
+                const c = p[i];
+                if (c === "/") { segs.push(cur); cur = ""; continue; }
+                if (c === "[") {
+                  const end = classEnd(p, i);
+                  if (end >= 0) { cur += p.slice(i, end); i = end - 1; continue; }
+                }
+                cur += c;
+              }
+              segs.push(cur);
+              return segs;
+            }
+            function segMatch(pat, ref, pi, ri) {
+              while (pi < pat.length) {
+                const p = pat[pi];
+                // A standalone `**` segment is RECURSIVE (zero or more whole segments,
+                // crossing `/`) ONLY when it is NOT the last pattern segment — i.e. it
+                // came from a `**/` in the pattern. A TERMINAL `**` (the last segment,
+                // from a trailing `**` not followed by `/`) is NOT recursive in Ruby
+                // File.fnmatch FNM_PATHNAME: it behaves like `*` (matches exactly one
+                // within-segment), so it falls through to segToRegex below. Without this
+                // guard a `refs/**` rule would wrongly be accepted as protecting a NESTED
+                // tag ref like refs/tags/v1.2.3.
+                if (p === "**" && pi < pat.length - 1) { for (let k = ri; k <= ref.length; k++) { if (segMatch(pat, ref, pi + 1, k)) return true; } return false; }
+                if (ri >= ref.length) return false;
+                if (!segToRegex(p).test(ref[ri])) return false;
+                pi++; ri++;
+              }
+              return ri === ref.length;
+            }
+            function matchesPattern(ref, pattern) {
+              if (pattern === "~ALL") return true;
+              if (pattern.charAt(0) === "~") return false; // ~DEFAULT_BRANCH etc. is never a tag ref
+              // Class-aware segmentation for the PATTERN so a `/` inside `[...]` is not a
+              // separator; the REF is concrete (no brackets) so a plain split is correct.
+              return segMatch(splitSegments(pattern), ref.split("/"), 0, 0);
+            }
+            function covers(rs, ref) {
+              // DETAIL ENFORCEMENT + TARGET (mirror the shared evaluator): a ruleset counts
+              // as applicable ONLY when it is an ACTIVE TAG ruleset. Re-check per-ruleset here
+              // (not solely via the jq `select` on the list) so a DISABLED (enforcement !=
+              // "active") or RETARGETED (target != "tag") ruleset in the fetched details can
+              // never be counted, even if the upstream filter is bypassed or the API changes.
+              if (rs.target !== "tag" || rs.enforcement !== "active") return false;
+              const cond = (rs.conditions && rs.conditions.ref_name) || {};
+              const inc = cond.include || [], exc = cond.exclude || [];
+              return inc.some((p) => matchesPattern(ref, p)) && !exc.some((p) => matchesPattern(ref, p));
+            }
+            function restricts(rs, t) { return (rs.rules || []).some((r) => r.type === t); }
+            function isReleaseActor(a) { return a && a.actor_type === "User" && String(a.actor_id) === rid && a.bypass_mode === "always"; }
+            function assertSupported(pattern) {
+              // GitHub rulesets use a RESTRICTED fnmatch: NO backslash escaping and NO
+              // `[^...]` class negation (only `[!...]`). Evaluating such syntax OUR way could
+              // DIVERGE from GitHub and FALSELY APPROVE (or deny) a ruleset, so FAIL CLOSED.
+              if (pattern.indexOf("\\") !== -1) throw { pattern: pattern, why: "backslash escapes are not supported by GitHub rulesets" };
+              for (let i = 0; i < pattern.length; i++) {
+                if (pattern[i] === "[" && pattern[i + 1] === "^") throw { pattern: pattern, why: "[^...] class negation is not supported by GitHub rulesets (use [!...])" };
+              }
+            }
+            try {
+              for (const rs of rulesets) {
+                const cond = (rs.conditions && rs.conditions.ref_name) || {};
+                const pats = (cond.include || []).concat(cond.exclude || []);
+                // Validate EVERY pattern for unsupported syntax FIRST — before any special
+                // `~`-token handling — so a pattern that merely BEGINS with `~` (but is not a
+                // real `~ALL`/`~DEFAULT_BRANCH` token) cannot smuggle a backslash or `[^...]`
+                // past the preflight. The real `~` tokens contain neither, so validating them
+                // is harmless; matchesPattern below still treats them as the ref-name tokens.
+                for (const p of pats) assertSupported(p);
+              }
+            } catch (e) {
+              console.error("::error::Tag ruleset preflight: unsupported fnmatch syntax (" + e.why + ") in pattern " + JSON.stringify(e.pattern) + "; cannot faithfully evaluate coverage. Fix the ruleset to use supported syntax.");
+              process.exit(1);
+            }
+            const errors = [];
+            for (const label of Object.keys(refs)) {
+              const ref = refs[label];
+              const app = rulesets.filter((rs) => covers(rs, ref));
+              if (app.length === 0) { errors.push("no active tag ruleset applies to " + ref + " (" + label + ")"); continue; }
+              for (const t of ["creation", "update", "deletion", "non_fast_forward"]) {
+                if (!app.some((rs) => restricts(rs, t))) errors.push(ref + " (" + label + ") is not restricted for " + t);
+              }
+              // LAYERED rulesets are ANDed by GitHub: EVERY applicable ruleset independently
+              // enforces its rules. Distinguish OMITTED bypass data (insufficient API
+              // visibility -> fail closed) from an EXPLICIT empty list (a valid protective
+              // layer that grants NO bypass). A ruleset is unsafe if it grants a bypass to a
+              // NON-release actor; and EVERY applicable RESTRICTING ruleset (one that
+              // restricts creation/update/deletion) MUST grant the release identity a bypass,
+              // else that layer would block the write (a union `.some()` would falsely certify).
+              for (const rs of app) {
+                if (!Object.prototype.hasOwnProperty.call(rs, "bypass_actors") || rs.bypass_actors === null) {
+                  errors.push(ref + " (" + label + ") ruleset id=" + rs.id + " did not return bypass_actors (insufficient API visibility; re-run with a token that can read ruleset bypass actors)");
+                  continue;
+                }
+                const foreign = rs.bypass_actors.filter((a) => !isReleaseActor(a));
+                if (foreign.length > 0) errors.push(ref + " (" + label + ") ruleset id=" + rs.id + " grants a bypass to " + foreign.length + " actor(s) other than the User release identity " + rid);
+                const restrictsAny = ["creation", "update", "deletion", "non_fast_forward"].some((t) => restricts(rs, t));
+                const grantsIdentity = Array.isArray(rs.bypass_actors) && rs.bypass_actors.some(isReleaseActor);
+                if (restrictsAny && !grantsIdentity) {
+                  errors.push(ref + " (" + label + ") applicable RESTRICTING ruleset id=" + rs.id + " does not grant the User release identity " + rid + " a bypass (layered rulesets are ANDed — the identity must bypass EVERY restricting layer)");
+                }
+              }
+            }
+            // NAMESPACE-WIDE coverage (release-time). The per-ref checks above prove the
+            // CONCRETE refs this run writes are locked, but a ruleset whose include is a
+            // finite LIST of exact tags would pass those probes while leaving FUTURE tags in
+            // the namespace unprotected. NAMESPACE_PREFIX is ALWAYS set by the committed
+            // invocation (a test asserts its presence), so this block runs at release time;
+            // it additionally requires, for EACH op, an ACTIVE tag ruleset whose include
+            // COVERS the whole refs/tags/<prefix>* namespace (a single-segment wildcard whose
+            // literal prefix is a prefix of <prefix>, or ~ALL), carries NO excludes, restricts
+            // that op, and — layered — grants the release identity the sole always-User bypass.
+            const nsPrefix = process.env.NAMESPACE_PREFIX;
+            if (nsPrefix) {
+              const ns = "refs/tags/" + nsPrefix + "*";
+              const patternCoversNamespace = (pattern, pfx) => {
+                if (pattern === "~ALL") return true;
+                const m = /^refs\/tags\/([^*?[\]/]*)(\*\*?)$/.exec(pattern);
+                if (!m) return false;
+                return pfx.startsWith(m[1]);
+              };
+              // A pattern OVERLAPS the namespace iff it could match at least one tag in it — a
+              // sound over-approximation so a RESTRICTIVE LAYER covering only PART of the
+              // namespace (e.g. refs/tags/v1*) is NOT ignored (it could open a hole or block the
+              // identity on its sub-range).
+              const patternOverlapsNamespace = (pattern, pfx) => {
+                if (pattern === "~ALL") return true;
+                if (pattern.charAt(0) === "~") return false;
+                // CLASS-AWARE segmentation: a `/` inside a `[…]` class is inert under FNM_PATHNAME,
+                // so splitSegments keeps `refs/tags/[a/b]v*` as a single tag segment (a `[^/]*`
+                // split would misread it as multi-segment and let a partial ruleset escape).
+                const segs = splitSegments(pattern);
+                if (segs.length !== 3 || segs[0] !== "refs" || segs[1] !== "tags") {
+                  return /\*\*/.test(pattern) && pattern.indexOf("refs/") === 0;
+                }
+                const seg = segs[2];
+                const w = seg.search(/[*?[]/);
+                if (w < 0) return seg.indexOf(pfx) === 0;
+                const lit = seg.slice(0, w);
+                return lit.indexOf(pfx) === 0 || pfx.indexOf(lit) === 0;
+              };
+              const activeNs = rulesets.filter((rs) => rs.target === "tag" && rs.enforcement === "active");
+              const covering = activeNs.filter((rs) => {
+                const cond = (rs.conditions && rs.conditions.ref_name) || {};
+                const inc = cond.include || [], exc = cond.exclude || [];
+                if (exc.length > 0) return false;
+                return inc.some((p) => patternCoversNamespace(p, nsPrefix));
+              });
+              // OVERLAPPING active tag rulesets (partial or whole) whose bypass must be audited;
+              // an exclude that fully covers the namespace removes the overlap.
+              const overlapping = activeNs.filter((rs) => {
+                const cond = (rs.conditions && rs.conditions.ref_name) || {};
+                const inc = cond.include || [], exc = cond.exclude || [];
+                if (!inc.some((p) => patternOverlapsNamespace(p, nsPrefix))) return false;
+                if (exc.some((p) => patternCoversNamespace(p, nsPrefix))) return false;
+                return true;
+              });
+              if (covering.length === 0) errors.push("no active tag ruleset include pattern covers the entire " + ns + " namespace (a finite list of exact tags does not protect future tags)");
+              for (const t of ["creation", "update", "deletion", "non_fast_forward"]) {
+                if (!covering.some((rs) => restricts(rs, t))) errors.push("the " + ns + " namespace is not restricted for " + t + " by a namespace-covering ruleset");
+              }
+              for (const rs of overlapping) {
+                if (!Object.prototype.hasOwnProperty.call(rs, "bypass_actors") || rs.bypass_actors === null) { errors.push(ns + " ruleset id=" + rs.id + " did not return bypass_actors (insufficient API visibility)"); continue; }
+                const foreign = rs.bypass_actors.filter((a) => !isReleaseActor(a));
+                if (foreign.length > 0) errors.push(ns + " ruleset id=" + rs.id + " grants a bypass to " + foreign.length + " actor(s) other than the User release identity " + rid);
+                const restrictsAny = ["creation", "update", "deletion", "non_fast_forward"].some((t) => restricts(rs, t));
+                const grantsIdentity = Array.isArray(rs.bypass_actors) && rs.bypass_actors.some(isReleaseActor);
+                if (restrictsAny && !grantsIdentity) errors.push(ns + " applicable RESTRICTING ruleset id=" + rs.id + " does not grant the User release identity " + rid + " a bypass (layered rulesets are ANDed — the identity must bypass EVERY restricting layer)");
+              }
+            }
+            if (errors.length) { for (const e of errors) console.error("::error::Tag ruleset preflight: " + e); process.exit(1); }
+            console.log("Tag ruleset preflight passed: " + refs.exact + " and " + refs.floating + " are each restricted (creation+update+deletion+non_fast_forward), grant no foreign bypass, and EVERY applicable restricting ruleset authorizes the User release identity " + rid + ".");
+          '
+
+      - name: Enforce trusted default-branch execution
+        run: |
+          if [[ "$REF_TYPE" != "branch" || "$REF" != "refs/heads/${DEFAULT_BRANCH}" ]]; then
+            echo "::error::Release must be dispatched from branch refs/heads/${DEFAULT_BRANCH}, not ${REF} (type ${REF_TYPE})."
+            exit 1
+          fi
+
+      - name: Download the authenticated package
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-package
+          path: pkg
+
+      - name: Prepare a bare Git mirror (no working tree, no repository files)
+        env:
+          RELEASE_TOKEN: ${{ secrets.ACTION_RELEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          # BARE Git only: no actions/checkout, no working tree, so no repository
+          # file (hence no hook/script from any commit) is placed on disk. Fetch
+          # the release + default-tip commits WITH trees/blobs for the release
+          # commit so we can independently re-derive the dist manifest below.
+          origin="https://x-access-token:${RELEASE_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          bare="${RUNNER_TEMP}/release-bare.git"
+          rm -rf "$bare"
+          git init --bare --quiet "$bare"
+          git -C "$bare" fetch --quiet --no-tags "$origin" "$RELEASE_COMMIT" "$DEFAULT_TIP"
+          echo "BARE=$bare" >> "$GITHUB_ENV"
+
+      - name: Re-enforce release-commit ancestry (bare)
+        run: |
+          set -euo pipefail
+          if ! git -C "$BARE" merge-base --is-ancestor "$RELEASE_COMMIT" "$DEFAULT_TIP"; then
+            echo "::error::Release commit $RELEASE_COMMIT is not an ancestor of the default branch ($DEFAULT_TIP)."
+            exit 1
+          fi
+
+      - name: Verify the package against the tag commit (digest + manifest + extracted paths/modes/hashes)
+        run: |
+          set -euo pipefail
+          # No repo code runs here. (1) The archive matches its recorded digest.
+          ( cd pkg && sha256sum -c action-bundle.tar.gz.sha256 )
+
+          # (2) Re-derive the CANONICAL manifest from the RELEASE_COMMIT object the
+          # exact same way the package job did ("<mode> <oid>\t<path>\0") and require
+          # byte-equality with the packaged manifest.
+          subtree="dist/github-action"
+          reman="${RUNNER_TEMP}/rederived-manifest.tsv"
+          : > "$reman"
+          while IFS= read -r -d '' rec; do
+            meta="${rec%%$'\t'*}"; path="${rec#*$'\t'}"
+            mode="$(printf '%s' "$meta" | cut -d' ' -f1)"
+            oid="$(printf '%s' "$meta" | cut -d' ' -f3)"
+            case "$mode" in
+              120000|160000) echo "::error::Committed '$path' is a symlink/submodule; not publishable."; exit 1 ;;
+              100644|100755) : ;;
+              *) echo "::error::Committed '$path' has an unexpected mode '$mode'."; exit 1 ;;
+            esac
+            printf '%s %s\t%s\0' "$mode" "$oid" "$path" >> "$reman"
+          done < <(git -C "$BARE" ls-tree -r -z "${RELEASE_COMMIT}" -- "$subtree")
+          if ! cmp -s "$reman" pkg/dist-manifest.tsv; then
+            echo "::error::Packaged manifest does not match the manifest re-derived from the tag commit."
+            exit 1
+          fi
+
+          # (3) EXTRACT the archive and verify every entry against the manifest:
+          # exact path set, git-normalized mode, and blob hash. This defends against
+          # git archive attributes (export-ignore / export-subst / clean filters)
+          # omitting or transforming a file even when (1)+(2) pass.
+          tmp="${RUNNER_TEMP}/verify-extract"; rm -rf "$tmp"; mkdir -p "$tmp"
+          tar -xzf pkg/action-bundle.tar.gz -C "$tmp"
+          # Reject any non-regular / non-directory entry the archive may carry.
+          if find "$tmp" -mindepth 1 ! -type d ! -type f -print | grep -q .; then
+            echo "::error::Extracted archive contains a non-regular entry."
+            find "$tmp" -mindepth 1 ! -type d ! -type f -print
+            exit 1
+          fi
+          manFiles=0
+          while IFS= read -r -d '' rec; do
+            meta="${rec%%$'\t'*}"; path="${rec#*$'\t'}"
+            mode="$(printf '%s' "$meta" | cut -d' ' -f1)"
+            oid="$(printf '%s' "$meta" | cut -d' ' -f2)"
+            rel="${path#"$subtree"/}"
+            f="$tmp/$rel"
+            if [[ ! -f "$f" ]]; then
+              echo "::error::Archive is missing manifest path '$rel' (git archive may have omitted it)."
+              exit 1
+            fi
+            if [[ -x "$f" ]]; then gotMode=100755; else gotMode=100644; fi
+            if [[ "$gotMode" != "$mode" ]]; then
+              echo "::error::Archive entry '$rel' mode ${gotMode} != manifest ${mode}."
+              exit 1
+            fi
+            got="$(git hash-object "$f")"
+            if [[ "$got" != "$oid" ]]; then
+              echo "::error::Archive entry '$rel' hash ${got} != manifest ${oid} (git archive transformed it)."
+              exit 1
+            fi
+            manFiles=$((manFiles + 1))
+          done < "$reman"
+          # Fail if the archive carries EXTRA files beyond the manifest.
+          extracted=$(find "$tmp" -type f | wc -l | tr -d ' ')
+          if [[ "$extracted" != "$manFiles" ]]; then
+            echo "::error::Archive file count ${extracted} != manifest ${manFiles} (extra/omitted files)."
+            exit 1
+          fi
+
+          # (4) The published entrypoint must be a real, non-placeholder bundle.
+          SENTINEL='__CHAOS_STUDIO_PLACEHOLDER_BUNDLE__'
+          if [[ ! -f "$tmp/index.js" ]]; then
+            echo "::error::Archive has no index.js entrypoint."
+            exit 1
+          fi
+          if grep -q "$SENTINEL" "$tmp/index.js"; then
+            echo "::error::Archive still carries the placeholder sentinel; refusing to publish."
+            exit 1
+          fi
+          echo "Package verified: digest OK, manifest matches the tag commit, extracted paths+modes+hashes match, real bundle."
+
+      - name: Preflight — require repository immutable releases (before any tag write)
+        env:
+          GH_TOKEN: ${{ secrets.ACTION_RELEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Repository-level immutable releases must be ENABLED before we write ANY tag or
+          # release. This gate runs BEFORE the exact-tag creation and the floating-major
+          # advance (and before the release publish), so a disabled setting can never leave
+          # a MUTABLE public tag/release behind (a post-write check would). GET the repo
+          # setting (API version pinned); fail CLOSED unless enabled==true. Requires the
+          # release token's Administration: read permission (see CONTRIBUTING.md).
+          en="$(gh api "repos/${REPO}/immutable-releases" -H "X-GitHub-Api-Version: 2022-11-28" --jq ".enabled == true" 2>/dev/null || echo false)"
+          if [[ "$en" != "true" ]]; then
+            echo "::error::Repository immutable releases are NOT enabled; refusing to write any tag or release. Enable it (see CONTRIBUTING.md) before releasing."
+            exit 1
+          fi
+          echo "Repository immutable releases are enabled; safe to write the tag and release."
+
+      - name: Create or verify the immutable exact tag (bare)
+        env:
+          GIT_AUTHOR_NAME: chaos-studio-release
+          GIT_AUTHOR_EMAIL: chaos-studio-release@users.noreply.github.com
+          GIT_COMMITTER_NAME: chaos-studio-release
+          GIT_COMMITTER_EMAIL: chaos-studio-release@users.noreply.github.com
+          GIT_TERMINAL_PROMPT: '0'
+          RELEASE_TOKEN: ${{ secrets.ACTION_RELEASE_TOKEN }}
+          GH_TOKEN: ${{ secrets.ACTION_RELEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          origin="https://x-access-token:${RELEASE_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          # RESERVE the release OBJECT for the release identity BEFORE the exact tag is
+          # public. GitHub allows only ONE release per tag, so creating our DRAFT release
+          # first NARROWS the window in which another writer (any contents:write holder)
+          # could create a PUBLISHED (immutable) release with unintended assets on this tag
+          # between the public tag and our draft. The draft is not public; its assets are
+          # staged, verified, and published in the next step. If a release already exists
+          # (a rerun, or a pre-existing takeover), we do NOT mutate it here — the publish
+          # step classifies it (draft -> reconcile; published -> verify, never mutate).
+          # NOTE (threat model): a draft does NOT grant EXCLUSIVE ownership — any
+          # contents:write holder could still alter/publish/delete it. The real trust
+          # boundary is the `release` environment + the v* tag ruleset + the dedicated
+          # release identity; the ACTUAL gate on what ships is the publish-time
+          # verification (exact asset set + sha256 digests + GitHub-enforced immutability)
+          # in the next step, which fails closed on any mismatch. See CONTRIBUTING.md
+          # ("Action release environment").
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft >/dev/null 2>&1; then
+            echo "::notice::A release object for $TAG already exists; not re-reserving (the publish step verifies/reconciles it)."
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --target "$RELEASE_COMMIT" --title "$TAG" --notes "Release $TAG (staging; assets verified before publish)."
+            echo "Reserved DRAFT release $TAG (staged by the release identity) before making the tag public."
+          fi
+          remoteTag="$(git ls-remote "$origin" "refs/tags/${TAG}^{}" | awk '{print $1}')"
+          if [[ -z "$remoteTag" ]]; then
+            remoteTag="$(git ls-remote "$origin" "refs/tags/${TAG}" | awk '{print $1}')"
+          fi
+          if [[ -n "$remoteTag" ]]; then
+            if [[ "$remoteTag" != "$RELEASE_COMMIT" ]]; then
+              echo "::error::Immutability violation: tag $TAG targets $remoteTag, expected $RELEASE_COMMIT."
+              exit 1
+            fi
+            echo "::notice::Exact tag $TAG already exists at $RELEASE_COMMIT (immutable); not recreating."
+          else
+            git -C "$BARE" tag "$TAG" "$RELEASE_COMMIT"
+            if ! git -C "$BARE" push --quiet "$origin" "refs/tags/${TAG}"; then
+              echo "::error::Failed to create immutable tag $TAG (possibly a concurrent create). Re-run to re-publish and verify its target."
+              exit 1
+            fi
+            echo "Created immutable tag $TAG at $RELEASE_COMMIT."
+          fi
+
+      - name: Stage assets in a DRAFT release, verify, then publish atomically
+        env:
+          GH_TOKEN: ${{ secrets.ACTION_RELEASE_TOKEN }}
+          RELEASE_TOKEN: ${{ secrets.ACTION_RELEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          origin="https://x-access-token:${RELEASE_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          # Authoritative binding is the TAG REF -> commit, resolved via git refs
+          # (NOT the release targetCommitish). Re-confirm the exact tag == commit.
+          remoteTag="$(git ls-remote "$origin" "refs/tags/${TAG}^{}" | awk '{print $1}')"
+          if [[ -z "$remoteTag" ]]; then
+            remoteTag="$(git ls-remote "$origin" "refs/tags/${TAG}" | awk '{print $1}')"
+          fi
+          if [[ "$remoteTag" != "$RELEASE_COMMIT" ]]; then
+            echo "::error::Tag $TAG resolves to $remoteTag but the release commit is $RELEASE_COMMIT. Immutable exact tags must not move."
+            exit 1
+          fi
+          # The intended asset set (the deterministic archive of the ENTIRE verified
+          # tree + its manifest + digest), keyed by name -> intended sha256.
+          assets=( pkg/action-bundle.tar.gz pkg/action-bundle.tar.gz.sha256 pkg/dist-manifest.tsv )
+          declare -A want=()
+          for a in "${assets[@]}"; do
+            [[ -f "$a" ]] || { echo "::error::Expected asset '$a' is missing."; exit 1; }
+            want["$(basename "$a")"]="$(sha256sum "$a" | awk '{print $1}')"
+          done
+          wantNames="$(printf '%s\n' "${!want[@]}" | LC_ALL=C sort)"
+
+          verify_final_assets() {
+            # The remote asset set must equal the intended set EXACTLY, and every
+            # remote asset's DOWNLOADED bytes must hash to the intended digest.
+            local finalNames verdir got name
+            finalNames="$(gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name' | LC_ALL=C sort)"
+            if [[ "$finalNames" != "$wantNames" ]]; then
+              echo "::error::Remote asset set does not match the intended set."
+              diff <(printf '%s\n' "$wantNames") <(printf '%s\n' "$finalNames") || true
+              exit 1
+            fi
+            verdir="${RUNNER_TEMP}/asset-verify"; rm -rf "$verdir"; mkdir -p "$verdir"
+            gh release download "$TAG" --repo "$REPO" --dir "$verdir" --clobber
+            for name in "${!want[@]}"; do
+              got="$(sha256sum "${verdir}/${name}" | awk '{print $1}')"
+              if [[ "$got" != "${want[$name]}" ]]; then
+                echo "::error::Remote asset '$name' digest ${got} != intended ${want[$name]}."
+                exit 1
+              fi
+            done
+          }
+
+          require_immutable() {
+            # GitHub release immutability (a repository setting) FREEZES a published
+            # release's assets AND tag. Require GitHub to report the release as immutable so
+            # "immutable" is ENFORCED by the platform, not merely asserted by this workflow.
+            # (Provisioning: enable release immutability in repo settings — see CONTRIBUTING.md.)
+            local imm
+            imm="$(gh api "repos/${REPO}/releases/tags/${TAG}" --jq '(.immutable // .is_immutable) // false' 2>/dev/null || echo false)"
+            if [[ "$imm" != "true" ]]; then
+              echo "::error::Release $TAG is NOT immutable (isImmutable=${imm}). Enable repository release immutability so published releases (assets + tag) are frozen (see CONTRIBUTING.md)."
+              exit 1
+            fi
+            echo "Release $TAG is immutable (isImmutable=true)."
+          }
+
+          require_repo_immutability_enabled() {
+            # Repository-level immutable releases must be ENABLED *before* we make ANY release
+            # write. Otherwise a publish/flip would create a MUTABLE public release and the
+            # per-release require_immutable check would only fail AFTER the mutable release is
+            # already public. GET the repo setting (returns { enabled, enforced_by_owner });
+            # fail CLOSED unless enabled==true so no mutable public release is ever produced.
+            local en
+            en="$(gh api "repos/${REPO}/immutable-releases" -H "X-GitHub-Api-Version: 2022-11-28" --jq ".enabled == true" 2>/dev/null || echo false)"
+            if [[ "$en" != "true" ]]; then
+              echo "::error::Repository immutable releases are NOT enabled; refusing to write any release (a published release would be mutable). Enable it (see CONTRIBUTING.md) before releasing."
+              exit 1
+            fi
+            echo "Repository immutable releases are enabled."
+          }
+
+          reconcile_draft_assets() {
+            # Bring a (possibly partial) DRAFT's assets to EXACTLY the intended set:
+            # delete any unintended asset, then (re)upload the intended ones. Safe
+            # ONLY on a draft, which is not public.
+            local existing name
+            existing="$(gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name' || true)"
+            while IFS= read -r name; do
+              [[ -z "$name" ]] && continue
+              if [[ -z "${want[$name]+x}" ]]; then
+                gh release delete-asset "$TAG" "$name" --repo "$REPO" --yes
+              fi
+            done <<< "$existing"
+            gh release upload "$TAG" "${assets[@]}" --repo "$REPO" --clobber
+          }
+
+          # Fail CLOSED before ANY release write if repository immutable releases are off,
+          # so a publish can never leave a MUTABLE public release behind.
+          require_repo_immutability_enabled
+
+          # Classify the current release state: absent | draft | published. A DRAFT is
+          # NOT public and marks an INCOMPLETE prior publish (repairable); a PUBLISHED
+          # release is the immutable, consumer-visible artifact (verify, never mutate).
+          state="absent"
+          if isDraft="$(gh release view "$TAG" --repo "$REPO" --json isDraft --jq '.isDraft' 2>/dev/null)"; then
+            if [[ "$isDraft" == "true" ]]; then state="draft"; else state="published"; fi
+          fi
+
+          case "$state" in
+            published)
+              echo "::notice::Release $TAG is already published (immutable); verifying assets + GitHub immutability without mutation."
+              verify_final_assets
+              require_immutable
+              ;;
+            draft)
+              echo "::notice::Repairing an incomplete DRAFT release $TAG (not public)."
+              reconcile_draft_assets
+              verify_final_assets
+              # Publish ATOMICALLY only after the complete asset set is verified.
+              gh release edit "$TAG" --repo "$REPO" --draft=false
+              # Confirm GitHub IMMUTABILITY first — this FREEZES the published assets + tag —
+              # THEN re-verify the frozen bytes. Ordering it this way closes the draft's
+              # verify->publish mutable window authoritatively: any tamper in that gap is
+              # frozen at publish and then caught by this post-immutability re-verification.
+              require_immutable
+              verify_final_assets
+              ;;
+            absent)
+              # First publish: create a DRAFT (NOT public) carrying all assets, verify
+              # the complete set + digests, THEN flip to published atomically. A failure
+              # before the flip leaves only a repairable draft — never a partial public
+              # release that a rerun cannot repair.
+              gh release create "$TAG" "${assets[@]}" \
+                --repo "$REPO" \
+                --title "$TAG" \
+                --target "$RELEASE_COMMIT" \
+                --generate-notes \
+                --verify-tag \
+                --draft
+              verify_final_assets
+              gh release edit "$TAG" --repo "$REPO" --draft=false
+              # Immutability (freeze) confirmed BEFORE the final re-verify, so the verified
+              # bytes are platform-frozen and cannot change between verification and publish.
+              require_immutable
+              verify_final_assets
+              ;;
+          esac
+          echo "Release $TAG published and verified (exact asset set + digests + GitHub immutability)."
+
+      - name: Advance the floating major tag (bare, lease-then-revalidate)
+        env:
+          GIT_AUTHOR_NAME: chaos-studio-release
+          GIT_AUTHOR_EMAIL: chaos-studio-release@users.noreply.github.com
+          GIT_COMMITTER_NAME: chaos-studio-release
+          GIT_COMMITTER_EMAIL: chaos-studio-release@users.noreply.github.com
+          GIT_TERMINAL_PROMPT: '0'
+          RELEASE_TOKEN: ${{ secrets.ACTION_RELEASE_TOKEN }}
+          GH_TOKEN: ${{ secrets.ACTION_RELEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          origin="https://x-access-token:${RELEASE_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          require_repo_immutability_enabled() {
+            # JUST-IN-TIME immutability gate: the floating major tag is a mutable ref that
+            # consumers follow, and this push happens LATE (after the Release). Re-confirm
+            # repository immutable releases are STILL enabled immediately before EACH push
+            # attempt, so the floating tag can never be advanced while protection is off
+            # (a check done only at job start could be disabled before this late write).
+            local en
+            en="$(gh api "repos/${GITHUB_REPOSITORY}/immutable-releases" -H "X-GitHub-Api-Version: 2022-11-28" --jq ".enabled == true" 2>/dev/null || echo false)"
+            if [[ "$en" != "true" ]]; then
+              echo "::error::Repository immutable releases are NOT enabled; refusing to advance the floating major tag."
+              exit 1
+            fi
+          }
+          # Advanced ONLY after the Release + its assets are finalized and verified
+          # above, so a consumer that follows the floating major tag always finds a
+          # complete, verified release. Advance only when THIS release is the highest
+          # version in its major line. The per-attempt ordering closes the
+          # read-highest / lease-a-newer-target race that a naive check-then-lease
+          # leaves open:
+          #   1. read the remote major LEASE first,
+          #   2. THEN recompute the highest exact version from a FRESH listing,
+          #   3. stand down if a newer exact tag now exists OR if the observed lease
+          #      already points at a version > TAG (a newer release advanced it),
+          #   4. else push --force-with-lease bound to the lease read in step 1.
+          # A newer advance between (1) and (4) invalidates the lease -> push fails
+          # -> loop re-reads and stands down. So a lower release can never overwrite
+          # a major advanced by a higher one. (The publish job is also serialized
+          # per-major, so contention is rare.)
+          advanced=0
+          for attempt in 1 2 3 4 5 6; do
+            remoteMajor="$(git ls-remote "$origin" "refs/tags/${MAJOR}" | awk '{print $1}')"
+            allVers="$(git ls-remote --tags "$origin" \
+              | sed -n 's#.*refs/tags/\('"$MAJOR"'\.[0-9][0-9]*\.[0-9][0-9]*\)$#\1#p' \
+              | LC_ALL=C sort -V)"
+            highest="$(printf '%s\n' "$allVers" | tail -n1)"
+            echo "Attempt $attempt — highest ${MAJOR}.x: ${highest:-<none>}; lease: ${remoteMajor:-<none>}; this: $TAG"
+            if [[ "$TAG" != "$highest" ]]; then
+              echo "::notice::Not advancing ${MAJOR}: $TAG is not the highest ${MAJOR}.x release (${highest:-none})."
+              advanced=1; break
+            fi
+            # Revalidate the observed lease target: if the major already points at an
+            # exact tag whose version is > TAG, a newer release advanced it — stand
+            # down rather than lease-and-overwrite it.
+            if [[ -n "$remoteMajor" ]]; then
+              leaseVer="$(printf '%s\n' "$allVers" \
+                | while read -r v; do
+                    [[ -z "$v" ]] && continue
+                    c="$(git ls-remote "$origin" "refs/tags/${v}^{}" | awk '{print $1}')"
+                    [[ -z "$c" ]] && c="$(git ls-remote "$origin" "refs/tags/${v}" | awk '{print $1}')"
+                    [[ "$c" == "$remoteMajor" ]] && echo "$v"
+                  done | LC_ALL=C sort -V | tail -n1)"
+              if [[ -n "$leaseVer" && "$leaseVer" != "$TAG" ]]; then
+                newer="$(printf '%s\n%s\n' "$leaseVer" "$TAG" | LC_ALL=C sort -V | tail -n1)"
+                if [[ "$newer" == "$leaseVer" ]]; then
+                  echo "::notice::Major ${MAJOR} already points at ${leaseVer} (> ${TAG}); standing down."
+                  advanced=1; break
+                fi
+              fi
+            fi
+            git -C "$BARE" tag -f "$MAJOR" "$RELEASE_COMMIT"
+            # JIT gate immediately before the push: never advance the floating tag while
+            # repository immutable releases are disabled.
+            require_repo_immutability_enabled
+            if [[ -n "$remoteMajor" ]]; then
+              if git -C "$BARE" push --quiet "$origin" "refs/tags/${MAJOR}" \
+                   --force-with-lease="refs/tags/${MAJOR}:${remoteMajor}"; then
+                echo "Advanced floating major ${MAJOR} -> ${TAG} (${RELEASE_COMMIT})."
+                advanced=1; break
+              fi
+            else
+              if git -C "$BARE" push --quiet "$origin" "refs/tags/${MAJOR}"; then
+                echo "Created floating major ${MAJOR} -> ${TAG} (${RELEASE_COMMIT})."
+                advanced=1; break
+              fi
+            fi
+            echo "::notice::Floating ${MAJOR} moved under us (attempt $attempt); re-validating."
+            sleep 3
+          done
+          if [[ "$advanced" -ne 1 ]]; then
+            echo "::error::Could not converge the floating major tag ${MAJOR} after retries."
+            exit 1
+          fi

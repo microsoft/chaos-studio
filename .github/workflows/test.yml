@@ -23,7 +23,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Install Pester
         shell: pwsh
@@ -43,7 +43,7 @@ jobs:
 
       - name: Upload Pester results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: pester-results-${{ matrix.os }}
           path: pester-results.xml
@@ -57,10 +57,10 @@ jobs:
       matrix:
         python: ['3.10', '3.11', '3.12', '3.13']
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Python ${{ matrix.python }}
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: ${{ matrix.python }}
 
@@ -78,7 +78,7 @@ jobs:
 
       - name: Upload coverage
         if: matrix.python == '3.12'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: coverage-xml
           path: copilot-cli-plugin/mcp/coverage.xml
@@ -88,8 +88,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: '3.12'
       - name: Install
@@ -97,3 +97,110 @@ jobs:
       - name: ruff
         working-directory: copilot-cli-plugin/mcp
         run: ruff check chaos_mcp tests
+
+  # Path filter so the TypeScript jobs run only when the CI/CD-integration
+  # sources change — Python/Pester/scenario/sample-only changes skip them.
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      typescript: ${{ steps.filter.outputs.typescript }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        with:
+          filters: |
+            typescript:
+              - 'package.json'
+              - 'package-lock.json'
+              - 'tsconfig*.json'
+              - '.gitattributes'
+              - 'packages/**'
+              - 'scripts/**'
+              - 'dist/**'
+              - 'action.yml'
+              - 'azure-pipelines-extension/**'
+              - '.config/**'
+              - '.pipelines/**'
+              - '.github/workflows/test.yml'
+              # The release workflows embed the ref-name FNM_PATHNAME matcher that
+              # release-fnmatch.test.ts extracts and pins; include them so a change to an
+              # embedded matcher re-runs its regression tests (and cannot bypass them).
+              - '.github/workflows/release.yml'
+              - '.github/workflows/release-action.yml'
+
+  typescript:
+    name: TypeScript (typecheck + core tests)
+    needs: changes
+    if: ${{ needs.changes.outputs.typescript == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - name: Install workspace dependencies
+        run: npm ci
+      - name: Type-check
+        run: npm run typecheck
+      - name: Test shared core
+        run: npm test
+      - name: Verify committed dist equals a clean rebuild (empty-dir, full-set + modes + hashes)
+        run: |
+          set -euo pipefail
+          # Same build-drift gate the release `validate` job enforces: capture the
+          # committed dist tree as "<mode>\t<oid>\t<path>" (git-normalized modes;
+          # reject symlinks 120000 / submodules 160000), rebuild into an EMPTY dist,
+          # explicitly reject any non-regular rebuilt entry, then require the COMPLETE
+          # file set, every git-normalized mode, and every blob hash to match.
+          committed="$(git ls-tree -r "HEAD" -- dist \
+            | while IFS=$'\t' read -r meta path; do
+                mode="${meta%% *}"; oid="${meta##* }"
+                case "$mode" in
+                  120000|160000)
+                    echo "::error::Committed dist entry '$path' is a symlink/submodule (mode $mode); not publishable." >&2
+                    exit 1 ;;
+                esac
+                printf '%s\t%s\t%s\n' "$mode" "$oid" "$path"
+              done | LC_ALL=C sort)"
+          # An empty committed set would make an empty rebuild trivially pass;
+          # require the committed dist and the expected entrypoints to exist.
+          if [[ -z "$committed" ]]; then
+            echo "::error::No committed files under dist/."
+            exit 1
+          fi
+          for ep in dist/github-action/index.js dist/azure-pipelines-task/index.js; do
+            if ! printf '%s\n' "$committed" | grep -qF "	${ep}"; then
+              echo "::error::Committed dist is missing the required entrypoint '${ep}'."
+              exit 1
+            fi
+          done
+          rm -rf dist
+          npm run build
+          if find dist -mindepth 1 ! -type d ! -type f -print | grep -q .; then
+            echo "::error::Rebuilt dist contains a non-regular entry (symlink/special file); not publishable."
+            find dist -mindepth 1 ! -type d ! -type f -print
+            exit 1
+          fi
+          built="$(find dist -type f -print0 \
+            | while IFS= read -r -d '' f; do
+                if [[ -x "$f" ]]; then mode=100755; else mode=100644; fi
+                printf '%s\t%s\t%s\n' "$mode" "$(git hash-object "$f")" "$f"
+              done | LC_ALL=C sort)"
+          if [[ -z "$built" ]]; then
+            echo "::error::Clean rebuild produced no dist files."
+            exit 1
+          fi
+          if [[ "$committed" != "$built" ]]; then
+            echo "::error::Committed dist tree does not match a clean rebuild (mode, content, or file set differs). Run 'npm run build' and commit the result."
+            diff <(printf '%s\n' "$committed") <(printf '%s\n' "$built") || true
+            exit 1
+          fi
+          echo "Committed dist equals a clean rebuild (exact file set + modes + blob hashes)."
