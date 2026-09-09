@@ -1,13 +1,13 @@
-# Contributing to Azure Chaos Studio (open source)
+# Contributing to Chaos Studio Workspaces samples and tooling
 
-Thanks for helping improve the open-source tooling for Azure Chaos Studio! This
+Thanks for helping improve the open-source companion to Chaos Studio Workspaces! This
 repo is a monorepo — start with the component you're working on:
 
 | Component | Where | Guide |
 |---|---|---|
-| Copilot CLI plugin + MCP server | [`copilot-cli-plugin/`](copilot-cli-plugin/) | [copilot-cli-plugin/CONTRIBUTING.md](copilot-cli-plugin/CONTRIBUTING.md) |
-| Scenarios | [`scenarios/`](scenarios/) | one folder per scenario; include a short README |
-| Samples | [`samples/`](samples/) | self-contained, deployable, safe to break |
+| Samples | [Resilience testing samples](samples/) | self-contained, deployable, safe to break |
+| Copilot CLI plugin + MCP server | [Plugin and MCP guide](copilot-cli-plugin/) | [Plugin contribution guide](copilot-cli-plugin/CONTRIBUTING.md) |
+| Scenarios | [Custom Scenario contribution scaffold](scenarios/) | one folder per Scenario; include a short README |
 
 ## Issues & feedback
 

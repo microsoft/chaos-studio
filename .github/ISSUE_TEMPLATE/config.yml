@@ -3,9 +3,9 @@ contact_links:
   - name: 💬 Questions & ideas (Discussions)
     url: https://github.com/microsoft/chaos-studio/discussions
     about: Ask questions, share ideas, or talk through resilience patterns with the team and community.
-  - name: 📘 Azure Chaos Studio documentation
-    url: https://learn.microsoft.com/azure/chaos-studio/
-    about: How-tos and reference for the Chaos Studio service.
+  - name: 📘 Chaos Studio Workspaces documentation
+    url: https://learn.microsoft.com/azure/chaos-studio/chaos-studio-workspaces-overview
+    about: Start with Workspaces, Scenarios, Actions, and Scenario reports on Microsoft Learn.
   - name: 🔒 Security vulnerability
     url: https://msrc.microsoft.com/create-report
     about: Report security issues to MSRC, not GitHub Issues. See SECURITY.md.

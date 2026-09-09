@@ -1,23 +1,24 @@
 ---
 name: create-workspace
-description: "Provision a Microsoft.Chaos/workspaces resource (v2), bind a managed identity, set scopes, and grant Reader RBAC on the scope."
+description: "Provision a Chaos Studio Workspaces resource (Microsoft.Chaos/workspaces), bind a managed identity, set scopes, and grant Reader RBAC on the scope."
 ---
 
-# CreateWorkspace — Chaos Studio Workspace Provisioning
+# CreateWorkspace — provision a Workspace in Chaos Studio Workspaces
 
 > ⛔ **ABSOLUTE RULE**: Do NOT improvise, skip, or substitute any step. On ANY error, STOP and wait for the user.
 
 ## When to use this skill (vs. the MCP server)
 
-This skill is the **human-interactive** path: it persists state to `startchaos-state.json`, renders cards, and produces the workspace + identity + Reader RBAC in one go. Use it when there is a user in the loop.
+This skill is the **human-interactive** path: it persists state to `startchaos-state.json`, renders cards, and produces the Workspace + identity + Reader RBAC in one go. Use it when there is a user in the loop.
 
-If you are an **autonomous agent** with no user to prompt, call `chaos_create_workspace` on the `chaos-studio` MCP server. Same provisioning + identity binding + Reader RBAC, returned as a single tool call. See `mcp/README.md`.
+If you are an **autonomous agent** with no user to prompt, call `chaos_create_workspace` on the `chaos-studio` MCP server. Same provisioning + identity binding + Reader RBAC, returned as a single tool call. See the [MCP server guide](../../mcp/README.md).
 
 Both surfaces target `Microsoft.Chaos` `2026-05-01-preview` and use the local `az login` session for auth.
+For the supported service workflow, see the [Workspace quickstart](https://learn.microsoft.com/azure/chaos-studio/quickstart-create-workspace).
 
 ## How It Works
 
-All provisioning logic lives in `scripts/Invoke-CreateWorkspace.ps1`. The script handles input validation, workspace creation via `az chaos workspace create` (the CLI awaits the provisioning LRO), identity resolution, RBAC test/grant, and state persistence.
+All provisioning logic lives in `scripts/Invoke-CreateWorkspace.ps1`. The script handles input validation, Workspace creation via `az chaos workspace create` (the CLI awaits the provisioning LRO), identity resolution, RBAC test/grant, and state persistence.
 
 The AI orchestrator's **only** job is:
 
@@ -60,8 +61,8 @@ If a required parameter is missing, PowerShell's parameter binder fails before t
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
 | `-ResourceGroup` | yes | — | Azure resource group name |
-| `-WorkspaceName` | yes | — | Name for the workspace resource |
-| `-Scopes` | yes | — | ARM IDs the workspace is allowed to target (subscription / RG / service group) |
+| `-WorkspaceName` | yes | — | Name for the Workspace resource |
+| `-Scopes` | yes | — | ARM IDs the Workspace is allowed to target (subscription / RG / service group) |
 | `-Location` | no | `westus2` | Azure region |
 | `-IdentityType` | no | `SystemAssigned` | `SystemAssigned` or `UserAssigned` |
 | `-UserAssignedIdentityResourceId` | conditional | — | Required when `-IdentityType UserAssigned` |
@@ -79,4 +80,4 @@ If a required parameter is missing, PowerShell's parameter binder fails before t
 ## Related Skills
 
 - `start-chaos` — orchestrator that invokes this skill
-- `setup-scenario` — next phase after workspace creation
+- `setup-scenario` — next phase after Workspace creation

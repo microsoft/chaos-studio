@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-"""MCP server exposing Azure Chaos Studio v2 operations as agent-callable tools.
+"""MCP server exposing Chaos Studio Workspaces operations as agent-callable tools.
 
 Mirrors the Copilot CLI plugin's PowerShell skills (create-workspace,
 setup-scenario, run-scenario) against the same `Microsoft.Chaos`

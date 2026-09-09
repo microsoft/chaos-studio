@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Master orchestrator for the full Chaos Studio v2 pipeline.
+    Master orchestrator for the full Chaos Studio Workspaces pipeline.
 .DESCRIPTION
     Drives all four phases in sequence: auth → workspace → setup → run.
     Reads state to resume from the first non-done phase.
@@ -161,7 +161,7 @@ $elapsed = ((Get-Date) - $pipelineStart).ToString('hh\:mm\:ss')
 # If we resumed and the run was already done, use stored run data
 $scenarioName = ($state.setup.selectedScenarioId -split '/')[-1]
 
-Write-Card -Title 'Chaos Experiment Complete' -Status '✅ Success' -Properties ([ordered]@{
+Write-Card -Title 'Pipeline Complete' -Status '✅ Success' -Properties ([ordered]@{
     'Subscription'   = "$($state.context.subscriptionName) ($($state.context.subscriptionId))"
     'Workspace'      = $state.workspace.id
     'Scenario'       = $scenarioName

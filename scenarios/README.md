@@ -1,11 +1,12 @@
-# Scenarios
+# Custom Scenarios for Chaos Studio Workspaces
 
-Shareable **custom Scenario** definitions for Azure Chaos Studio Workspaces —
-outage patterns beyond the built-in templates, expressed as
-`Microsoft.Chaos/workspaces/scenarios` resources (Bicep or JSON).
+This directory is currently a contribution scaffold. It contains no custom
+Scenario definitions beyond this README.
 
-See [Create a custom Scenario](https://learn.microsoft.com/azure/chaos-studio/chaos-studio-scenarios#create-a-custom-scenario)
-for the resource schema. Contributions welcome — one folder per scenario, with a
-short README describing the outage it simulates and the resources it targets.
+Chaos Studio Workspaces already provides supported Scenario templates. Review
+[Scenarios in Azure Chaos Studio](https://learn.microsoft.com/azure/chaos-studio/chaos-studio-scenarios)
+before creating a custom definition.
 
-_(Scaffold — first scenarios land here soon.)_
+Future contributions should use one folder per Scenario, store the
+`Microsoft.Chaos/workspaces/scenarios` resource as Bicep or JSON, and include a
+short README describing the outage pattern and targeted resources.
