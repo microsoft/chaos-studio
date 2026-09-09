@@ -1,0 +1,75 @@
+name: AKS zone-down demo
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: What to run
+        type: choice
+        options:
+          - deploy
+          - cleanup
+        default: deploy
+      resource_group:
+        description: Resource group for the demo
+        default: chaos-demo-rg
+      location:
+        description: Azure region with availability zones
+        default: eastus2
+      cluster_name:
+        description: AKS cluster name
+        default: chaos-demo-aks
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    environment: aks-zone-down-demo
+    env:
+      RESOURCE_GROUP: ${{ inputs.resource_group }}
+      LOCATION: ${{ inputs.location }}
+      CLUSTER_NAME: ${{ inputs.cluster_name }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy the demo
+        if: inputs.operation == 'deploy'
+        working-directory: samples/aks-zone-down-demo
+        shell: bash
+        run: |
+          ./deploy.sh 2>&1 | tee "$RUNNER_TEMP/aks-zone-down-demo-deploy.log"
+          summary="$(
+            awk '
+              /^AKS_ZONE_DOWN_DEMO_SUMMARY_BEGIN$/ { capture = 1; next }
+              /^AKS_ZONE_DOWN_DEMO_SUMMARY_END$/ { capture = 0 }
+              capture
+            ' "$RUNNER_TEMP/aks-zone-down-demo-deploy.log"
+          )"
+          if [ -z "$summary" ]; then
+            echo "deploy.sh did not emit its summary markers." >&2
+            exit 1
+          fi
+          {
+            echo "## Demo deployed"
+            echo '```text'
+            echo "$summary"
+            echo '```'
+            echo "Continue with the [canonical Learn tutorial](https://learn.microsoft.com/azure/chaos-studio/chaos-studio-tutorial-sample-app#create-a-workspace-scoped-to-the-infrastructure-resource-group)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Clean up the demo
+        if: inputs.operation == 'cleanup'
+        working-directory: samples/aks-zone-down-demo
+        run: |
+          FORCE=1 ./cleanup.sh
+          echo "Resource group deletion started for '$RESOURCE_GROUP'." >> "$GITHUB_STEP_SUMMARY"
