@@ -1,0 +1,17 @@
+{
+  "name": "@azure/chaos-studio-task",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Thin Azure Pipelines task adapter for the Azure Chaos Studio v2 CI/CD integration. Wraps azure-pipelines-task-lib input/output/logging and an ARM service-connection (workload-identity) token source around the shared TypeScript orchestration core in packages/core. All service behavior lives in the core; this package only translates the Azure Pipelines platform surface.",
+  "license": "MIT",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "test": "node --test \"test/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit -p ../../tsconfig.json"
+  },
+  "dependencies": {
+    "@azure/identity": "^4.0.0",
+    "azure-pipelines-task-lib": "^5.0.0"
+  }
+}

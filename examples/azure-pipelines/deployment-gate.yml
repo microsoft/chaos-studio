@@ -1,0 +1,50 @@
+# Example: use the Chaos Studio task as a DEPLOYMENT GATE. The scenario runs inside
+# a `deployment` job bound to an Azure Pipelines ENVIRONMENT, so the environment's
+# Approvals-and-checks gate when the chaos run may proceed, and a failed run fails
+# the deployment (blocking promotion to the next stage).
+#
+# Auth is workload-identity federation (WIF) via an ARM service connection — NO
+# long-lived secret (NFR3). Prerequisite: install the "Azure Chaos Studio
+# Workspaces" extension so AzureChaosStudioScenario@1 is available, and create an
+# Azure Pipelines environment named `chaos-gate` (add approvals/checks as desired).
+
+trigger: none
+
+pool:
+  vmImage: ubuntu-latest
+
+stages:
+  - stage: resilience_gate
+    displayName: Resilience gate (Chaos Studio)
+    jobs:
+      - deployment: chaos_gate
+        displayName: Validate and run the resilience scenario
+        environment: chaos-gate   # environment Approvals-and-checks gate this run
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureChaosStudioScenario@1
+                  displayName: Validate and execute the resilience scenario
+                  name: chaos
+                  inputs:
+                    azureSubscription: chaos-studio-wif   # ARM service connection (WIF)
+                    subscriptionId: $(chaosSubscriptionId)
+                    resourceGroup: rg-chaos
+                    workspaceName: ws-demo
+                    scenarioName: scn-demo
+                    scenarioConfigurationName: cfg-demo
+                    mode: validate-and-execute
+                    waitForCompletion: true
+                    # A failed/canceled run fails this deployment job, blocking the
+                    # stages that depend on `resilience_gate`.
+
+  - stage: promote
+    displayName: Promote (only if the resilience gate passed)
+    dependsOn: resilience_gate
+    condition: succeeded()
+    jobs:
+      - job: promote
+        steps:
+          - script: echo "Resilience gate passed — promoting the release."
+            displayName: Promote

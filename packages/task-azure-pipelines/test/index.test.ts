@@ -1,0 +1,55 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+
+import { jobCancellationSignal, main } from '../src/index.ts';
+
+// NOTE: importing ../src/index.ts loads the real azure-pipelines-task-lib +
+// @azure/identity (this is the composition-root entry test — an OFFLINE test with
+// injected/guarded deps, unlike the SDK-free adapter/parity/oidc tests). It issues
+// no real request. The mere fact this import completes — without hanging, exiting,
+// or issuing a real request — is itself proof that the main-module guard did NOT
+// auto-run main() on import (main() would read the service connection and attempt a
+// real orchestration).
+
+test('module import does not execute main (main-module guard): main is exported but not auto-run', () => {
+  assert.equal(typeof main, 'function', 'main is exported for the entry to invoke');
+  assert.equal(typeof jobCancellationSignal, 'function');
+});
+
+test('jobCancellationSignal aborts on SIGINT and cleans up its process listeners', () => {
+  const beforeInt = process.listenerCount('SIGINT');
+  const beforeTerm = process.listenerCount('SIGTERM');
+
+  const { signal, dispose } = jobCancellationSignal();
+  assert.equal(signal.aborted, false, 'not aborted until a signal arrives');
+  assert.equal(process.listenerCount('SIGINT'), beforeInt + 1, 'a SIGINT listener is registered');
+  assert.equal(process.listenerCount('SIGTERM'), beforeTerm + 1, 'a SIGTERM listener is registered');
+
+  // process.emit invokes the registered listener WITHOUT triggering Node's default
+  // signal termination (that only applies to real OS signals).
+  process.emit('SIGINT');
+  assert.equal(signal.aborted, true, 'SIGINT aborts the signal the core observes');
+
+  dispose();
+  assert.equal(process.listenerCount('SIGINT'), beforeInt, 'SIGINT listener removed');
+  assert.equal(process.listenerCount('SIGTERM'), beforeTerm, 'SIGTERM listener removed');
+});
+
+test('jobCancellationSignal aborts on SIGTERM too', () => {
+  const { signal, dispose } = jobCancellationSignal();
+  assert.equal(signal.aborted, false);
+  process.emit('SIGTERM');
+  assert.equal(signal.aborted, true, 'SIGTERM aborts the signal');
+  dispose();
+});
+
+test('jobCancellationSignal: a second signal is a no-op (idempotent abort) and dispose is safe to call repeatedly', () => {
+  const beforeInt = process.listenerCount('SIGINT');
+  const { signal, dispose } = jobCancellationSignal();
+  process.emit('SIGINT');
+  assert.equal(signal.aborted, true);
+  assert.doesNotThrow(() => process.emit('SIGINT'));
+  assert.doesNotThrow(() => dispose());
+  assert.doesNotThrow(() => dispose());
+  assert.equal(process.listenerCount('SIGINT'), beforeInt, 'no leaked SIGINT listener');
+});

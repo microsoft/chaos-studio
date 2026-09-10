@@ -1,0 +1,35 @@
+# Example: execute a scenario WITHOUT waiting for it to finish (no-wait).
+#
+# ⚠️ NO-WAIT WARNING ⚠️
+# With `waitForCompletion: false` the task succeeds as soon as the run is STARTED —
+# it does NOT judge the run's outcome and emits only the run identity plus the
+# last-observed state. Critically, once this task (and the job) exits, the
+# integration can no longer cancel the run: `cancelOnTimeoutOrCancellation` has no
+# effect in no-wait mode. If the job is cancelled after the process exits, the
+# chaos run keeps going. Cancel it yourself by run id if needed:
+#   az rest --method post \
+#     --url "https://management.azure.com<run-resource-id>/cancel?api-version=2026-05-01-preview"
+# Prefer waitForCompletion: true unless you deliberately want fire-and-forget.
+#
+# Auth is workload-identity federation (WIF) via an ARM service connection — NO
+# long-lived secret (NFR3). Prerequisite: install the "Azure Chaos Studio
+# Workspaces" extension so AzureChaosStudioScenario@1 is available.
+
+trigger: none
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+  - task: AzureChaosStudioScenario@1
+    displayName: Start the scenario (fire-and-forget)
+    name: chaos   # reference $(chaos.run-id), $(chaos.run-resource-id)
+    inputs:
+      azureSubscription: chaos-studio-wif   # ARM service connection (workload identity)
+      subscriptionId: $(chaosSubscriptionId)
+      resourceGroup: rg-chaos
+      workspaceName: ws-demo
+      scenarioName: scn-demo
+      scenarioConfigurationName: cfg-demo
+      mode: execute-only
+      waitForCompletion: false

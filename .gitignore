@@ -477,6 +477,14 @@ FodyWeavers.xsd
 /packages/**/[Bb]in/
 /packages/**/[Oo]ut/
 
+# ── npm-workspace: azure-pipelines-task-lib scratch file ──
+# `azure-pipelines-task-lib` writes a `.taskkey` file into the process CWD the
+# moment it is imported (an internal scratch/service-key file). Loading the Azure
+# Pipelines task entry/host in tests therefore drops a `.taskkey` in the repo root.
+# It is a generated local artifact, never a deliverable — ignore it wherever it lands.
+.taskkey
+**/.taskkey
+
 # ── npm-workspace: re-include the SOURCE directory literally named `release` ──
 # The shared release-protection evaluator lives at `packages/core/src/release/`
 # (TypeScript source, NOT build output). The VisualStudio `[Rr]elease/` build-results

@@ -1,0 +1,29 @@
+# Example: validate AND execute an Azure Chaos Studio scenario configuration
+# (default mode) from an Azure Pipelines job.
+#
+# Auth is workload-identity federation (WIF) via an ARM service connection — there
+# is NO long-lived secret (NFR3). The service connection referenced by
+# `azureSubscription` must be an ARM connection configured for workload identity.
+#
+# Prerequisite: install the "Azure Chaos Studio Workspaces" extension (or the
+# private dev build) in your Azure DevOps organization so the
+# AzureChaosStudioScenario@1 task is available.
+
+trigger: none
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+  - task: AzureChaosStudioScenario@1
+    displayName: Validate and execute the scenario
+    inputs:
+      azureSubscription: chaos-studio-wif   # ARM service connection (workload identity)
+      subscriptionId: $(chaosSubscriptionId)
+      resourceGroup: rg-chaos
+      workspaceName: ws-demo
+      scenarioName: scn-demo
+      scenarioConfigurationName: cfg-demo
+      mode: validate-and-execute
+      # Waits for a terminal run state and cancels the run on timeout/cancellation.
+      waitForCompletion: true
