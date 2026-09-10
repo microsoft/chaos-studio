@@ -13,7 +13,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "node --test \"packages/core/test/**/*.test.ts\"",
+    "test": "node --test \"packages/*/test/**/*.test.ts\"",
     "test:core": "node --test \"packages/core/test/**/*.test.ts\""
   },
   "devDependencies": {

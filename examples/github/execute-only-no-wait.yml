@@ -1,0 +1,53 @@
+# Example: execute a scenario WITHOUT waiting for it to finish (no-wait).
+#
+# ⚠️ NO-WAIT WARNING ⚠️
+# With `wait-for-completion: false` the step succeeds as soon as the run is
+# STARTED — it does NOT judge the run's outcome and returns only the run identity
+# plus the last-observed state. Critically, once this step (and the job) exits,
+# the integration can no longer cancel the run: `cancel-on-timeout-or-cancellation`
+# has no effect in no-wait mode. If the job is cancelled after the process exits,
+# the chaos run keeps going. Cancel it yourself by run id if needed:
+#   az rest --method post --url \
+#     "https://management.azure.com<run-resource-id>/cancel?api-version=2026-05-01-preview"
+# Prefer wait-for-completion: true unless you deliberately want fire-and-forget.
+#
+# Authenticates with workload identity federation (WIF) via azure/login — NO
+# long-lived secret (NFR3). Third-party actions are pinned to a full commit SHA.
+#
+# TEMPLATE — not yet copy-paste runnable: the microsoft/chaos-studio pin below is a
+# pre-release placeholder (the runnable Action bundle ships in E5/E6). Replace it
+# with the published preview release SHA before running. See ./README.md.
+name: Chaos Studio — execute only (no-wait)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  execute-no-wait:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Azure login (workload identity)
+        uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Start the scenario without waiting
+        id: chaos
+        uses: microsoft/chaos-studio@0a3b126f0b723ed540c3c506b77afa9796fea327 # v1 — TEMPLATE pin (see note): replace with the published preview release SHA before running
+        with:
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          resource-group: rg-chaos
+          workspace-name: ws-demo
+          scenario-name: scn-demo
+          scenario-configuration-name: cfg-demo
+          mode: execute-only
+          wait-for-completion: 'false'
+
+      - name: Record the started run id (cancel it manually if needed)
+        run: echo "Started run ${{ steps.chaos.outputs.run-id }} (last-observed ${{ steps.chaos.outputs.run-state }})"

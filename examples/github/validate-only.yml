@@ -1,0 +1,41 @@
+# Example: validate a Chaos Studio scenario configuration only (never execute).
+#
+# Use validate-only as a pre-flight / PR gate: the step passes iff validation
+# reaches the terminal `Succeeded` state and fails on RequiresAttention /
+# NoResolvedResources. No run is started.
+#
+# Authenticates with workload identity federation (WIF) via azure/login — NO
+# long-lived secret (NFR3). Third-party actions are pinned to a full commit SHA.
+#
+# TEMPLATE — not yet copy-paste runnable: the microsoft/chaos-studio pin below is a
+# pre-release placeholder (the runnable Action bundle ships in E5/E6). Replace it
+# with the published preview release SHA before running. See ./README.md.
+name: Chaos Studio — validate only
+
+on:
+  pull_request:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Azure login (workload identity)
+        uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Validate the scenario configuration
+        uses: microsoft/chaos-studio@0a3b126f0b723ed540c3c506b77afa9796fea327 # v1 — TEMPLATE pin (see note): replace with the published preview release SHA before running
+        with:
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          resource-group: rg-chaos
+          workspace-name: ws-demo
+          scenario-name: scn-demo
+          scenario-configuration-name: cfg-demo
+          mode: validate-only
