@@ -46,6 +46,7 @@ $ChaosStudyReferenceRoot = Join-Path $ChaosStudySkillRoot 'references'
 function Get-ChaosStudyPluginRoot { return $ChaosStudyPluginRoot }
 function Get-ChaosStudyReferenceRoot { return $ChaosStudyReferenceRoot }
 function Get-ChaosStudyLibDir { return $ChaosStudyLibDir }
+function Get-ChaosStudySkillRoot { return $ChaosStudySkillRoot }
 
 # -- Optional reuse of the plugin's interactive login helper ----------------
 # The suite is self-contained: its Azure transport lives in AzCli.ps1 inside
@@ -75,6 +76,12 @@ foreach ($sharedName in @('Ensure-AzLogin.ps1')) {
 # fallback exists purely for the published `skills/`-only packages and for a
 # bare pwsh, where neither is there at all.
 . (Join-Path $PSScriptRoot 'Render.ps1')
+
+# -- Suite provenance -------------------------------------------------------
+# Loaded last of the leaf libraries so it can observe the outcome of everything
+# above it - which renderer won, which optional scripts loaded. It answers one
+# question: which revision of this suite is actually on disk and running.
+. (Join-Path $PSScriptRoot 'Provenance.ps1')
 
 function Get-ChaosSharedScriptStatus {
     <#

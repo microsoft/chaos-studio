@@ -64,6 +64,20 @@ in the same scope:
 ./scripts/Invoke-ChaosStudyHistory.ps1 -Action rerun -StudyId <studyId>
 ```
 
+**Diagnostics** — fingerprints the installed suite. Works offline, needs no Azure
+and no prior study, so it answers "which code am I actually running?" on a fresh
+install or when something else is broken:
+
+```powershell
+./scripts/Invoke-ChaosStudyHistory.ps1 -Action diagnostics
+./scripts/Invoke-ChaosStudyHistory.ps1 -Action diagnostics -Json   # per-file hashes
+```
+
+Quote the content hash in any bug report. Two installs behave identically only if
+that hash matches; `-Json` adds the per-file hashes so two installs can be diffed
+down to the file that actually differs. Every report carries the same revision in
+its appendix, so a report and a bug report can be tied to one revision.
+
 ## Reading a comparison
 
 | Field | Means |

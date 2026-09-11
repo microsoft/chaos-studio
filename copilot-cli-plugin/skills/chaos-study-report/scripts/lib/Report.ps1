@@ -423,6 +423,21 @@ $(New-ChaosSignalTable -Evidence $Evidence)
     $exerciseModel = Get-ChaosReportField -Object $exercise -Name 'model'
     $exerciseKnown = [bool](Get-ChaosReportField -Object $exerciseModel -Name 'known')
 
+    # Which revision of the suite produced this report. Recorded because two
+    # defects were fixed and then reported again, and nobody could tell whether
+    # the reporter was running the fix or a stale published copy. A report that
+    # carries its own fingerprint settles that in one line.
+    $suiteProvenance = $null
+    if (Get-Command -Name 'Get-ChaosSuiteProvenance' -ErrorAction SilentlyContinue) {
+        try { $suiteProvenance = Get-ChaosSuiteProvenance } catch { $suiteProvenance = $null }
+    }
+    $suiteVersionText = if ($suiteProvenance) { [string]$suiteProvenance.suiteVersion } else { $null }
+    $suiteHashText = if ($suiteProvenance -and $suiteProvenance.contentHash) {
+        "$($suiteProvenance.contentHash) ($($suiteProvenance.fileCount) files, $($suiteProvenance.packaging))"
+    } else {
+        $null
+    }
+
     $appendix = @"
 <dl class="kv">
 $(New-ChaosReportRow -Label 'Study id' -Value ([string]$RunRecord.studyId))
@@ -441,6 +456,8 @@ $(New-ChaosReportRow -Label 'Seal class' -Value $(if ($Manifest -and $Manifest.P
 $(New-ChaosReportRow -Label 'Chaos api-version' -Value (Get-ChaosApiVersion -Name 'chaosStudio'))
 $(New-ChaosReportRow -Label 'Actions api-version' -Value (Get-ChaosApiVersion -Name 'chaosActions'))
 $(New-ChaosReportRow -Label 'Metrics api-version' -Value (Get-ChaosApiVersion -Name 'metrics'))
+$(New-ChaosReportRow -Label 'Suite revision' -Value $suiteVersionText)
+$(New-ChaosReportRow -Label 'Suite content hash' -Value $suiteHashText)
 $(New-ChaosReportRow -Label 'Residue' -Value $residueSummaryText)
 </dl>
 $(if (@($permissionRows).Count -gt 0) { "<h3>Permission approval</h3>`n<dl class=`"kv`">`n$($permissionRows -join "`n")`n</dl>" } else { '' })

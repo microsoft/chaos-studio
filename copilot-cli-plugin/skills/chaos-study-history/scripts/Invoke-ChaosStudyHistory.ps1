@@ -23,7 +23,7 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet('list', 'show', 'compare', 'rerun')]
+    [ValidateSet('list', 'show', 'compare', 'rerun', 'diagnostics')]
     [string]$Action = 'list',
     [string]$StudyId = 'latest',
     [string]$Against = 'previous',
@@ -126,7 +126,10 @@ function Get-ChaosMemberName {
     return @($InputObject.PSObject.Properties | ForEach-Object { $_.Name })
 }
 
-if ($index.Count -eq 0) {
+# -Action diagnostics reports on the installed suite, not on the studies, so it
+# has to run before this guard - the moment you most need to know which revision
+# you are running is on a fresh install that has no studies yet.
+if ($index.Count -eq 0 -and $Action -ne 'diagnostics') {
     Write-ChaosStudyPanel -Title 'No studies yet' -Status 'info' -Body @"
 No studies were found under the study root. History becomes useful after the
 first sealed study - run the chaos-study skill to create one.
@@ -135,6 +138,41 @@ first sealed study - run the chaos-study skill to create one.
 }
 
 switch ($Action) {
+
+    'diagnostics' {
+        # Offline and Azure-free by design: this must work in a bare pwsh on a
+        # machine that has never signed in, because its whole job is to answer
+        # "which code are you actually running?" when something else is broken.
+        $provenance = Get-ChaosSuiteProvenance -IncludeFiles
+        if ($Json) {
+            ConvertTo-Json -InputObject $provenance -Depth 8
+            exit (Get-ChaosStudyExitCode -Name 'Success')
+        }
+
+        $hashText = if ($provenance.contentHash) { $provenance.contentHash } else { "unknown - $($provenance.reason)" }
+        Write-ChaosStudyPanel -Title 'Installed suite' -Status $(if ($provenance.contentHash) { 'pass' } else { 'warning' }) -Body @"
+Revision   : $($provenance.suiteVersion)
+Content    : $hashText
+Files      : $($provenance.fileCount) across $(@($provenance.skills).Count) skill directories
+Packaging  : $($provenance.packaging)
+PowerShell : $($provenance.psVersion)
+Renderer   : $(if ($provenance.rendererSource) { $provenance.rendererSource } else { 'none resolved' })
+"@
+
+        Write-ChaosStudyTable -Title 'Skill directories' -Data @(
+            foreach ($skill in $provenance.skills) {
+                [pscustomobject]@{
+                    Skill = $skill.skill
+                    Files = $skill.fileCount
+                    Hash  = $(if ($skill.contentHash) { $skill.contentHash.Substring(0, 16) } else { 'unreadable' })
+                }
+            }
+        )
+
+        Write-ChaosStudyNote -Message 'Quote the content hash in any bug report. Two installs behave identically only if this value matches; -Json adds the per-file hashes so two installs can be diffed to the exact file.'
+        Write-ChaosStudyNote -Message "Studies indexed under this root: $($index.Count)."
+        exit (Get-ChaosStudyExitCode -Name 'Success')
+    }
 
     'list' {
         $rows = foreach ($entry in ($index | Sort-Object -Property studyId -Descending)) {
