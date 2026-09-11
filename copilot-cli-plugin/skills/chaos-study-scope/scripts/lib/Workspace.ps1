@@ -70,6 +70,39 @@ function Test-ChaosCliAvailable {
     return (Test-ChaosOperationSeamReady -Adapter $Adapter -StudyPath $StudyPath)
 }
 
+function Assert-ChaosCliAvailable {
+    <#
+    .SYNOPSIS
+        Hard-stop when workspace operations cannot be dispatched at all.
+
+    .DESCRIPTION
+        Readers in this file used to answer an unavailable seam with $null or an
+        empty list. Both are ANSWERS: $null from the workspace reader means "no
+        such workspace", an empty list from the resource reader means "this
+        workspace discovered nothing". Neither is a conclusion a failed
+        transport is entitled to draw, and the second one understates the blast
+        radius - the most dangerous direction to be wrong in.
+
+        A seam that cannot initialise is a transport failure, so it is raised as
+        one. Callers that genuinely want the predicate still have
+        Test-ChaosCliAvailable.
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowNull()][AllowEmptyString()][string]$Adapter,
+        [AllowNull()][AllowEmptyString()][string]$StudyPath,
+        [Parameter(Mandatory)][string]$Operation
+    )
+
+    if (Test-ChaosCliAvailable -Adapter $Adapter -StudyPath $StudyPath) { return }
+
+    $which = if ([string]::IsNullOrWhiteSpace($Adapter)) { 'the selected adapter' } else { "adapter '$Adapter'" }
+    throw ("AdapterUnavailable: $Operation could not be attempted because $which could not be initialised. " +
+        "This is a transport failure, not an answer about what exists in Azure - nothing has been read, " +
+        "so nothing is being reported as absent or empty. Run 'az login', confirm the chaos extension, " +
+        "or pass -Adapter external to route through a host.")
+}
+
 function Get-ChaosWorkspaceId {
     <#
     .SYNOPSIS
@@ -148,7 +181,7 @@ function Get-ChaosStudyWorkspace {
         [AllowNull()][AllowEmptyString()][string]$StudyPath
     )
 
-    if (-not (Test-ChaosCliAvailable -Adapter $Adapter -StudyPath $StudyPath)) { return $null }
+    Assert-ChaosCliAvailable -Adapter $Adapter -StudyPath $StudyPath -Operation "Reading workspace '$WorkspaceName'"
 
     $cliArgs = @('--name', $WorkspaceName, '--resource-group', $ResourceGroup)
     if (-not [string]::IsNullOrWhiteSpace($SubscriptionId)) {
@@ -440,7 +473,7 @@ function Get-ChaosStudyScopedResource {
         [AllowNull()][AllowEmptyString()][string]$StudyPath
     )
 
-    if (-not (Test-ChaosCliAvailable -Adapter $Adapter -StudyPath $StudyPath)) { return , @() }
+    Assert-ChaosCliAvailable -Adapter $Adapter -StudyPath $StudyPath -Operation "Listing the resources workspace '$WorkspaceName' discovered"
 
     $cliArgs = @('--resource-group', $ResourceGroup, '--workspace-name', $WorkspaceName)
     if (-not [string]::IsNullOrWhiteSpace($SubscriptionId)) {
@@ -449,6 +482,9 @@ function Get-ChaosStudyScopedResource {
 
     $response = Invoke-ChaosStudyOperation -Kind 'resource.list' -Arguments @{ cliArgs = $cliArgs } `
         -ExpectedSchema 'any.v1' -Adapter $Adapter -StudyPath $StudyPath -OperationHint 'discovered-resource list'
+    # 'resource.list' is strict, so a failure raises rather than arriving here.
+    # Reaching this with $null means the service returned an empty body, which
+    # for a list is genuinely nothing to report.
     if ($null -eq $response) { return , @() }
 
     $items = @()
@@ -721,12 +757,24 @@ function ConvertTo-ChaosScenarioRecord {
     $parameters = @()
     foreach ($parameter in @(& $read $properties 'parameters')) {
         if ($null -eq $parameter) { continue }
+        # The declared default has been seen under both `default` and
+        # `defaultValue` depending on the contract revision. Read both and
+        # record which one answered: missing the default silently would make
+        # the service's own fault duration invisible, which is exactly how a
+        # "five-minute" study comes to inject for fifteen.
+        $default = & $read $parameter 'default'
+        $defaultField = if ($null -ne $default) { 'default' } else { $null }
+        if ($null -eq $default) {
+            $default = & $read $parameter 'defaultValue'
+            if ($null -ne $default) { $defaultField = 'defaultValue' }
+        }
         $parameters += [pscustomobject]@{
-            name        = [string](& $read $parameter 'name')
-            type        = [string](& $read $parameter 'type')
-            required    = [bool](& $read $parameter 'required')
-            default     = & $read $parameter 'default'
-            description = [string](& $read $parameter 'description')
+            name         = [string](& $read $parameter 'name')
+            type         = [string](& $read $parameter 'type')
+            required     = [bool](& $read $parameter 'required')
+            default      = $default
+            defaultField = $defaultField
+            description  = [string](& $read $parameter 'description')
         }
     }
 
@@ -767,7 +815,7 @@ function Get-ChaosStudyScenario {
         [switch]$RecommendedOnly
     )
 
-    if (-not (Test-ChaosCliAvailable -Adapter $Adapter -StudyPath $StudyPath)) { return , @() }
+    Assert-ChaosCliAvailable -Adapter $Adapter -StudyPath $StudyPath -Operation "Listing the scenarios available to workspace '$WorkspaceName'"
 
     $cliArgs = @('--resource-group', $ResourceGroup, '--workspace-name', $WorkspaceName)
     if (-not [string]::IsNullOrWhiteSpace($SubscriptionId)) {

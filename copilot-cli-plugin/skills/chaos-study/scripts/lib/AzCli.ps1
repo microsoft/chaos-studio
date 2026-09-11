@@ -163,7 +163,11 @@ function Invoke-ChaosStudyAzChaos {
         if ($null -ne $JsonArg) {
             foreach ($name in $JsonArg.Keys) {
                 $value = $JsonArg[$name]
-                $json = if ($value -is [string]) { $value } else { $value | ConvertTo-Json -Depth 32 -Compress }
+                # -InputObject, never the pipeline: piping a single-element array
+                # enumerates it, so a one-parameter list serialises as a bare object
+                # and the CLI rejects it for wanting a list. -InputObject preserves
+                # cardinality for zero, one, and many alike.
+                $json = if ($value -is [string]) { $value } else { ConvertTo-Json -InputObject $value -Depth 32 -Compress }
                 $tempFile = [System.IO.Path]::GetTempFileName()
                 [System.IO.File]::WriteAllText($tempFile, $json, [System.Text.UTF8Encoding]::new($false))
                 $tempFiles += $tempFile
@@ -281,7 +285,7 @@ function Invoke-ChaosStudyAzRest {
     $tempBodyFile = $null
     try {
         if ($null -ne $Body) {
-            $bodyJson = if ($Body -is [string]) { $Body } else { $Body | ConvertTo-Json -Depth 32 -Compress }
+            $bodyJson = if ($Body -is [string]) { $Body } else { ConvertTo-Json -InputObject $Body -Depth 32 -Compress }
             $tempBodyFile = [System.IO.Path]::GetTempFileName()
             [System.IO.File]::WriteAllText($tempBodyFile, $bodyJson, [System.Text.UTF8Encoding]::new($false))
             $azArgs += @('--body', "@$tempBodyFile")

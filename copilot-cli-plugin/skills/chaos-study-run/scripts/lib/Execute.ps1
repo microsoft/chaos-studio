@@ -42,6 +42,7 @@ Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot '..' '..' '..' 'chaos-study' 'scripts' 'lib' 'ApiVersions.ps1')
 . (Join-Path $PSScriptRoot '..' '..' '..' 'chaos-study' 'scripts' 'lib' 'Operation.ps1')
 . (Join-Path $PSScriptRoot '..' '..' '..' 'chaos-study' 'scripts' 'lib' 'Residue.ps1')
+. (Join-Path $PSScriptRoot '..' '..' '..' 'chaos-study' 'scripts' 'lib' 'ConfigurationPayload.ps1')
 
 # -- Adapter resolution ----------------------------------------------------
 
@@ -248,45 +249,21 @@ function Get-ChaosScenarioParameterList {
 function Get-ChaosBlastRadiusArgument {
     <#
     .SYNOPSIS
-        Project the plan's frozen blast radius into --filters / --exclusions
-        objects, omitting anything empty.
+        Read the plan's frozen blast radius and project it through the canonical
+        projection shared with preflight.
 
     .DESCRIPTION
-        Empty is not the same as absent here. `--filters '{"locations":[]}'`
-        means "no locations", which matches nothing; omitting locations means
-        "every location in scope". Sending an empty collection would silently
-        turn a real study into a no-op that still reports success, so empty
-        members are dropped rather than serialised.
+        The projection itself lives in ConfigurationPayload.ps1 so that preflight
+        and execution cannot drift apart - they used to have separate copies, and
+        the preflight copy simply omitted the blast radius. This function now does
+        only the part that is genuinely plan-specific: finding the blast radius
+        inside a plan object.
     #>
     param([Parameter(Mandatory)][object]$Plan)
 
-    $result = [ordered]@{ filters = $null; exclusions = $null }
     $blast = $null
     if ($Plan.scope.PSObject.Properties.Name -contains 'blastRadius') { $blast = $Plan.scope.blastRadius }
-    if ($null -eq $blast) { return [pscustomobject]$result }
-
-    foreach ($side in @('filters', 'exclusions')) {
-        if ($blast.PSObject.Properties.Name -notcontains $side) { continue }
-        $source = $blast.$side
-        if ($null -eq $source) { continue }
-
-        $projected = [ordered]@{}
-        foreach ($property in @($source.PSObject.Properties)) {
-            $value = $property.Value
-            if ($null -eq $value) { continue }
-            if ($value -is [string]) {
-                if ([string]::IsNullOrWhiteSpace($value)) { continue }
-            } elseif ($value -is [System.Collections.IDictionary]) {
-                if ($value.Count -eq 0) { continue }
-            } elseif ($value -is [System.Collections.IEnumerable]) {
-                if (@($value).Count -eq 0) { continue }
-            }
-            $projected[$property.Name] = $value
-        }
-        if ($projected.Count -gt 0) { $result[$side] = [pscustomobject]$projected }
-    }
-
-    return [pscustomobject]$result
+    return Get-ChaosBlastRadiusProjection -BlastRadius $blast
 }
 
 function New-ChaosStudyConfiguration {
@@ -314,17 +291,32 @@ function New-ChaosStudyConfiguration {
 
     $cliArgs = Get-ChaosConfigurationScopingArgument -Plan $Plan -ConfigurationName $ConfigurationName
 
-    $jsonArg = @{}
+    # One builder, shared with preflight. If the plan froze a preflight digest,
+    # refuse to send anything that does not match it: the validation that
+    # authorised this run described THAT payload, not a similar one.
+    $blast = $null
+    if ($Plan.scope.PSObject.Properties.Name -contains 'blastRadius') { $blast = $Plan.scope.blastRadius }
+    $jsonArg = New-ChaosConfigurationBody -ScenarioParameters @(Get-ChaosScenarioParameterList -Plan $Plan) -BlastRadius $blast
 
-    $parameters = @(Get-ChaosScenarioParameterList -Plan $Plan)
-    if ($parameters.Count -gt 0) { $jsonArg['parameters'] = $parameters }
-
-    $blast = Get-ChaosBlastRadiusArgument -Plan $Plan
-    if ($null -ne $blast.filters) { $jsonArg['filters'] = $blast.filters }
-    if ($null -ne $blast.exclusions) { $jsonArg['exclusions'] = $blast.exclusions }
+    $frozenDigest = $null
+    if (($Plan.PSObject.Properties.Name -contains 'declaredVsEffective') -and $null -ne $Plan.declaredVsEffective) {
+        $dve = $Plan.declaredVsEffective
+        if ((@($dve.PSObject.Properties.Name) -contains 'preflight') -and $null -ne $dve.preflight -and
+            (@($dve.preflight.PSObject.Properties.Name) -contains 'bodyDigest')) {
+            $frozenDigest = [string]$dve.preflight.bodyDigest
+        }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($frozenDigest)) {
+        $actualDigest = Get-ChaosConfigurationBodyDigest -Body $jsonArg
+        if ($actualDigest -ne $frozenDigest) {
+            throw ("The configuration validated at preflight is not the configuration this run would send " +
+                "(validated $frozenDigest, now $actualDigest). The preflight result describes a different blast radius, " +
+                'so it cannot authorise this run. Re-run chaos-study-scope to revalidate.')
+        }
+    }
 
     $created = Invoke-ChaosStudyOperation -Kind 'config.create' -Arguments @{ cliArgs = $cliArgs } `
-        -Body $(if ($jsonArg.Count -gt 0) { $jsonArg } else { $null }) `
+        -Body $jsonArg `
         -ExpectedSchema 'any.v1' -Adapter (Get-ChaosExecutionAdapter -Plan $Plan -Adapter $Adapter) `
         -StudyPath $StudyPath -OperationHint 'scenario config create'
 
@@ -338,6 +330,14 @@ function Remove-ChaosStudyConfiguration {
     <#
     .SYNOPSIS
         Delete a scenario configuration, tolerating one that is already gone.
+
+    .DESCRIPTION
+        An authoritative not-found means the object is already absent, which is
+        the outcome the caller wanted, so it is swallowed. Every other failure
+        is rethrown with the service's own message: a delete the service
+        rejected must never be recorded as one it accepted, because the residue
+        ledger would then report a removal with nothing to explain why the
+        object is still present.
     #>
     [CmdletBinding()]
     param(
@@ -348,9 +348,14 @@ function Remove-ChaosStudyConfiguration {
     )
 
     $cliArgs = (Get-ChaosConfigurationScopingArgument -Plan $Plan -ConfigurationName $ConfigurationName) + @('--yes')
-    return Invoke-ChaosStudyOperation -Kind 'config.delete' -Arguments @{ cliArgs = $cliArgs } `
-        -ExpectedSchema 'any.v1' -Adapter (Get-ChaosExecutionAdapter -Plan $Plan -Adapter $Adapter) `
-        -StudyPath $StudyPath -OperationHint 'scenario config delete'
+    try {
+        return Invoke-ChaosStudyOperation -Kind 'config.delete' -Arguments @{ cliArgs = $cliArgs } `
+            -ExpectedSchema 'any.v1' -Adapter (Get-ChaosExecutionAdapter -Plan $Plan -Adapter $Adapter) `
+            -StudyPath $StudyPath -OperationHint 'scenario config delete'
+    } catch {
+        if (Test-ChaosNotFoundError -Text $_.Exception.Message) { return $null }
+        throw
+    }
 }
 
 # -- Validation and permissions --------------------------------------------
@@ -413,13 +418,14 @@ function Test-ChaosStudyScenarioRunAbsent {
 
     $run = $null
     try {
-        $run = Get-ChaosStudyScenarioRun -Plan $Plan -RunId $RunId -Adapter $Adapter -StudyPath $StudyPath
+        $run = Get-ChaosStudyScenarioRun -Plan $Plan -RunId $RunId -Adapter $Adapter -StudyPath $StudyPath -Strict
     } catch {
         if (Test-ChaosNotFoundError -Text $_.Exception.Message) { return $true }
         return $null
     }
-    # run.show tolerates failure and returns $null for both "gone" and "could
-    # not read", so $null cannot be claimed as absence.
+    # The strict read throws on failure and is caught above, so reaching here
+    # with $null means the service answered with nothing at all - still not
+    # something that can be claimed as absence.
     if ($null -eq $run) { return $null }
 
     $status = Get-ChaosScenarioRunStatus -Run $run
@@ -1065,96 +1071,21 @@ instead.
 # Either way, what executes is provably what was scoped and consented to, not a
 # configuration that quietly drifted between scope and run.
 
-function Get-ChaosRunLegField {
-    <#
-    .SYNOPSIS
-        Read the first present field from a leg-like object across aliases. A
-        run-side mirror of the scope resolver's field lookup, kept here so the
-        run skill needs nothing from the scope skill's library.
-    #>
-    param([AllowNull()][object]$Leg, [Parameter(Mandatory)][string[]]$Names)
-    if ($null -eq $Leg) { return $null }
-    foreach ($name in $Names) {
-        if ($Leg -is [System.Collections.IDictionary]) {
-            if ($Leg.Contains($name) -and $null -ne $Leg[$name]) { return $Leg[$name] }
-        } elseif ($Leg -is [pscustomobject]) {
-            if (($Leg.PSObject.Properties.Name -contains $name) -and $null -ne $Leg.$name) { return $Leg.$name }
-        }
-    }
-    return $null
-}
-
 function Get-ChaosRunEffectivePlanHash {
     <#
     .SYNOPSIS
-        Recompute the stable effective-plan hash from a validation result, in
-        the exact shape scope froze: total legs, executable count, and the sorted
-        selectors of the legs that will not run.
+        Recompute the effective-plan hash for a validation result.
 
     .DESCRIPTION
-        The hash is deliberately over the STABLE parts of the plan - counts and
-        leg selectors - not the platform's free-text skip reasons, which can
-        vary run to run for the same effective plan. Equality therefore means
-        "the same legs execute", which is what a run must guarantee, rather than
-        "the service worded its reasons identically".
-
-        This is the run-side MIRROR of the scope-side projection built by
-        Resolve-ChaosEffectiveLegs / Test-ChaosLegSkipped in Readiness.ps1. The
-        two must stay in lockstep: the skip signals inspected here (executable
-        flag, skip reason, skip status, and the `skipped` boolean) are exactly
-        those the scope side inspects. If the scope projection shape ever
-        changes, this mirror must change with it or Assert-ChaosEffectivePlanEquality
-        will diverge on a plan that actually matches.
-
-        KNOWN LIMITATION: unlike Get-ChaosExecutionPlanLegs on the scope side,
-        this normalizer only reads direct `legs`/`effectiveLegs` fields and does
-        not expand a steps->branches->actions->targets tree. If the platform ever
-        returns validation with only a steps tree, this hash would be over an
-        empty projection while the scope hash would not, tripping the equality
-        gate; the run mirror must gain the same expansion in lockstep should the
-        scope side ever rely on it.
+        This used to be a run-side MIRROR of the scope projection, and it
+        carried a documented limitation: it could not expand shapes the scope
+        side could, so a plan that actually matched could fail the equality
+        gate. There is no mirror any more. Scope and run both call
+        Get-ChaosEffectivePlanHash in chaos-study/scripts/lib/ExecutionPlan.ps1,
+        so the two hashes cannot drift by construction.
     #>
     param([AllowNull()][object]$Validation)
-
-    $roots = @()
-    if ($null -ne $Validation) {
-        $roots += $Validation
-        if (($Validation.PSObject.Properties.Name -contains 'properties') -and $null -ne $Validation.properties) {
-            $roots += $Validation.properties
-        }
-        if (($Validation.PSObject.Properties.Name -contains 'executionPlan') -and $null -ne $Validation.executionPlan) {
-            $roots += $Validation.executionPlan
-        }
-    }
-
-    $legs = @()
-    foreach ($root in $roots) {
-        $found = Get-ChaosRunLegField -Leg $root -Names @('legs', 'effectiveLegs')
-        if ($null -ne $found) { $legs = @($found); break }
-    }
-
-    $skippedSelectors = @()
-    $executable = 0
-    foreach ($leg in $legs) {
-        $selector = [string](Get-ChaosRunLegField -Leg $leg -Names @('legSelector', 'selector', 'targetSelector', 'resourceSelector', 'resourceId', 'id', 'key', 'name'))
-        $reason = Get-ChaosRunLegField -Leg $leg -Names @('reason', 'skipReason', 'skippedReason')
-        $status = [string](Get-ChaosRunLegField -Leg $leg -Names @('status', 'state'))
-        $executableFlag = Get-ChaosRunLegField -Leg $leg -Names @('executable', 'willExecute', 'included')
-        $skippedBool = Get-ChaosRunLegField -Leg $leg -Names @('skipped')
-        $skipStates = @('skipped', 'notapplicable', 'not-applicable', 'excluded', 'unsupported', 'notsupported', 'ineligible', 'filtered')
-        $isSkipped = ($executableFlag -is [bool] -and -not $executableFlag) -or
-            ($skippedBool -is [bool] -and $skippedBool) -or
-            (-not [string]::IsNullOrWhiteSpace([string]$reason)) -or
-            ((-not [string]::IsNullOrWhiteSpace($status)) -and ($skipStates -contains $status.Trim().ToLowerInvariant().Replace(' ', '')))
-        if ($isSkipped) { $skippedSelectors += $selector } else { $executable++ }
-    }
-
-    $projection = [ordered]@{
-        total      = @($legs).Count
-        executable = $executable
-        skipped    = @(@($skippedSelectors) | Sort-Object)
-    }
-    return Get-ChaosDigest -InputObject $projection
+    return Get-ChaosEffectivePlanHash -ExecutionPlan $Validation
 }
 
 function Assert-ChaosEffectivePlanEquality {
@@ -1366,16 +1297,25 @@ function Get-ChaosStudyScenarioRun {
     <#
     .SYNOPSIS
         Read the current state of a scenario run.
+
+    .PARAMETER Strict
+        Route through the non-swallowing read. Polling wants a transient read
+        failure to be survivable, so it uses the tolerant op; an absence probe
+        needs the error text, because "not found" and "the call failed" both
+        arrive as $null from the tolerant one and only the first proves the run
+        is gone.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][object]$Plan,
         [Parameter(Mandatory)][string]$RunId,
         [AllowNull()][AllowEmptyString()][string]$Adapter,
-        [AllowNull()][AllowEmptyString()][string]$StudyPath
+        [AllowNull()][AllowEmptyString()][string]$StudyPath,
+        [Parameter()][switch]$Strict
     )
 
-    return Invoke-ChaosStudyOperation -Kind 'run.show' -Arguments @{
+    $kind = if ($Strict) { 'run.showStrict' } else { 'run.show' }
+    return Invoke-ChaosStudyOperation -Kind $kind -Arguments @{
         runId         = $RunId
         resourceGroup = $Plan.workspace.resourceGroup
         workspaceName = $Plan.workspace.name
@@ -1390,8 +1330,17 @@ function Stop-ChaosStudyScenarioRun {
         Cancel a scenario run, tolerating one that already finished.
 
     .DESCRIPTION
-        Called from a finally block, so it must never throw: an exception here
-        would mask whatever caused the study to unwind in the first place.
+        `run.cancel` is deliberately strict, so a cancel the service rejected
+        raises instead of quietly returning nothing. Two rejections are benign
+        and are swallowed here: the run cannot be found, and the run has already
+        reached a terminal state. Both mean the thing this cancel exists to stop
+        is already stopped. Everything else is rethrown, and the caller records
+        it as failed residue with the error text attached - an abort that did not
+        take must never read as one that did.
+
+        This is called from a finally block but is not responsible for keeping
+        that block safe; `Invoke-ChaosResidueRemoval` wraps the removal in its
+        own catch and turns a raise into a recorded outcome.
     #>
     [CmdletBinding()]
     param(
@@ -1401,13 +1350,47 @@ function Stop-ChaosStudyScenarioRun {
         [AllowNull()][AllowEmptyString()][string]$StudyPath
     )
 
-    return Invoke-ChaosStudyOperation -Kind 'run.cancel' -Arguments @{
-        runId         = $RunId
-        resourceGroup = $Plan.workspace.resourceGroup
-        workspaceName = $Plan.workspace.name
-        scenarioName  = $Plan.scenario.name
-    } -ExpectedSchema 'any.v1' -Adapter (Get-ChaosExecutionAdapter -Plan $Plan -Adapter $Adapter) `
-        -StudyPath $StudyPath -OperationHint 'scenario run cancel'
+    try {
+        return Invoke-ChaosStudyOperation -Kind 'run.cancel' -Arguments @{
+            runId         = $RunId
+            resourceGroup = $Plan.workspace.resourceGroup
+            workspaceName = $Plan.workspace.name
+            scenarioName  = $Plan.scenario.name
+        } -ExpectedSchema 'any.v1' -Adapter (Get-ChaosExecutionAdapter -Plan $Plan -Adapter $Adapter) `
+            -StudyPath $StudyPath -OperationHint 'scenario run cancel'
+    } catch {
+        $text = [string]$_.Exception.Message
+        if (Test-ChaosNotFoundError -Text $text) { return $null }
+        if (Test-ChaosAlreadyTerminalError -Text $text) { return $null }
+        throw
+    }
+}
+
+function Test-ChaosAlreadyTerminalError {
+    <#
+    .SYNOPSIS
+        True when a cancel was refused because the run had already stopped.
+
+    .DESCRIPTION
+        Matches only phrasings that assert the run is no longer running. It is
+        deliberately narrow: treating an unrecognised refusal as "already
+        stopped" would be the same fabricated-absence bug this suite keeps
+        finding, so anything unmatched stays a real failure.
+    #>
+    param([AllowNull()][AllowEmptyString()][string]$Text)
+
+    if ([string]::IsNullOrWhiteSpace($Text)) { return $false }
+    $patterns = @(
+        'already\s+(completed|finished|cancell?ed|stopped|terminated)',
+        'is\s+not\s+(running|active|in\s+progress)',
+        'no\s+longer\s+running',
+        'in\s+a\s+terminal\s+state',
+        'cannot\s+be\s+cancell?ed'
+    )
+    foreach ($p in $patterns) {
+        if ($Text -match $p) { return $true }
+    }
+    return $false
 }
 
 function Get-ChaosScenarioRunStatus {

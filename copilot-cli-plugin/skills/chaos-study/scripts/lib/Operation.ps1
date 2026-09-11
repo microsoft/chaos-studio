@@ -114,6 +114,77 @@ function Test-ChaosOperationResultType {
     }
 }
 
+function ConvertTo-ChaosOperationEnvelope {
+    <#
+    .SYNOPSIS
+        Normalise an ARM-shaped result so schema checks see the fields the
+        service actually returned, wherever it chose to put them.
+
+    .DESCRIPTION
+        ARM returns most of a resource under 'properties', so `az chaos
+        ... validate` answers with properties.status while the schema table
+        declares a top-level 'status'. The result was real and well-formed; only
+        its shape differed, and the study refused it.
+
+        This lifts a schema field to the top level ONLY when it is genuinely
+        absent there and genuinely present under 'properties'. Nothing is
+        invented: a status that is missing from both places stays missing and
+        the schema check still fails. The original envelope is preserved intact
+        - 'properties' is copied across untouched - so provenance survives
+        normalisation and callers that read the nested shape keep working.
+
+        The lifted field names are recorded on 'envelopeNormalized' so a reader
+        can tell a lifted value from one the service put at the top level.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Schema,
+        [Parameter(Mandatory)][AllowNull()][object]$Result
+    )
+
+    if ($null -eq $Result) { return $Result }
+    if (-not ($Result -is [pscustomobject] -or $Result -is [System.Collections.IDictionary])) { return $Result }
+
+    $readField = {
+        param($obj, $name)
+        if ($null -eq $obj) { return @{ has = $false; value = $null } }
+        if ($obj -is [System.Collections.IDictionary]) {
+            if ($obj.Contains($name)) { return @{ has = $true; value = $obj[$name] } }
+            return @{ has = $false; value = $null }
+        }
+        if ($obj -is [pscustomobject] -and ($obj.PSObject.Properties.Name -contains $name)) {
+            return @{ has = $true; value = $obj.$name }
+        }
+        return @{ has = $false; value = $null }
+    }
+
+    $properties = (& $readField $Result 'properties').value
+    if ($null -eq $properties) { return $Result }
+    if (-not ($properties -is [pscustomobject] -or $properties -is [System.Collections.IDictionary])) { return $Result }
+
+    $definition = Get-ChaosOperationResultSchema -Schema $Schema
+    $lifted = [System.Collections.Generic.List[string]]::new()
+    $projected = [ordered]@{}
+
+    if ($Result -is [System.Collections.IDictionary]) {
+        foreach ($key in $Result.Keys) { $projected[[string]$key] = $Result[$key] }
+    } else {
+        foreach ($prop in $Result.PSObject.Properties) { $projected[$prop.Name] = $prop.Value }
+    }
+
+    foreach ($field in $definition) {
+        $top = & $readField $Result $field.name
+        if ($top.has -and $null -ne $top.value) { continue }
+        $nested = & $readField $properties $field.name
+        if (-not $nested.has -or $null -eq $nested.value) { continue }
+        $projected[$field.name] = $nested.value
+        $lifted.Add([string]$field.name) | Out-Null
+    }
+
+    if ($lifted.Count -eq 0) { return $Result }
+    $projected['envelopeNormalized'] = @($lifted)
+    return [pscustomobject]$projected
+}
+
 function Test-ChaosOperationResult {
     <#
     .SYNOPSIS
@@ -170,6 +241,42 @@ function Test-ChaosOperationResult {
 # -- Adapter availability (hard stop, no fallback) --------
 $ChaosStudyAdapters = @('local-az', 'external')
 
+function Assert-ChaosAdapterLibraryLoaded {
+    <#
+    .SYNOPSIS
+        Confirm the adapter library reached the CALLER'S scope. Throws a tagged
+        ChaosSuiteIncomplete error when it did not.
+
+    .DESCRIPTION
+        This exists because the failure it guards is invisible. Adapters.ps1 was
+        once dot-sourced inside the three functions below; a dot-source in a
+        function body loads into that function's scope, so the transport helpers
+        were defined just long enough for the readiness probe to approve them and
+        were gone by the time anything tried to call them. Readiness said "ready",
+        the next line said "undefined", and entry points that never loaded the
+        library themselves quietly used the external adapter instead - which
+        returns $null for a deferred operation and was read as "workspace not
+        found".
+
+        Operation.ps1 now loads the library at its own script scope, so this
+        should never fire. If it does, the package is genuinely missing files and
+        the right answer is to say so - not to load it here (the definitions
+        would be lost again on return) and not to fall back to another adapter.
+    #>
+    param([string]$Because = 'an Azure operation was requested')
+
+    $missing = @()
+    foreach ($required in @('Get-ChaosOperationRegistry', 'Test-ChaosLocalAzAdapterReady')) {
+        if (-not (Get-Command $required -ErrorAction SilentlyContinue)) { $missing += $required }
+    }
+    if ($missing.Count -eq 0) { return }
+
+    throw ("ChaosSuiteIncomplete: the adapter library is not loaded ($Because). " +
+        "Missing: $($missing -join ', '). Operation.ps1 loads lib/Adapters.ps1 at script scope; " +
+        "if it is absent the skill package is incomplete. Reinstall the skill directory rather than " +
+        "dot-sourcing scripts from a sibling plugin.")
+}
+
 function Assert-ChaosAdapterAvailable {
     <#
     .SYNOPSIS
@@ -195,9 +302,7 @@ function Assert-ChaosAdapterAvailable {
     }
 
     if ($Adapter -eq 'local-az') {
-        if (-not (Get-Command Test-ChaosLocalAzAdapterReady -ErrorAction SilentlyContinue)) {
-            . (Join-Path $PSScriptRoot 'Adapters.ps1')
-        }
+        Assert-ChaosAdapterLibraryLoaded -Because 'the local-az adapter was requested'
         $missing = @(Test-ChaosLocalAzAdapterReady)
         if ($missing.Count -gt 0) {
             $remediation = "Install the Azure CLI and sign in with az login, or select the 'external' adapter so a host can broker Azure access."
@@ -243,8 +348,12 @@ function Test-ChaosOperationSeamReady {
     # renders a failure card on its way to throwing, which is right for a hard
     # stop and wrong for a predicate, so the probe is repeated rather than
     # reused.
+    #
+    # If the probe itself is missing the suite is mis-packaged, and answering
+    # "not ready" would send the caller to the external adapter to hide an
+    # import bug. Say so instead.
     if (-not (Get-Command Test-ChaosLocalAzAdapterReady -ErrorAction SilentlyContinue)) {
-        . (Join-Path $PSScriptRoot 'Adapters.ps1')
+        throw "ChaosSuiteIncomplete: Test-ChaosLocalAzAdapterReady is undefined. Adapters.ps1 did not load with Operation.ps1; the skill package is incomplete."
     }
     return (@(Test-ChaosLocalAzAdapterReady).Count -eq 0)
 }
@@ -312,9 +421,7 @@ function Invoke-ChaosStudyOperation {
         [string]$OperationHint
     )
 
-    if (-not (Get-Command Get-ChaosOperationRegistry -ErrorAction SilentlyContinue)) {
-        . (Join-Path $PSScriptRoot 'Adapters.ps1')
-    }
+    Assert-ChaosAdapterLibraryLoaded -Because "operation '$Kind' must be dispatched"
 
     $registry = Get-ChaosOperationRegistry
     if (-not $registry.ContainsKey($Kind)) {
@@ -335,6 +442,9 @@ function Invoke-ChaosStudyOperation {
     switch ($selected) {
         'local-az' {
             $raw = Invoke-ChaosLocalAzOperation -Kind $Kind -Arguments $Arguments -Body $Body
+            # Normalise the ARM envelope BEFORE the schema check so a result that
+            # is real but nested under 'properties' is read, not rejected.
+            $raw = ConvertTo-ChaosOperationEnvelope -Schema $ExpectedSchema -Result $raw
             $check = Test-ChaosOperationResult -Schema $ExpectedSchema -Result $raw
             if (-not $check.ok) {
                 throw "Operation '$Kind' returned a result that does not satisfy schema '$ExpectedSchema': $($check.problems -join '; ')"
@@ -346,4 +456,27 @@ function Invoke-ChaosStudyOperation {
                     -ExpectedSchema $ExpectedSchema -StudyPath $StudyPath -OperationHint $OperationHint)
         }
     }
+}
+
+# ---------------------------------------------------------------------------
+# Adapter library: loaded HERE, at script scope, after every Operation function
+# is defined.
+#
+# It used to be dot-sourced inside Assert-ChaosAdapterAvailable,
+# Test-ChaosOperationSeamReady and Invoke-ChaosStudyOperation. A dot-source
+# inside a function body loads into THAT FUNCTION'S scope, so the transport
+# helpers existed only until the call returned. The probe therefore answered
+# "local-az is ready" from inside the function that had just loaded it, while
+# the caller's scope still had no Invoke-ChaosStudyAzChaos at all - readiness
+# said true and the very next call said undefined. Entry points that never
+# load Adapters.ps1 themselves (chaos-study-design) then fell back to the
+# external adapter silently and reported "workspace not found".
+#
+# Loading at script scope means a dot-source of Operation.ps1 - which every
+# entry point already does - brings the adapters with it, in the caller's
+# scope, BEFORE any adapter selection happens.
+#
+# Adapters.ps1 guards its own load of Operation.ps1, so this is not circular.
+if (-not (Get-Command Test-ChaosLocalAzAdapterReady -ErrorAction SilentlyContinue)) {
+    . (Join-Path $PSScriptRoot 'Adapters.ps1')
 }

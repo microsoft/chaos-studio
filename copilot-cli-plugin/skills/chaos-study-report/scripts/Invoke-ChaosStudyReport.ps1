@@ -96,7 +96,7 @@ if ($study.state -eq 'SEALED') {
     # directory, which is frequently a git repository we must not pollute.
     $fallback = if ($OutputPath) { $OutputPath } else { Join-Path (Split-Path -Parent $studyPath) "report-$($study.studyId).html" }
     Write-ChaosTextFile -Path $fallback -Content $html
-    Write-Card -Title 'Study already sealed' -Status 'info' -Body @"
+    Write-ChaosStudyPanel -Title 'Study already sealed' -Status 'info' -Body @"
 Study $($study.studyId) is sealed, so its stored artifacts were left untouched.
 A fresh render was written outside the study directory instead.
 "@ -Properties ([ordered]@{ 'Report' = $fallback; 'Predicate verdict' = $findings.predicateVerdict; 'Study verdict' = $findings.studyVerdict })
@@ -201,7 +201,7 @@ $conclusion
 Hypothesis stated before injection: $($plan.question.hypothesis)
 "@
 
-Write-Card -Title $findings.studyVerdict -Status $status -Body $cardBody -Properties ([ordered]@{
+Write-ChaosStudyPanel -Title $findings.studyVerdict -Status $status -Body $cardBody -Properties ([ordered]@{
     'Study'             = $study.studyId
     'Predicate verdict' = $findings.predicateVerdict
     'Study verdict'     = $findings.studyVerdict
@@ -213,7 +213,7 @@ Write-Card -Title $findings.studyVerdict -Status $status -Body $cardBody -Proper
 })
 
 if (@($findings.findings).Count -gt 0) {
-    Write-Table -Title 'Findings' -Data @(
+    Write-ChaosStudyTable -Title 'Findings' -Data @(
         foreach ($finding in $findings.findings) {
             [pscustomobject]@{
                 Severity   = $finding.severity

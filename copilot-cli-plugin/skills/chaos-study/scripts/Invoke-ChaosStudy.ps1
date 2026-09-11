@@ -254,7 +254,7 @@ function Stop-OnResumableOperation {
         [Parameter(Mandatory)][int]$ExitCode
     )
     if ($ExitCode -ne (Get-ChaosStudyExitCode -Name 'ResumableOperation')) { return }
-    Write-Card -Title "Study paused for a host operation: $Name" -Status 'warning' -Body @"
+    Write-ChaosStudyPanel -Title "Study paused for a host operation: $Name" -Status 'warning' -Body @"
 $Name needs an Azure call it cannot make in this process, so it stopped and wrote
 the request to the study directory instead of guessing.
 
@@ -612,7 +612,7 @@ if ($scopeExit -eq (Get-ChaosStudyExitCode -Name 'InsufficientExposure')) {
     # Not a failure. Scoping did the exposure arithmetic and concluded the run
     # would not exercise the vulnerable path often enough for a clean result to
     # mean anything. Running anyway would produce a false pass.
-    Write-Card -Title 'Study stopped: the run would not exercise the failure' -Status 'warning' -Body @"
+    Write-ChaosStudyPanel -Title 'Study stopped: the run would not exercise the failure' -Status 'warning' -Body @"
 The exposure model says the fault window is very unlikely to catch the code path
 you are testing, so a study that reported no impact would be measuring nothing.
 
@@ -633,7 +633,7 @@ if ($scopeExit -eq (Get-ChaosStudyExitCode -Name 'PartialScenarioUnaccepted')) {
     # Not a failure. Preflight validation revealed the service would run fewer
     # legs than the scenario declares, and the default is to fail closed rather
     # than let the scenario name imply coverage that will not happen.
-    Write-Card -Title 'Study stopped: the scenario would run fewer legs than it declares' -Status 'warning' -Body @"
+    Write-ChaosStudyPanel -Title 'Study stopped: the scenario would run fewer legs than it declares' -Status 'warning' -Body @"
 Preflight validation returned an execution plan in which some legs would be
 skipped. A partial scenario still produces a report, and that report would carry
 the scenario's full name while testing less than it claims.
@@ -666,7 +666,7 @@ if (-not $latest) {
 $studyId = $latest.studyId
 
 if ($PlanOnly) {
-    Write-Card -Title 'Plan frozen' -Status 'success' -Body @"
+    Write-ChaosStudyPanel -Title 'Plan frozen' -Status 'success' -Body @"
 Study $studyId is planned and frozen. Nothing has been executed.
 
 Review the plan, then run it when you are ready:
@@ -698,7 +698,7 @@ if ($runExit -eq (Get-ChaosStudyExitCode -Name 'PermissionApprovalRequired')) {
     # Not a failure. The run stopped deliberately because the workspace identity
     # needs role assignments this study has not been authorised to create.
     # Nothing was granted and nothing was injected; the preview is on disk.
-    Write-Card -Title 'Study paused for permission approval' -Status 'warning' -Body @"
+    Write-ChaosStudyPanel -Title 'Study paused for permission approval' -Status 'warning' -Body @"
 The scenario configuration could not validate because the workspace identity is
 missing access, and granting it is a separate decision from approving the fault.
 
@@ -719,7 +719,7 @@ Stop-OnPhaseFailure -Name 'chaos-study-run' -ExitCode $runExit -Guidance @"
 "@
 
 if ($DryRun) {
-    Write-Card -Title 'Dry run complete' -Status 'success' -Body @"
+    Write-ChaosStudyPanel -Title 'Dry run complete' -Status 'success' -Body @"
 Study $studyId was previewed end to end. Nothing was executed, so there is no
 evidence to interpret and no report to write.
 

@@ -110,7 +110,15 @@ $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot '..' '..' 'chaos-study' 'scripts' 'lib' 'Common.ps1')
 . (Join-Path $PSScriptRoot '..' '..' 'chaos-study' 'scripts' 'lib' 'Study.ps1')
+# Operation.ps1 carries lib/Adapters.ps1 (and the Azure transport under it) at
+# its own script scope, so the helpers land HERE, before anything selects an
+# adapter. They were previously dot-sourced inside Invoke-ChaosDesignDiscovery's
+# try block, which loaded them into that function's scope only: readiness
+# answered "local-az ready" and the caller's scope had no transport at all.
 . (Join-Path $PSScriptRoot '..' '..' 'chaos-study' 'scripts' 'lib' 'Operation.ps1')
+. (Join-Path $PSScriptRoot '..' '..' 'chaos-study' 'scripts' 'lib' 'ApiVersions.ps1')
+. (Join-Path $PSScriptRoot '..' '..' 'chaos-study-scope' 'scripts' 'lib' 'Workspace.ps1')
+. (Join-Path $PSScriptRoot '..' '..' 'chaos-study-scope' 'scripts' 'lib' 'ActionDiscovery.ps1')
 . (Join-Path $PSScriptRoot 'lib' 'Brief.ps1')
 . (Join-Path $PSScriptRoot 'lib' 'Inspect.ps1')
 . (Join-Path $PSScriptRoot 'lib' 'Interview.ps1')
@@ -187,10 +195,6 @@ function Invoke-ChaosDesignDiscovery {
     }
 
     try {
-        . (Join-Path $PSScriptRoot '..' '..' 'chaos-study' 'scripts' 'lib' 'ApiVersions.ps1')
-        . (Join-Path $PSScriptRoot '..' '..' 'chaos-study-scope' 'scripts' 'lib' 'Workspace.ps1')
-        . (Join-Path $PSScriptRoot '..' '..' 'chaos-study-scope' 'scripts' 'lib' 'ActionDiscovery.ps1')
-
         $workspace = Get-ChaosStudyWorkspace -SubscriptionId $SubscriptionId -ResourceGroup $ResourceGroup -WorkspaceName $WorkspaceName -Adapter $Adapter -StudyPath $Root
         if ($null -eq $workspace) { throw "Workspace '$WorkspaceName' was not found in resource group '$ResourceGroup'." }
 
@@ -214,6 +218,12 @@ function Invoke-ChaosDesignDiscovery {
         }
         return [pscustomobject]@{ actions = $actions; scenarios = $scenarios; region = $region; reason = $null }
     } catch {
+        # A packaging or transport failure is not a discovery result. Letting it
+        # become "live discovery failed: ..." turns a broken install into an
+        # apparent statement about the platform, and the study then proceeds on
+        # provisional candidates as though Azure had answered. Rethrow those so
+        # the caller stops; only genuine service-side answers degrade to a reason.
+        if ($_.Exception.Message -match '^(ChaosSuiteIncomplete|AdapterUnavailable):') { throw }
         return [pscustomobject]@{ actions = $null; scenarios = $null; region = $null; reason = "Live action discovery failed: $($_.Exception.Message)" }
     }
 }

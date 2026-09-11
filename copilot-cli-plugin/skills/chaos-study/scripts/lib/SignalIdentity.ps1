@@ -206,6 +206,7 @@ function Get-ChaosSignalSourceIdentity {
             raw          = $raw
             kind         = 'logs'
             id           = "logs:$workspaceId"
+            resourceId   = $null
             workspaceId  = $workspaceId
             query        = $query
             names        = @($projected.names)
@@ -216,14 +217,35 @@ function Get-ChaosSignalSourceIdentity {
 
     if ($trimmed.StartsWith('metrics:', [System.StringComparison]::OrdinalIgnoreCase)) {
         $name = $trimmed.Substring('metrics:'.Length).Trim()
+
+        # A metric source may be resource-scoped: `metrics:<resourceId>#<MetricName>`.
+        # The resource id is the *scope*, not the signal name - the name is the
+        # metric. Treating the whole remainder as the name made every
+        # resource-scoped probe untraceable, because nobody writes (or collects)
+        # a signal called '/subscriptions/../r#Availability'. Both the metric
+        # name and the fully qualified form are accepted so artifacts written
+        # either way keep matching.
+        $metricName = $name
+        $resourceId = $null
+        $hash = $name.LastIndexOf('#')
+        if ($hash -gt 0 -and $hash -lt ($name.Length - 1)) {
+            $resourceId = $name.Substring(0, $hash).Trim()
+            $metricName = $name.Substring($hash + 1).Trim()
+        }
+
+        $names = @($metricName, $name) |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            Select-Object -Unique
+
         return [pscustomobject]@{
             raw          = $raw
             kind         = 'metrics'
             id           = "metrics:$name"
+            resourceId   = $resourceId
             workspaceId  = $null
             query        = $null
-            names        = @($name | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-            resolved     = -not [string]::IsNullOrWhiteSpace($name)
+            names        = @($names)
+            resolved     = -not [string]::IsNullOrWhiteSpace($metricName)
             unnamedTerms = @()
         }
     }
@@ -233,6 +255,7 @@ function Get-ChaosSignalSourceIdentity {
         raw          = $raw
         kind         = 'unknown'
         id           = $trimmed
+        resourceId   = $null
         workspaceId  = $null
         query        = $null
         names        = @($trimmed | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
@@ -281,6 +304,16 @@ function Test-ChaosSourceProducesSignal {
     foreach ($name in @($identity.names)) {
         if (Test-ChaosSignalNameMatch -Candidate $name -SignalName $SignalName) {
             return [pscustomobject]@{ matched = $true; reason = "'$Spec' projects '$name'."; identity = $identity }
+        }
+    }
+
+    # A probe may name the source spec verbatim rather than the signal it
+    # projects. That is unambiguous - it can only ever match the one source it
+    # is character-for-character equal to - and refusing it produced the
+    # self-contradicting "'X' is not among the configured sources (X)".
+    foreach ($alias in @($identity.raw, $identity.id)) {
+        if (-not [string]::IsNullOrWhiteSpace($alias) -and $alias -ieq $SignalName) {
+            return [pscustomobject]@{ matched = $true; reason = "'$SignalName' names this source itself."; identity = $identity }
         }
     }
 

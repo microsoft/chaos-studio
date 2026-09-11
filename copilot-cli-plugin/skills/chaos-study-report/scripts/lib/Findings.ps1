@@ -463,13 +463,15 @@ function Test-ChaosMechanismProbe {
 
     # Only the probe's OWN signal is considered. This is what stops an unrelated
     # signal's movement from ever being read as proof of the mechanism.
+    #
+    # When the probe names a signal, the match is made against what was actually
+    # measured - a log result stores its projected columns in `values` while its
+    # `source` stays `logs:<workspaceId>`, so comparing the name to the source id
+    # discarded evidence the study had already collected.
     $matchesProbe = {
         param($sig)
         if ($null -eq $sig) { return $false }
         $source = [string]$sig.source
-        if (-not [string]::IsNullOrWhiteSpace($signalName)) {
-            return ($source -eq $signalName -or $source -eq "metrics:$signalName" -or $source -like "*:$signalName" -or $source -like "*:$signalName#*")
-        }
         # A query-based probe binds to a logs source. When the probe names a
         # workspace, bind only to that workspace so a plan with several log
         # sources cannot prove the mechanism from the wrong one; otherwise any
@@ -480,8 +482,14 @@ function Test-ChaosMechanismProbe {
         return ($source -like 'logs:*')
     }
 
-    $duringMatch = @(@($During) | Where-Object { $null -ne $_ -and (& $matchesProbe $_) }) | Select-Object -First 1
-    $beforeMatch = @(@($Before) | Where-Object { $null -ne $_ -and (& $matchesProbe $_) }) | Select-Object -First 1
+    if (-not [string]::IsNullOrWhiteSpace($signalName)) {
+        $duringMatch = Select-ChaosSignalByName -Signals @($During) -SignalName $signalName
+        $beforeMatch = Select-ChaosSignalByName -Signals @($Before) -SignalName $signalName
+    }
+    else {
+        $duringMatch = @(@($During) | Where-Object { $null -ne $_ -and (& $matchesProbe $_) }) | Select-Object -First 1
+        $beforeMatch = @(@($Before) | Where-Object { $null -ne $_ -and (& $matchesProbe $_) }) | Select-Object -First 1
+    }
 
     # For 'disappears' the probe's absence during the action window IS the
     # predicted movement, so during-absence must reach the switch rather than

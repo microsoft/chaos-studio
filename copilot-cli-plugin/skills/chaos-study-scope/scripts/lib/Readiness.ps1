@@ -35,6 +35,7 @@ Set-StrictMode -Version Latest
 
 . (Join-Path $PSScriptRoot '..' '..' '..' 'chaos-study' 'scripts' 'lib' 'Common.ps1')
 . (Join-Path $PSScriptRoot '..' '..' '..' 'chaos-study' 'scripts' 'lib' 'SignalIdentity.ps1')
+. (Join-Path $PSScriptRoot '..' '..' '..' 'chaos-study' 'scripts' 'lib' 'ExecutionPlan.ps1')
 . (Join-Path $PSScriptRoot 'ActionDiscovery.ps1')
 
 function New-ChaosReadinessGate {
@@ -477,12 +478,28 @@ function Test-ChaosMechanismTraceable {
         elseif (-not [string]::IsNullOrWhiteSpace($signal)) {
             # The probe's own signal has to be one the study actually collects,
             # otherwise the proof step would have no series to read.
-            $matched = @($AvailableSources | Where-Object {
-                    $_ -eq $signal -or $_ -like "*:$signal" -or $_ -like "*:$signal#*"
-                })
+            #
+            # This uses the same canonical identity helper as the steady-state
+            # objective. A source spec is not a signal name: for
+            # `logs:<workspaceId>#<kql>` the signal is a column the query
+            # projects, never the workspace id, so comparing the two directly
+            # refused every valid log-backed probe.
+            $matched = @()
+            $undecidable = @()
+            foreach ($source in @($AvailableSources)) {
+                $test = Test-ChaosSourceProducesSignal -Spec $source -SignalName $signal
+                if ($test.matched -eq $true) { $matched += $source }
+                elseif ($null -eq $test.matched) { $undecidable += $test.reason }
+            }
+
             if ($matched.Count -eq 0) {
                 $sourceList = if (@($AvailableSources).Count -gt 0) { $AvailableSources -join ', ' } else { 'none' }
-                $problems += "the mechanismProbe signal '$signal' is not among the configured signal sources ($sourceList), so it is untraceable"
+                if ($undecidable.Count -gt 0) {
+                    $problems += "the mechanismProbe signal '$signal' cannot be shown to come from any configured source ($($undecidable -join ' ')); give the query's output column an explicit alias, for example ``| summarize $signal = ...``"
+                }
+                else {
+                    $problems += "the mechanismProbe signal '$signal' is not among the configured signal sources ($sourceList), so it is untraceable"
+                }
             }
         }
         elseif (-not [string]::IsNullOrWhiteSpace($query)) {
@@ -663,201 +680,30 @@ function Assert-ChaosReadiness {
 # into a declared-vs-effective leg model that later gates and the plan freeze
 # can reason about, never inventing a leg the platform did not report.
 
-function Get-ChaosLegField {
-    <#
-    .SYNOPSIS
-        Read the first present field from a leg-like object, trying several
-        aliases the service and offline harness may use for the same concept.
-    #>
-    param(
-        [AllowNull()][object]$Leg,
-        [Parameter(Mandatory)][string[]]$Names
-    )
-    if ($null -eq $Leg) { return $null }
-    foreach ($name in $Names) {
-        if ($Leg -is [System.Collections.IDictionary]) {
-            if ($Leg.Contains($name) -and $null -ne $Leg[$name]) { return $Leg[$name] }
-        } elseif ($Leg -is [pscustomobject]) {
-            if (($Leg.PSObject.Properties.Name -contains $name) -and $null -ne $Leg.$name) { return $Leg.$name }
-        }
-    }
-    return $null
-}
-
-function Get-ChaosExecutionPlanLegs {
-    <#
-    .SYNOPSIS
-        Find the flat list of legs in an execution plan, wherever it is nested.
-
-    .DESCRIPTION
-        The preflight validation result can carry its execution plan directly
-        (`legs`), one level down (`executionPlan.legs`), or under an ARM-style
-        `properties`. When only a step/branch/action tree is present, each
-        (action x target) pair is expanded into a leg, because that pair is what
-        actually executes. An absent plan yields an empty list, not a guess.
-    #>
-    param([AllowNull()][object]$ExecutionPlan)
-
-    if ($null -eq $ExecutionPlan) { return @() }
-
-    $roots = @($ExecutionPlan)
-    if (($ExecutionPlan.PSObject.Properties.Name -contains 'properties') -and $null -ne $ExecutionPlan.properties) {
-        $roots += $ExecutionPlan.properties
-    }
-    if (($ExecutionPlan.PSObject.Properties.Name -contains 'executionPlan') -and $null -ne $ExecutionPlan.executionPlan) {
-        $roots += $ExecutionPlan.executionPlan
-        if (($ExecutionPlan.executionPlan.PSObject.Properties.Name -contains 'properties') -and $null -ne $ExecutionPlan.executionPlan.properties) {
-            $roots += $ExecutionPlan.executionPlan.properties
-        }
-    }
-
-    foreach ($root in $roots) {
-        $legs = Get-ChaosLegField -Leg $root -Names @('legs', 'effectiveLegs')
-        if ($null -ne $legs) { return @($legs) }
-    }
-
-    # Fall back to expanding a steps/branches/actions tree into per-target legs.
-    foreach ($root in $roots) {
-        $steps = Get-ChaosLegField -Leg $root -Names @('steps')
-        if ($null -eq $steps) { continue }
-        $expanded = @()
-        # Null entries are dropped at every level on purpose. @($null) is a
-        # one-element array, so iterating an absent branches/actions list would
-        # manufacture a phantom leg with no action and no skip signal - and the
-        # default is "executes", so that phantom would count as executable. A
-        # plan shaped in a way this code cannot read must yield zero legs and be
-        # refused as unverifiable, never silently read as "everything runs".
-        foreach ($step in @($steps | Where-Object { $null -ne $_ })) {
-            $branches = Get-ChaosLegField -Leg $step -Names @('branches')
-            foreach ($branch in @($branches | Where-Object { $null -ne $_ })) {
-                $actions = Get-ChaosLegField -Leg $branch -Names @('actions')
-                foreach ($action in @($actions | Where-Object { $null -ne $_ })) {
-                    $actionName = Get-ChaosLegField -Leg $action -Names @('name', 'actionName', 'type', 'actionId')
-                    $targets = Get-ChaosLegField -Leg $action -Names @('targets', 'selectors', 'resources')
-                    if ($null -eq $targets) {
-                        $expanded += [ordered]@{ action = $actionName; target = $null; reason = (Get-ChaosLegField -Leg $action -Names @('reason', 'skipReason')); status = (Get-ChaosLegField -Leg $action -Names @('status', 'state')) }
-                        continue
-                    }
-                    foreach ($target in @($targets | Where-Object { $null -ne $_ })) {
-                        $expanded += [ordered]@{
-                            action   = $actionName
-                            target   = $target
-                            reason   = Get-ChaosLegField -Leg $target -Names @('reason', 'skipReason')
-                            status   = Get-ChaosLegField -Leg $target -Names @('status', 'state')
-                        }
-                    }
-                }
-            }
-        }
-        if ($expanded.Count -gt 0) { return @($expanded) }
-    }
-
-    return @()
-}
-
-function Test-ChaosLegSkipped {
-    <#
-    .SYNOPSIS
-        Decide whether a single leg will be skipped rather than executed.
-
-    .DESCRIPTION
-        A leg is skipped when the platform gave a reason, marked a non-runnable
-        status, or set executable to false. Absence of any skip signal means the
-        leg runs - the default is "executes", so an ambiguous plan never
-        silently drops a leg from the count without evidence.
-    #>
-    param([AllowNull()][object]$Leg)
-
-    $executable = Get-ChaosLegField -Leg $Leg -Names @('executable', 'willExecute', 'included')
-    if ($executable -is [bool] -and -not $executable) { return $true }
-
-    $reason = Get-ChaosLegField -Leg $Leg -Names @('reason', 'skipReason', 'skippedReason')
-    if (-not [string]::IsNullOrWhiteSpace([string]$reason)) { return $true }
-
-    $status = [string](Get-ChaosLegField -Leg $Leg -Names @('status', 'state'))
-    if (-not [string]::IsNullOrWhiteSpace($status)) {
-        $skipStates = @('skipped', 'notapplicable', 'not-applicable', 'excluded', 'unsupported', 'notsupported', 'ineligible', 'filtered')
-        if ($skipStates -contains $status.Trim().ToLowerInvariant().Replace(' ', '')) { return $true }
-    }
-
-    $skippedFlag = Get-ChaosLegField -Leg $Leg -Names @('skipped')
-    if ($skippedFlag -is [bool] -and $skippedFlag) { return $true }
-
-    return $false
-}
-
-function Get-ChaosLegSelectorText {
-    <#
-    .SYNOPSIS
-        A stable string for a leg's target selector, for names and honesty
-        checks. Prefers an explicit selector, then a resource id, then the raw
-        target rendered canonically.
-    #>
-    param([AllowNull()][object]$Leg)
-
-    $selector = Get-ChaosLegField -Leg $Leg -Names @('legSelector', 'selector', 'targetSelector', 'key', 'name')
-    if (-not [string]::IsNullOrWhiteSpace([string]$selector)) { return [string]$selector }
-
-    $target = Get-ChaosLegField -Leg $Leg -Names @('target', 'resource')
-    if ($null -ne $target -and $target -isnot [string]) {
-        $nested = Get-ChaosLegField -Leg $target -Names @('legSelector', 'selector', 'targetSelector', 'key', 'name')
-        if (-not [string]::IsNullOrWhiteSpace([string]$nested)) { return [string]$nested }
-    }
-
-    $resource = Get-ChaosLegField -Leg $Leg -Names @('resourceSelector', 'resourceId', 'id')
-    if ([string]::IsNullOrWhiteSpace([string]$resource) -and $null -ne $target -and $target -isnot [string]) {
-        $resource = Get-ChaosLegField -Leg $target -Names @('resourceSelector', 'resourceId', 'id')
-    }
-    if (-not [string]::IsNullOrWhiteSpace([string]$resource)) { return [string]$resource }
-    if ($null -ne $target -and $target -is [string]) { return [string]$target }
-    return ''
-}
+# The execution-plan readers used to live here, and the run side kept its own
+# near-copy. They drifted. Both now use the one model in
+# chaos-study/scripts/lib/ExecutionPlan.ps1; these two names are kept because
+# they are the vocabulary the readiness gates and the scope script already
+# speak.
 
 function Resolve-ChaosEffectiveLegs {
     <#
     .SYNOPSIS
         Turn a preflight execution plan into the declared-vs-effective leg model
-        `{ total, executable, skipped[]{legSelector, action, resourceSelector, reason} }`.
-
-    .DESCRIPTION
-        `total` is every leg the plan describes; `executable` is the count that
-        will actually run; `skipped` names each leg that will not, with the
-        platform's own reason. The extra `executableSelectors` list is not
-        persisted but lets the scenario-name honesty guard check what really
-        runs. When no plan is available the model is total 0 / executable 0,
-        which the effective-legs gate reads as an unexecutable scope.
+        shared with the run side.
     #>
     param([AllowNull()][object]$ExecutionPlan)
+    return Resolve-ChaosEffectiveLeg -ExecutionPlan $ExecutionPlan
+}
 
-    $legs = @(Get-ChaosExecutionPlanLegs -ExecutionPlan $ExecutionPlan)
-    $skipped = @()
-    $executableSelectors = @()
-
-    foreach ($leg in $legs) {
-        $selector = Get-ChaosLegSelectorText -Leg $leg
-        $action = [string](Get-ChaosLegField -Leg $leg -Names @('action', 'actionName', 'actionId', 'type'))
-        if (Test-ChaosLegSkipped -Leg $leg) {
-            $reason = [string](Get-ChaosLegField -Leg $leg -Names @('reason', 'skipReason', 'skippedReason', 'status', 'state'))
-            $skipped += [pscustomobject]@{
-                legSelector      = $selector
-                action           = if ([string]::IsNullOrWhiteSpace($action)) { $null } else { $action }
-                resourceSelector = $selector
-                reason           = if ([string]::IsNullOrWhiteSpace($reason)) { 'no reason reported' } else { $reason }
-            }
-        } else {
-            $executableSelectors += $selector
-        }
-    }
-
-    $total = @($legs).Count
-    $executableCount = $total - @($skipped).Count
-
-    return [pscustomobject]@{
-        total               = $total
-        executable          = $executableCount
-        skipped             = @($skipped)
-        executableSelectors = @($executableSelectors)
-    }
+function Get-ChaosExecutionPlanLegs {
+    <#
+    .SYNOPSIS
+        The flat leg list for an execution plan. Errors encountered while
+        reading it are reported by Resolve-ChaosEffectiveLegs, not hidden here.
+    #>
+    param([AllowNull()][object]$ExecutionPlan)
+    return @((Get-ChaosExecutionPlanLeg -ExecutionPlan $ExecutionPlan).legs)
 }
 
 function Get-ChaosPartialScenarioPhrase {
@@ -936,6 +782,58 @@ function Get-ChaosEffectiveLegsDecision {
     return [pscustomobject]@{ kind = 'all'; accepted = $true; expectedPhrase = $null; limitationCodes = @() }
 }
 
+function Get-ChaosPartialAttribution {
+    <#
+    .SYNOPSIS
+        Explain WHY the scenario is partial: the operator's own exclusions, or
+        something the platform decided on its own.
+
+    .DESCRIPTION
+        Defect #11. "1 of 2 legs will run" reads like a malfunction when in fact
+        the operator asked for exactly that by excluding a resource. Conversely,
+        a leg the platform dropped for its own reasons is a genuine surprise and
+        must not be laundered into "you asked for this". So each skipped leg is
+        attributed to a declared exclusion when its selector or reason names one,
+        and left as unattributed otherwise. Attribution is evidence, not excuse:
+        the acceptance phrase is still required either way.
+    #>
+    param(
+        [AllowNull()][AllowEmptyCollection()][object[]]$Skipped,
+        [AllowNull()][AllowEmptyCollection()][string[]]$DeclaredExclusions
+    )
+
+    $declared = @(@($DeclaredExclusions) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $requested = @()
+    $other = @()
+
+    foreach ($leg in @($Skipped)) {
+        $sel = [string]$leg.legSelector
+        $reason = [string]$leg.reason
+        $matched = $false
+        foreach ($ex in $declared) {
+            # Either side may be the qualified form, so compare both ways.
+            if ((-not [string]::IsNullOrWhiteSpace($sel)) -and
+                ($sel.IndexOf($ex, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+                 $ex.IndexOf($sel, [System.StringComparison]::OrdinalIgnoreCase) -ge 0)) { $matched = $true; break }
+            if ((-not [string]::IsNullOrWhiteSpace($reason)) -and
+                $reason.IndexOf($ex, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { $matched = $true; break }
+        }
+        # The platform's own word for it. Only trusted when the operator
+        # actually declared exclusions, so a service-side "excluded" for an
+        # unrelated reason is never credited to the operator.
+        if ((-not $matched) -and $declared.Count -gt 0 -and (-not [string]::IsNullOrWhiteSpace($reason)) -and
+            $reason -match '(?i)exclud') { $matched = $true }
+
+        if ($matched) { $requested += $leg } else { $other += $leg }
+    }
+
+    return [pscustomobject]@{
+        requested   = @($requested)
+        other       = @($other)
+        allRequested = (@($other).Count -eq 0 -and @($requested).Count -gt 0)
+    }
+}
+
 function Assert-ChaosEffectiveLegs {
     <#
     .SYNOPSIS
@@ -953,7 +851,8 @@ function Assert-ChaosEffectiveLegs {
         [Parameter(Mandatory)][object]$EffectiveLegs,
         [Parameter(Mandatory)][string]$ScopeHash,
         [Parameter(Mandatory)][string]$ScenarioName,
-        [AllowNull()][AllowEmptyString()][string]$AcceptPartialScenario = $null
+        [AllowNull()][AllowEmptyString()][string]$AcceptPartialScenario = $null,
+        [AllowNull()][AllowEmptyCollection()][string[]]$DeclaredExclusions = @()
     )
 
     $binding = Get-ChaosEffectiveLegsBindingHash -ScopeHash $ScopeHash -ScenarioName $ScenarioName -EffectiveLegs $EffectiveLegs
@@ -966,6 +865,7 @@ $($EffectiveLegs.total) leg(s). A scenario that executes nothing succeeds withou
 touching anything, which would read as resilience that was never tested.
 
 $(Format-ChaosSkippedLegs -Skipped $EffectiveLegs.skipped)
+$(Format-ChaosPlanReadability -EffectiveLegs $EffectiveLegs)
 "@ -Remediation 'Re-run chaos-study-scope with a wider scope, fewer exclusions, or an action that applies to the resources in scope.'
         exit (Get-ChaosStudyExitCode -Name 'ScopeUnverified')
     }
@@ -976,16 +876,24 @@ $(Format-ChaosSkippedLegs -Skipped $EffectiveLegs.skipped)
         } else {
             'The -AcceptPartialScenario phrase did not match these exact legs (comparison is case-sensitive).'
         }
+        $attr = Get-ChaosPartialAttribution -Skipped $EffectiveLegs.skipped -DeclaredExclusions $DeclaredExclusions
+        $why = if ($attr.allRequested) {
+            "This is partial because YOU excluded $(@($attr.requested).Count) leg(s) - it is not a platform`nmalfunction. Confirming below records that the scenario ran reduced ON PURPOSE."
+        } elseif (@($attr.requested).Count -gt 0) {
+            "$(@($attr.requested).Count) leg(s) were dropped by your own exclusions; $(@($attr.other).Count) were skipped for`nreasons the platform decided. Read the second group carefully before accepting."
+        } else {
+            "None of these were dropped by your exclusions - the platform skipped them on its`nown. Confirm you understand why before accepting a reduced scenario."
+        }
         Write-ChaosStudyFailure -Title "Partial scenario - $($EffectiveLegs.executable) of $($EffectiveLegs.total) legs will run" -Message @"
 $reason
 
-The preflight execution plan runs only $($EffectiveLegs.executable) of
-$($EffectiveLegs.total) declared leg(s). The scenario named here would not be
-fully exercised, so the study is stopped rather than reporting a conclusion that
-overstates what ran.
+$why
+
+Legs that WILL run: $($EffectiveLegs.executable) of $($EffectiveLegs.total).
 
 Legs that will NOT run:
 $(Format-ChaosSkippedLegs -Skipped $EffectiveLegs.skipped)
+$(Format-ChaosPlanReadability -EffectiveLegs $EffectiveLegs)
 
 To proceed with the partial scenario anyway (this is recorded as limitation L11),
 pass this phrase exactly:
@@ -996,6 +904,42 @@ pass this phrase exactly:
     }
 
     return $decision
+}
+
+function Format-ChaosPlanReadability {
+    <#
+    .SYNOPSIS
+        Surface plan-read errors and undetermined legs so an UNREADABLE plan is
+        never mistaken for an EMPTY one.
+
+    .DESCRIPTION
+        "0 legs" and "0 legs we could read" look identical to an operator but
+        mean opposite things: one is a scope that safely excluded everything,
+        the other is a plan the suite failed to parse. Whenever the reader
+        recorded an error, or left a leg undetermined, say so here.
+    #>
+    param([Parameter(Mandatory)][object]$EffectiveLegs)
+
+    $lines = @()
+    $undet = @()
+    if ($EffectiveLegs.PSObject.Properties.Name -contains 'undetermined') { $undet = @($EffectiveLegs.undetermined) }
+    if ($undet.Count -gt 0) {
+        $lines += ''
+        $lines += "$($undet.Count) leg(s) carried NO readable run/skip flag and are counted as neither. They"
+        $lines += 'are excluded from the executable count because assuming either way would'
+        $lines += 'misstate the blast radius:'
+        $lines += (Format-ChaosSkippedLegs -Skipped $undet)
+    }
+    $errs = @()
+    if ($EffectiveLegs.PSObject.Properties.Name -contains 'errors') { $errs = @($EffectiveLegs.errors) }
+    if ($errs.Count -gt 0) {
+        $lines += ''
+        $lines += 'The execution plan could not be fully read. This is NOT the same as an empty'
+        $lines += 'plan - treat the leg counts above as incomplete:'
+        $lines += (@($errs) | ForEach-Object { "  - $_" })
+    }
+    if ($lines.Count -eq 0) { return '' }
+    return ($lines -join "`n")
 }
 
 function Format-ChaosSkippedLegs {

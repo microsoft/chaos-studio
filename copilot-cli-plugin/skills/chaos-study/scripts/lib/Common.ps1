@@ -25,6 +25,9 @@
          can be hashed, sealed and byte-compared.
       3. Crash-safe writes - temp file plus rename, never a partial artifact.
       4. Redaction, HTML escaping, and the study exit-code contract.
+      5. Presentation fallbacks, via lib/Render.ps1, so that a script run
+         outside the Copilot CLI still renders its output instead of dying on a
+         missing Write-Card.
 
     Nothing here calls Azure. Nothing here has a clock dependency other than
     Get-ChaosUtcNow, which is the single place time enters the suite.
@@ -63,6 +66,15 @@ foreach ($sharedName in @('Ensure-AzLogin.ps1')) {
         }
     }
 }
+
+# -- Presentation fallbacks -------------------------------------------------
+# Loaded AFTER the optional plugin scripts above, because those transitively
+# bring in the plugin's own renderer when the suite sits inside the full
+# plugin. Render.ps1 defines only what is still missing, so whichever real
+# renderer is present - the CLI host's or the plugin's - always wins, and the
+# fallback exists purely for the published `skills/`-only packages and for a
+# bare pwsh, where neither is there at all.
+. (Join-Path $PSScriptRoot 'Render.ps1')
 
 function Get-ChaosSharedScriptStatus {
     <#
@@ -126,6 +138,23 @@ function Write-ChaosStudyNote {
     [Console]::Error.WriteLine("$prefix $Message")
 }
 
+function Test-ChaosRendererIsFallback {
+    <#
+    .SYNOPSIS
+        True when Write-Card is this suite's own stand-in rather than a host's.
+
+    .DESCRIPTION
+        Under Set-StrictMode an unset variable throws, and a global set by
+        another component is not guaranteed to exist, so the check is made
+        defensively here once instead of at each call site.
+    #>
+    try {
+        $flag = Get-Variable -Name 'ChaosStudyRendererIsFallback' -Scope Global -ErrorAction SilentlyContinue
+        return ($null -ne $flag -and [bool]$flag.Value)
+    }
+    catch { return $false }
+}
+
 function Write-ChaosStudyCard {
     <#
     .SYNOPSIS
@@ -141,7 +170,8 @@ function Write-ChaosStudyCard {
         [Parameter(Mandatory)][string]$Title,
         [Parameter(Mandatory)][AllowEmptyString()][string]$Body
     )
-    if (Get-Command Write-Card -ErrorAction SilentlyContinue) {
+    if ((Get-Command Write-Card -ErrorAction SilentlyContinue) -and
+        -not (Test-ChaosRendererIsFallback)) {
         Write-Card -Title $Title -Body $Body
     } else {
         Write-Output "## $Title"
@@ -483,7 +513,10 @@ function ConvertTo-ChaosCanonicalJson {
     #>
     param([AllowNull()][object]$InputObject)
     $canonical = ConvertTo-ChaosCanonical -InputObject $InputObject
-    return ($canonical | ConvertTo-Json -Depth 32 -Compress)
+    # -InputObject rather than the pipeline. A canonical form that is a
+    # one-element list must hash as a list; piping would enumerate it and make a
+    # single-leg plan hash identically to the bare leg object.
+    return (ConvertTo-Json -InputObject $canonical -Depth 32 -Compress)
 }
 
 function Get-ChaosSha256 {
@@ -561,7 +594,7 @@ function Write-ChaosJsonFile {
     )
     $payload = if ($SkipRedaction) { $InputObject } else { Protect-ChaosObject -InputObject $InputObject }
     $canonical = ConvertTo-ChaosCanonical -InputObject $payload
-    $json = ($canonical | ConvertTo-Json -Depth 32)
+    $json = (ConvertTo-Json -InputObject $canonical -Depth 32)
     return Write-ChaosTextFile -Path $Path -Content ($json + "`n")
 }
 

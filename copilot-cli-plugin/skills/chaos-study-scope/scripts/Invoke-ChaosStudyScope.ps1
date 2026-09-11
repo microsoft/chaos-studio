@@ -99,9 +99,22 @@ param(
     # explicitly still wins, so the brief is a starting point, not a cage.
     [Parameter(ParameterSetName = 'Brief', Mandatory)][string]$Brief,
 
+    # How long this study WATCHES. It is not how long the platform injects:
+    # that is the scenario's own duration parameter, resolved separately and
+    # gated below, because a five-minute observation budget over a scenario
+    # whose default is fifteen minutes is a fifteen-minute fault.
     [ValidateRange(1, 240)][int]$DurationMinutes = 10,
     [ValidateRange(0, 240)][int]$BaselineMinutes = 5,
     [ValidateRange(0, 240)][int]$RecoveryMinutes = 10,
+
+    # Confirm, in seconds, how long the fault actually runs. Required when the
+    # configured fault outlives the observation budget - repeating the number
+    # is the acknowledgement, because it cannot be given without reading it.
+    [AllowNull()][object]$AcknowledgeFaultDurationSeconds,
+
+    # Accept starting a fault whose length the live scenario contract does not
+    # declare. Nothing is assumed on your behalf if you omit this.
+    [switch]$AcceptUnknownFaultDuration,
 
     # Scenario parameters, keyed by the names in the scenario's live parameter
     # list. Frozen onto the plan as the {key,value} pairs the service takes.
@@ -200,6 +213,8 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '..' '..' 'chaos-study' 'scripts' 'lib' 'Operation.ps1')
 . (Join-Path $PSScriptRoot '..' '..' 'chaos-study' 'scripts' 'lib' 'Residue.ps1')
 . (Join-Path $PSScriptRoot '..' '..' 'chaos-study' 'scripts' 'lib' 'Exercise.ps1')
+. (Join-Path $PSScriptRoot '..' '..' 'chaos-study' 'scripts' 'lib' 'ConfigurationPayload.ps1')
+. (Join-Path $PSScriptRoot '..' '..' 'chaos-study' 'scripts' 'lib' 'FaultDuration.ps1')
 . (Join-Path $PSScriptRoot 'lib' 'ActionDiscovery.ps1')
 . (Join-Path $PSScriptRoot 'lib' 'Workspace.ps1')
 . (Join-Path $PSScriptRoot 'lib' 'Readiness.ps1')
@@ -373,13 +388,18 @@ function New-ChaosPreflightConfiguration {
         [Parameter(Mandatory)][string]$WorkspaceName,
         [Parameter(Mandatory)][string]$ScenarioName,
         [AllowNull()][AllowEmptyCollection()][object[]]$Parameters = @(),
+        [AllowNull()][object]$BlastRadius,
         [Parameter(Mandatory)][string]$Adapter,
         [Parameter(Mandatory)][string]$StudyPath
     )
 
     $name = Get-ChaosPreflightConfigurationName -StudyId $StudyId
     $scoping = @('-n', $name, '-g', $ResourceGroup, '--workspace-name', $WorkspaceName, '--scenario-name', $ScenarioName)
-    $body = if (@($Parameters).Count -gt 0) { @{ parameters = @($Parameters) } } else { $null }
+
+    # The SAME builder the run uses. Preflight exists to predict execution, and a
+    # payload that omitted the blast radius would validate a configuration nobody
+    # is going to run - it would report an excluded resource as targeted.
+    $body = New-ChaosConfigurationBody -ScenarioParameters @($Parameters) -BlastRadius $BlastRadius
 
     $created = Invoke-ChaosStudyOperation -Kind 'config.create' -Arguments @{ cliArgs = $scoping } -Body $body `
         -ExpectedSchema 'configuration.v1' -Adapter $Adapter -StudyPath $StudyPath -OperationHint 'preflight config create'
@@ -408,6 +428,11 @@ function New-ChaosPreflightConfiguration {
         validation        = $validation
         status            = $status
         permissionPreview = $permissionPreview
+        # The exact payload that was validated, plus its digest. The run refuses
+        # to execute a body that does not digest to this, so "what was reviewed"
+        # and "what executes" are the same bytes rather than the same intent.
+        body              = $body
+        bodyDigest        = (Get-ChaosConfigurationBodyDigest -Body $body)
         # executionPlan intentionally aliases the same validation object: config
         # validate returns the execution plan inline, so Resolve-ChaosEffectiveLegs
         # reads the plan straight from it. Not a copy-paste error - do not "dedupe".
@@ -615,6 +640,33 @@ else {
     $selectedScenario = $found | Add-Member -NotePropertyName discovered -NotePropertyValue $true -PassThru
 }
 
+# -- Fault duration vs observation budget (safety) -------------------------
+# -DurationMinutes above is the observation budget. The scenario's own
+# duration parameter is what the platform actually injects for, and when
+# nobody overrides it the service applies its default. Those two numbers are
+# resolved and displayed separately here, and when the fault outlives the
+# budget - or its length is undeclared - the plan cannot be written until the
+# operator states the real number back. Consent given against a budget must
+# not become consent to something longer.
+$faultDuration = Resolve-ChaosFaultDuration -Scenario $selectedScenario `
+    -ScenarioParameters $Parameters -ObservationBudgetMinutes $DurationMinutes
+
+try {
+    $faultDuration = Assert-ChaosFaultDurationAcknowledged -FaultDuration $faultDuration `
+        -AcknowledgedSeconds $AcknowledgeFaultDurationSeconds `
+        -AcceptUnknownFaultDuration:$AcceptUnknownFaultDuration
+}
+catch {
+    Write-ChaosStudyFailure -Title 'Fault duration not acknowledged' `
+        -Message ([string]$_.Exception.Message -replace '^ChaosFaultDurationUnacknowledged:\s*', '') `
+        -Remediation 'The observation budget (-DurationMinutes) is how long this study watches; it does not shorten the fault.'
+    exit (Get-ChaosStudyExitCode -Name 'ScopeUnverified')
+}
+
+if ($faultDuration.exceedsObservationBudget -eq $true) {
+    Write-ChaosStudyNote -Level 'warn' -Message ("$($faultDuration.statement) Observation ends first, so the recovery window measures a system still under fault. Cancel the run explicitly to stop injection early.")
+}
+
 # -- Resolve the action ----------------------------------------------------
 
 $selectedAction = $null
@@ -746,8 +798,13 @@ $scopeHash = Get-ChaosScopeHash -SubscriptionId $SubscriptionId -ResourceGroup $
 
 $study = New-ChaosStudy -ScopeHash $scopeHash -StudyRoot $StudyRoot
 Move-ChaosStudyStaging -StudyPath $study.path -StagingPath $stagingPath | Out-Null
-$scenarioParameters = ConvertTo-ChaosList (ConvertTo-ChaosScenarioParameter -Table $Parameters)
-$actionParameters = ConvertTo-ChaosList (ConvertTo-ChaosScenarioParameter -Table $ActionParameters)
+$scenarioParameterList = ConvertTo-ChaosList (ConvertTo-ChaosScenarioParameter -Table $Parameters)
+# Deliberately NOT named $actionParameters: PowerShell variable names are
+# case-insensitive, so that would bind to the [hashtable]$ActionParameters
+# parameter and throw converting Object[] to Hashtable - after every gate had
+# already passed. Locals derived from a typed parameter always take a distinct
+# name, and the static check suite fails the build if one shadows a typed param.
+$actionParameterList = ConvertTo-ChaosList (ConvertTo-ChaosScenarioParameter -Table $ActionParameters)
 $declaredVsEffective = $null
 
 if (-not $SkipDiscovery) {
@@ -755,30 +812,26 @@ if (-not $SkipDiscovery) {
 
     $preflight = New-ChaosPreflightConfiguration -StudyId $study.studyId `
         -ResourceGroup $ResourceGroup -WorkspaceName $WorkspaceName -ScenarioName $selectedScenario.name `
-        -Parameters $scenarioParameters -Adapter $Adapter -StudyPath $study.path
+        -Parameters $scenarioParameterList -BlastRadius $blastRadius -Adapter $Adapter -StudyPath $study.path
 
     $effectiveLegs = Resolve-ChaosEffectiveLegs -ExecutionPlan $preflight.executionPlan
 
     Assert-ChaosScenarioNameHonest -ScenarioName $selectedScenario.name -DisplayName $selectedScenario.displayName -EffectiveLegs $effectiveLegs | Out-Null
 
     $legsDecision = Assert-ChaosEffectiveLegs -EffectiveLegs $effectiveLegs -ScopeHash $scopeHash `
-        -ScenarioName $selectedScenario.name -AcceptPartialScenario $AcceptPartialScenario
+        -ScenarioName $selectedScenario.name -AcceptPartialScenario $AcceptPartialScenario `
+        -DeclaredExclusions (@($ExcludeResource) + @($ExcludeType) + @($ExcludeTag))
 
     if ($legsDecision.limitationCodes -contains 'L11' -and $limitationCodes -notcontains 'L11') {
         $limitationCodes += 'L11'
     }
 
     # The effective plan is what a run must reproduce exactly before it may
-    # start. The hash is over the STABLE parts - total, executable count, and the
-    # sorted selectors of skipped legs - not the platform's free-text reasons,
-    # so equality means "the same legs execute". The run recomputes this identical
-    # projection (Get-ChaosRunEffectivePlanHash) to prove equality rather than trust.
+    # start. Scope and run now compute this from the SAME code path
+    # (Get-ChaosEffectivePlanHash), so equality means "the same legs execute"
+    # rather than "two similar projections happened to agree".
     # Computed before the residue entry so the ledger records the real hash, not null.
-    $effectivePlanProjection = [ordered]@{
-        total      = $effectiveLegs.total
-        executable = $effectiveLegs.executable
-        skipped    = @(@($effectiveLegs.skipped) | ForEach-Object { [string]$_.legSelector } | Sort-Object)
-    }
+    $effectivePlanProjection = @(Get-ChaosEffectivePlanProjection -EffectiveLegs $effectiveLegs)
     $effectivePlanHash = Get-ChaosDigest -InputObject $effectivePlanProjection
 
     Add-ChaosPreflightResidueEntry -StudyPath $study.path -ConfigurationName $preflight.name `
@@ -801,6 +854,11 @@ if (-not $SkipDiscovery) {
         preflight  = [ordered]@{
             configurationName = $preflight.name
             validationStatus  = $preflight.status
+            # Digest of the exact configuration body that was validated. The run
+            # rebuilds the body from this plan and refuses to execute unless it
+            # digests to this - so the blast radius that was reviewed is provably
+            # the blast radius that executes.
+            bodyDigest        = $preflight.bodyDigest
             # What-if only. Present when preflight validation failed and the
             # service named the grants it would need; null when it validated or
             # when the service named nothing. Never a grant that was applied -
@@ -816,6 +874,11 @@ if (-not $SkipDiscovery) {
         }
     }
     $declaredVsEffective['effectivePlanHash'] = $effectivePlanHash
+    # The legs the hash was taken over, not merely their digest. A run that
+    # refuses on a hash mismatch can then say WHICH leg changed instead of
+    # only that something did - and a reader can audit the frozen plan
+    # without re-deriving it from the service.
+    $declaredVsEffective['effectivePlan'] = @($effectivePlanProjection)
 
     if ($null -ne $preflight.permissionPreview) {
         Add-ChaosCommandTrailEntry -StudyPath $study.path -Command 'az chaos scenario config fix-permissions --what-if' -Phase 'scope' `
@@ -833,6 +896,7 @@ else {
         accepted          = $false
         legs              = [ordered]@{ total = $null; executable = $null; skipped = @() }
         effectivePlanHash = $null
+        effectivePlan     = @()
     }
 }
 
@@ -904,7 +968,7 @@ $plan = [ordered]@{
         version              = $selectedScenario.version
         recommendationStatus = $selectedScenario.recommendationStatus
         parameterSpec        = @($selectedScenario.parameters)
-        parameters           = @($scenarioParameters)
+        parameters           = @($scenarioParameterList)
     }
 
     declaredVsEffective = $declaredVsEffective
@@ -924,14 +988,33 @@ $plan = [ordered]@{
         # Action parameters are frozen separately from the scenario's: they are
         # validated against a different schema and must be reproduced exactly on
         # rerun, so they cannot share one bucket.
-        parameters       = @($actionParameters)
+        parameters       = @($actionParameterList)
     }
 
     windows     = [ordered]@{
         baselineMinutes = $BaselineMinutes
+        # How long this study watches, and only that. The fault's own length
+        # is recorded beside it, never merged into it.
         injectMinutes   = $DurationMinutes
         recoveryMinutes = $RecoveryMinutes
         interval        = 60
+    }
+
+    # What the platform actually injects for, resolved from the live scenario
+    # contract, plus the acknowledgement that was given for it. Kept separate
+    # from `windows` so no reader can mistake the observation budget for the
+    # fault's length - the confusion this field exists to end.
+    faultDuration = [ordered]@{
+        source                   = $faultDuration.source
+        parameterName            = $faultDuration.parameterName
+        rawValue                 = $faultDuration.rawValue
+        seconds                  = $faultDuration.seconds
+        observationBudgetSeconds = $faultDuration.observationBudgetSeconds
+        exceedsObservationBudget = $faultDuration.exceedsObservationBudget
+        acknowledged             = [bool]$faultDuration.acknowledged
+        acknowledgedSeconds      = $faultDuration.acknowledgedSeconds
+        reason                   = $faultDuration.reason
+        statement                = $faultDuration.statement
     }
 
     safety      = [ordered]@{
@@ -997,7 +1080,8 @@ $summary = @(
     "Action      $($selectedAction.displayName)  [$actionTypeText]"
     "URN         $urnText"
     "Objective   $($predicate.raw)"
-    "Windows     $BaselineMinutes m baseline, $DurationMinutes m inject, $RecoveryMinutes m recovery"
+    "Windows     $BaselineMinutes m baseline, $DurationMinutes m observe, $RecoveryMinutes m recovery"
+    "Fault runs  $($faultDuration.statement)"
     "Frozen at   $($plan['frozenConfigHash'])"
     "Plan        $planPath"
 ) -join "`n"

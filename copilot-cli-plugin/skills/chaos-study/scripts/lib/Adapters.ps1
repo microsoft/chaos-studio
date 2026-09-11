@@ -178,7 +178,12 @@ function Get-ChaosOperationRegistry {
         'resource.list' = @{
             localAz  = {
                 param($Arguments, $Body)
-                Invoke-ChaosStudyAzChaos -AllowFailure -ChaosArgs (Get-ChaosOperationCliArgs -Arguments $Arguments -Verb @('discovered-resource', 'list') -Composed @(
+                # Deliberately NOT -AllowFailure. The caller turns a null response
+                # into an empty set, so a swallowed failure here would read as
+                # "this workspace discovered no resources" - fabricated emptiness,
+                # which understates blast radius. A list that could not be read
+                # must stop the study, not shrink it.
+                Invoke-ChaosStudyAzChaos -ChaosArgs (Get-ChaosOperationCliArgs -Arguments $Arguments -Verb @('discovered-resource', 'list') -Composed @(
                     '--resource-group', (Get-ChaosOperationArg -Arguments $Arguments -Name 'resourceGroup'),
                     '--workspace-name', (Get-ChaosOperationArg -Arguments $Arguments -Name 'workspaceName')
                 ))
@@ -221,7 +226,11 @@ function Get-ChaosOperationRegistry {
         'scenarios.list' = @{
             localAz  = {
                 param($Arguments, $Body)
-                Invoke-ChaosStudyAzChaos -AllowFailure -ChaosArgs (Get-ChaosOperationCliArgs -Arguments $Arguments -Verb @('scenario', 'list') -Composed @(
+                # Deliberately NOT -AllowFailure, for the same reason as
+                # 'resource.list': a swallowed failure would present as "no
+                # scenarios are available here" and silently narrow what the
+                # study believes it can do.
+                Invoke-ChaosStudyAzChaos -ChaosArgs (Get-ChaosOperationCliArgs -Arguments $Arguments -Verb @('scenario', 'list') -Composed @(
                     '-g', (Get-ChaosOperationArg -Arguments $Arguments -Name 'resourceGroup'),
                     '--workspace-name', (Get-ChaosOperationArg -Arguments $Arguments -Name 'workspaceName')
                 ))
@@ -281,7 +290,13 @@ function Get-ChaosOperationRegistry {
         'config.delete' = @{
             localAz  = {
                 param($Arguments, $Body)
-                Invoke-ChaosStudyAzChaos -AllowFailure -ChaosArgs (Get-ChaosOperationCliArgs -Arguments $Arguments -Verb @('scenario', 'config', 'delete'))
+                # Deliberately NOT -AllowFailure. A delete that the service
+                # rejects must not look like one it accepted: -AllowFailure
+                # returns $null, the permissive 'any.v1' schema accepts null,
+                # and the residue ledger would then record an accepted removal
+                # with no error text to explain why the object is still there.
+                # The caller tolerates an authoritative not-found itself.
+                Invoke-ChaosStudyAzChaos -ChaosArgs (Get-ChaosOperationCliArgs -Arguments $Arguments -Verb @('scenario', 'config', 'delete'))
             }
             external = @{ tool = 'az-chaos'; methodHint = 'scenario config delete' }
         }
@@ -311,10 +326,32 @@ function Get-ChaosOperationRegistry {
             }
             external = @{ tool = 'az-chaos'; methodHint = 'scenario run show' }
         }
+        'run.showStrict' = @{
+            localAz  = {
+                param($Arguments, $Body)
+                # Deliberately NOT -AllowFailure. This op exists to verify a run
+                # has stopped, and -AllowFailure collapses "not found" and "the
+                # call failed" into the same $null, which 'any.v1' accepts. The
+                # absence probe needs the error text to tell an observed absence
+                # from an unreadable answer. Polling uses 'run.show', which is
+                # deliberately tolerant of a transient read failure.
+                Invoke-ChaosStudyAzChaos -ChaosArgs (Get-ChaosOperationCliArgs -Arguments $Arguments -Verb @('scenario', 'run', 'show') -Composed @(
+                    '-n', (Get-ChaosOperationArg -Arguments $Arguments -Name 'runId'),
+                    '-g', (Get-ChaosOperationArg -Arguments $Arguments -Name 'resourceGroup'),
+                    '--workspace-name', (Get-ChaosOperationArg -Arguments $Arguments -Name 'workspaceName'),
+                    '--scenario-name', (Get-ChaosOperationArg -Arguments $Arguments -Name 'scenarioName')
+                ))
+            }
+            external = @{ tool = 'az-chaos'; methodHint = 'scenario run show' }
+        }
         'run.cancel' = @{
             localAz  = {
                 param($Arguments, $Body)
-                Invoke-ChaosStudyAzChaos -AllowFailure -ChaosArgs (Get-ChaosOperationCliArgs -Arguments $Arguments -Verb @('scenario', 'run', 'cancel') -Composed @(
+                # Deliberately NOT -AllowFailure. Cancelling is how a study
+                # aborts an injected fault; a cancel the service rejected must
+                # never look like one it accepted, or the operator would believe
+                # the blast radius had been closed when it had not.
+                Invoke-ChaosStudyAzChaos -ChaosArgs (Get-ChaosOperationCliArgs -Arguments $Arguments -Verb @('scenario', 'run', 'cancel') -Composed @(
                     '-n', (Get-ChaosOperationArg -Arguments $Arguments -Name 'runId'),
                     '-g', (Get-ChaosOperationArg -Arguments $Arguments -Name 'resourceGroup'),
                     '--workspace-name', (Get-ChaosOperationArg -Arguments $Arguments -Name 'workspaceName'),
@@ -345,7 +382,7 @@ function Get-ChaosOperationRegistry {
                 $bodyFile = [System.IO.Path]::GetTempFileName()
                 try {
                     $payload = if ($Body) { $Body } else { @{ query = (Get-ChaosOperationArg -Arguments $Arguments -Name 'query'); timespan = (Get-ChaosOperationArg -Arguments $Arguments -Name 'timespan') } }
-                    $json = $payload | ConvertTo-Json -Depth 8 -Compress
+                    $json = ConvertTo-Json -InputObject $payload -Depth 8 -Compress
                     [System.IO.File]::WriteAllText($bodyFile, $json, [System.Text.UTF8Encoding]::new($false))
                     $raw = & az rest --method POST --uri $uri --resource $endpoint `
                         --headers 'Content-Type=application/json' --body "@$bodyFile" --output json 2>&1
@@ -493,7 +530,12 @@ function Resolve-ChaosPendingOperation {
     }
 
     $payload = if ($resultFile.PSObject.Properties.Name -contains 'result') { $resultFile.result } else { $null }
-    $check = Test-ChaosOperationResult -Schema $ExpectedSchema -Result $payload
+    # Normalise the ARM envelope the same way the local adapter does, so a study
+    # behaves identically whichever adapter reached Azure. The provenance hash
+    # below is taken over the RAW payload the host recorded, not the normalised
+    # projection, so the exchange stays verifiable byte-for-byte.
+    $normalized = ConvertTo-ChaosOperationEnvelope -Schema $ExpectedSchema -Result $payload
+    $check = Test-ChaosOperationResult -Schema $ExpectedSchema -Result $normalized
     if (-not $check.ok) {
         throw "Operation result for '$operationId' does not satisfy schema '$ExpectedSchema': $($check.problems -join '; ')"
     }
@@ -507,7 +549,7 @@ function Resolve-ChaosPendingOperation {
             adapter     = 'external'
         }) | Out-Null
 
-    return [pscustomobject]@{ status = 'resolved'; operationId = $operationId; result = $payload }
+    return [pscustomobject]@{ status = 'resolved'; operationId = $operationId; result = $normalized }
 }
 
 function Exit-ChaosStudyOperation {

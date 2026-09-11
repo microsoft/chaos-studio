@@ -378,7 +378,7 @@ function Set-ChaosResidueCleanup {
 
     $rest = @($entries | Where-Object { -not (([string]$_.kind -eq $Kind) -and ([string]$_.id -eq $Id)) })
     $target = $match[0]
-    $command = if ([string]::IsNullOrWhiteSpace($Command)) { Get-ChaosResidueRemovalCommand -Entry $target } else { $Command }
+    $removalCommand = if ([string]::IsNullOrWhiteSpace($Command)) { Get-ChaosResidueRemovalCommand -Entry $target } else { $Command }
 
     $updatedEntry = [ordered]@{
         kind       = [string]$target.kind
@@ -391,7 +391,7 @@ function Set-ChaosResidueCleanup {
             status      = $Status
             removed     = (Test-ChaosResidueRemoved -Status $Status)
             error       = if ([string]::IsNullOrWhiteSpace($ErrorText)) { $null } else { $ErrorText }
-            command     = $command
+            command     = $removalCommand
             # Null, not an empty array: nobody looked is not the same as looked
             # and saw nothing.
             attempts    = if ($null -eq $Attempts) { $null } else { @($Attempts) }
@@ -430,6 +430,16 @@ function Invoke-ChaosResidueRemoval {
         That is deliberately not a success: a caller that cannot check has not
         earned the right to print "removed".
 
+        -RemovalAttempts allows the removal itself to be re-issued when the
+        object is still present after a full poll cycle. Deletion here is
+        idempotent and asynchronous: the control plane may accept a delete and
+        return before the object is gone, and an accepted request that never
+        completes is indistinguishable from one that was never acted on. Where
+        the caller uses one identity helper for both the removal and the
+        read-back - as this suite does - a re-issue that still leaves the object
+        present is evidence of service-side persistence rather than a
+        mis-addressed client call, and `removalAttempts` records that.
+
         It never rethrows, because every caller is a finally block unwinding
         from some other failure and an exception here would mask that. The
         failure is not swallowed though - it is written down.
@@ -442,25 +452,49 @@ function Invoke-ChaosResidueRemoval {
         [AllowNull()][AllowEmptyString()][string]$Command = $null,
         [AllowNull()][scriptblock]$VerifyAbsent = $null,
         [ValidateRange(1, 30)][int]$VerifyAttempts = 4,
-        [ValidateRange(0, 60)][double]$VerifyDelaySeconds = 3
+        [ValidateRange(0, 60)][double]$VerifyDelaySeconds = 3,
+        [ValidateRange(1, 5)][int]$RemovalAttempts = 1
     )
 
     $status = 'accepted-unverified'
     $errorText = $null
     $attempts = $null
+    $attemptLog = [System.Collections.Generic.List[object]]::new()
+    $removalLog = [System.Collections.Generic.List[object]]::new()
 
-    try {
-        & $Removal | Out-Null
-    } catch {
-        $status = 'failed'
-        $errorText = $_.Exception.Message
-    }
+    # Re-issuing is only meaningful when absence can be observed; without a
+    # verifier there is no way to know a second attempt was needed or helped.
+    $maxRemovals = if ($null -eq $VerifyAbsent) { 1 } else { $RemovalAttempts }
 
-    # A removal that raised is already terminal - polling for absence would at
-    # best confirm what the error said, and at worst turn a real failure into a
-    # softer-looking status.
-    if ($status -ne 'failed' -and $null -ne $VerifyAbsent) {
-        $attempts = [System.Collections.Generic.List[object]]::new()
+    for ($r = 1; $r -le $maxRemovals; $r++) {
+        $status = 'accepted-unverified'
+        $errorText = $null
+        $removalError = $null
+
+        try {
+            & $Removal | Out-Null
+        } catch {
+            $status = 'failed'
+            $errorText = $_.Exception.Message
+            $removalError = $errorText
+        }
+
+        $removalLog.Add([ordered]@{
+                attempt     = $r
+                issuedAt    = Get-ChaosUtcNow
+                accepted    = ($null -eq $removalError)
+                error       = $removalError
+                reissued    = ($r -gt 1)
+            }) | Out-Null
+
+        # A removal that raised is already terminal - polling for absence would
+        # at best confirm what the error said, and at worst turn a real failure
+        # into a softer-looking status.
+        if ($status -eq 'failed' -or $null -eq $VerifyAbsent) { break }
+
+        # Evidence accumulates across removal passes: a later pass that finally
+        # sees the object gone must not erase the earlier pass that saw it
+        # present, because that sequence is the proof of what happened.
         $unavailableReason = $null
 
         for ($i = 1; $i -le $VerifyAttempts; $i++) {
@@ -479,11 +513,12 @@ function Invoke-ChaosResidueRemoval {
             elseif ($null -eq $observed) { $null }
             else { [bool]$observed }
 
-            $attempts.Add([ordered]@{
-                    attempt    = $i
-                    observedAt = Get-ChaosUtcNow
-                    absent     = $absent
-                    error      = $attemptError
+            $attemptLog.Add([ordered]@{
+                    attempt     = $i
+                    removalPass = $r
+                    observedAt  = Get-ChaosUtcNow
+                    absent      = $absent
+                    error       = $attemptError
                 }) | Out-Null
 
             if ($absent -eq $true) {
@@ -517,7 +552,17 @@ function Invoke-ChaosResidueRemoval {
                 }
             }
         }
-        $attempts = @($attempts)
+        $attempts = @($attemptLog)
+
+        if ($status -eq 'verified-absent') { break }
+        # Only a confirmed still-present object is worth re-issuing against.
+        # 'verification-unavailable' means the read failed, so a second delete
+        # would be aimed at an unknown, and re-issuing would not inform it.
+        if ($status -ne 'still-present') { break }
+    }
+
+    if ($status -eq 'still-present' -and $removalLog.Count -gt 1) {
+        $errorText = "Removal was accepted $($removalLog.Count) time(s) using the same identity the read-back then found, and the object was still present after $VerifyAttempts check(s) each time. This is service-side persistence, not a mis-addressed delete."
     }
 
     $recorded = $false
@@ -528,13 +573,14 @@ function Invoke-ChaosResidueRemoval {
     }
 
     return [pscustomobject]@{
-        kind     = $Kind
-        id       = $Id
-        status   = $status
-        removed  = (Test-ChaosResidueRemoved -Status $status)
-        error    = $errorText
-        attempts = $attempts
-        recorded = [bool]$recorded
+        kind           = $Kind
+        id             = $Id
+        status         = $status
+        removed        = (Test-ChaosResidueRemoved -Status $status)
+        error          = $errorText
+        attempts       = $attempts
+        removalAttempts = @($removalLog)
+        recorded       = [bool]$recorded
     }
 }
 
