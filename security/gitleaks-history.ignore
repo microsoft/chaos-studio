@@ -1,0 +1,16 @@
+# gitleaks fingerprint allowlist (E5-T3).
+#
+# Each entry is <commit-sha>:<path>:<rule-id>:<line> and suppresses exactly one
+# finding in one historical commit. Nothing else is suppressed: a new secret, the
+# same shape on another line, or the same line reintroduced by another commit
+# produces a different fingerprint and still fails the `secret-scan` job.
+#
+# All three entries are synthetic, non-functional literals committed as unit-test
+# inputs for the redaction helper (`redact`), which exists to keep such shapes out
+# of logs. They are not credentials, reference no real tenant/account/endpoint, and
+# grant no access. They live in already-published history and therefore cannot be
+# removed by editing the working tree; suppressing them by fingerprint is the only
+# way to keep history scanning enabled rather than disabling the scan.
+0a3b126f0b723ed540c3c506b77afa9796fea327:packages/core/test/core/redaction.test.ts:jwt:17
+0a3b126f0b723ed540c3c506b77afa9796fea327:packages/core/test/core/redaction.test.ts:generic-api-key:26
+0a3b126f0b723ed540c3c506b77afa9796fea327:packages/core/test/core/redaction.test.ts:generic-api-key:39

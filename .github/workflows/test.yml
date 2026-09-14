@@ -121,6 +121,9 @@ jobs:
               - 'tsconfig*.json'
               - '.gitattributes'
               - 'packages/**'
+              - 'test/**'
+              - 'docs/**'
+              - 'security/**'
               - 'scripts/**'
               - 'dist/**'
               - 'action.yml'
@@ -128,6 +131,7 @@ jobs:
               - '.config/**'
               - '.pipelines/**'
               - '.github/workflows/test.yml'
+              - '.github/workflows/supply-chain.yml'
               # The release workflows embed the ref-name FNM_PATHNAME matcher that
               # release-fnmatch.test.ts extracts and pins; include them so a change to an
               # embedded matcher re-runs its regression tests (and cannot bypass them).

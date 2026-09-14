@@ -1,0 +1,18 @@
+{
+  "Name": "Chaos Studio Scenario Runner",
+  "IsCustom": true,
+  "Description": "Least-privilege role for the Chaos Studio v2 CI/CD integrations (GitHub Action + Azure Pipelines task): validate, execute, poll, and cancel scenario configurations. Grants exactly the five source-proven Microsoft.Chaos operations the integration invokes (drawn from the generated Operations_List snapshot, VF9/VF12/DX1) — no workspace/scenario/configuration write or delete, and no data actions. RV2 (test/release-validation/rbac-role-template.test.ts) fails closed if this role grants any operation outside that set or omits a required one.",
+  "Actions": [
+    "Microsoft.Chaos/workspaces/scenarios/configurations/validate/action",
+    "Microsoft.Chaos/workspaces/scenarios/configurations/validations/read",
+    "Microsoft.Chaos/workspaces/scenarios/configurations/execute/action",
+    "Microsoft.Chaos/workspaces/scenarios/runs/read",
+    "Microsoft.Chaos/workspaces/scenarios/runs/cancel/action"
+  ],
+  "NotActions": [],
+  "DataActions": [],
+  "NotDataActions": [],
+  "AssignableScopes": [
+    "/subscriptions/00000000-0000-0000-0000-000000000000"
+  ]
+}

@@ -1,0 +1,107 @@
+# Supply-chain hardening for the Chaos Studio v2 CI/CD integrations (E5-T3):
+# dependency + license review, secret scanning, and an RBAC least-privilege gate.
+# Complements the `test` workflow (typecheck + tests + dist-integrity) and the
+# release workflows (signing/provenance). All third-party actions are pinned to a
+# full commit SHA; the default token is read-only and jobs request only what they
+# need.
+#
+# NOTE: this workflow is intentionally NOT path-filtered. Secret scanning must run
+# on every push/PR — a leaked credential can land under any path (docs, examples,
+# workflows), so a path filter would create a bypass. The per-job cost is small.
+name: supply-chain
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # Dependency + license review on the PR diff. Fails on a vulnerable dependency
+  # or a disallowed license entering the workspace (GitHub-native, PR-scoped).
+  dependency-review:
+    name: Dependency & license review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Dependency review
+        uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
+        with:
+          fail-on-severity: high
+          # Strong-copyleft licenses are disallowed for a redistributed Marketplace
+          # bundle. An unresolved/unknown license is also surfaced for review.
+          deny-licenses: >-
+            GPL-2.0, GPL-2.0-only, GPL-2.0-or-later,
+            GPL-3.0, GPL-3.0-only, GPL-3.0-or-later,
+            AGPL-3.0, AGPL-3.0-only, AGPL-3.0-or-later,
+            LGPL-2.1, LGPL-3.0, LGPL-3.0-only, LGPL-3.0-or-later,
+            MPL-2.0, EUPL-1.2, CDDL-1.0, SSPL-1.0
+
+  # Secret scanning across the full history + PR diff. A committed credential fails
+  # the run. Runs on every event (no path filter) so a leak under any path is
+  # caught. The open-source CLI needs no license or repository secrets, including
+  # on fork PRs. Pin both the release and its archive checksum. The only suppressed
+  # findings are the three synthetic redaction-test fixtures pinned by fingerprint
+  # in `security/gitleaks-history.ignore`; anything else fails the run.
+  secret-scan:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Scan history with checksum-pinned gitleaks CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          scanner_dir="$(mktemp -d "$RUNNER_TEMP/gitleaks.XXXXXX")"
+          trap 'rm -rf "$scanner_dir"' EXIT
+          cd "$scanner_dir"
+          curl --fail --silent --show-error --location \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.0/gitleaks_8.30.0_linux_x64.tar.gz \
+            --output gitleaks.tar.gz
+          printf '%s\n' '79a3ab579b53f71efd634f3aaf7e04a0fa0cf206b7ed434638d1547a2470a66e  gitleaks.tar.gz' \
+            | sha256sum --check --strict
+          tar -xzf gitleaks.tar.gz gitleaks
+          "$scanner_dir/gitleaks" git "$GITHUB_WORKSPACE" --redact --log-opts="--all" \
+            --gitleaks-ignore-path "$GITHUB_WORKSPACE/security/gitleaks-history.ignore"
+
+  # Dependency vulnerability audit + the RBAC least-privilege / role-template gate
+  # (RV2) and the release-validation suite. First-party, so it also runs on push.
+  audit-and-rbac:
+    name: npm audit + RBAC least-privilege gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - name: Install workspace dependencies
+        run: npm ci
+      - name: Audit production dependencies
+        # The runtime bundles ship only production deps; fail on a high/critical
+        # advisory in that set.
+        run: npm audit --omit=dev --audit-level=high
+      - name: RBAC least-privilege + release-validation gate (RV2)
+        # Fails closed if the role template cites an operation outside the
+        # source-proven set, omits a required one, or subtracts/over-grants a
+        # permission.
+        run: node --test "test/release-validation/**/*.test.ts"

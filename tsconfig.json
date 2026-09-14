@@ -6,7 +6,8 @@
   "include": [
     "packages/*/src/**/*.ts",
     "packages/*/test/**/*.ts",
-    "azure-pipelines-extension/test/**/*.ts"
+    "azure-pipelines-extension/test/**/*.ts",
+    "test/**/*.ts"
   ],
   "exclude": [
     "node_modules",

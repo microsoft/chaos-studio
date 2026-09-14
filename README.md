@@ -45,6 +45,12 @@ steps:
       mode: validate-and-execute
 ```
 
+**Learn more:** [CI/CD integrations guide](docs/ci-cd-integrations.md) — modes,
+per-platform examples ([GitHub](examples/github/) · [Azure Pipelines](examples/azure-pipelines/)),
+the deployment-gate and no-wait patterns, the least-privilege
+[runner role](security/chaos-studio-runner.role-template.json), two-identity and
+concurrency guidance.
+
 ## New to Chaos Studio?
 
 Start with the docs: [Workspaces](https://learn.microsoft.com/azure/chaos-studio/chaos-studio-workspaces-overview)
