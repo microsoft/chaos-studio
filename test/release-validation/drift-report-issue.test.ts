@@ -124,9 +124,11 @@ async function runReport(options: {
     },
     rest: {
       issues: {
-        listForRepo: async ({ labels }: { labels: string }) => {
-          calls.push({ op: 'listForRepo', labels });
-          return { data: existing };
+        listForRepo: async ({ labels, per_page, page }: PageParams & { labels: string }) => {
+          calls.push({ op: 'listForRepo', labels, page: page ?? 1 });
+          const size = per_page ?? 30;
+          const start = ((page ?? 1) - 1) * size;
+          return { data: existing.slice(start, start + size) };
         },
         listComments: async ({ issue_number, per_page, page }: PageParams & { issue_number: number }) => {
           calls.push({ op: 'listComments', issue_number, page: page ?? 1 });
@@ -415,6 +417,66 @@ test('the corrective notice is found however far down the comment history it sit
   assert.ok(
     second.filter((call) => call.op === 'listComments').length > 1,
     'the comment history is paginated rather than read as a single page',
+  );
+});
+
+/**
+ * Fills a page with human-filed issues that carry the report label, so a
+ * generated report placed after them lands beyond the first page.
+ */
+const labelledNoise = (count: number): Issue[] =>
+  Array.from({ length: count }, (_, index) => ({
+    number: 200 + index,
+    title: `Discussion ${index}: drift report handling`,
+    body: 'Filed by a person; carries the label after triage.',
+    user: { type: 'User' },
+  }));
+
+test('a current-generation report beyond the first page is reused, not duplicated', async () => {
+  const fresh = await runReport({ mismatch: true });
+  const body = String(onlyCall(fresh, 'create', 'a fresh issue is opened').body);
+
+  const calls = await runReport({
+    mismatch: true,
+    existing: [
+      ...labelledNoise(100),
+      { number: 7, title: 'contract-drift: …', body, user: { type: 'Bot' } },
+    ],
+  });
+
+  assert.equal(
+    calls.filter((call) => call.op === 'create').length,
+    0,
+    'a report on a later page is found rather than duplicated',
+  );
+  const posted = onlyCall(calls, 'createComment', 'exactly one comment — the recurrence note');
+  assert.match(String(posted.body), /again/i);
+  assert.ok(
+    calls.filter((call) => call.op === 'listForRepo').length > 1,
+    'the issue list is paginated rather than read as a single page',
+  );
+});
+
+test('a legacy report beyond the first page is migrated, not duplicated', async () => {
+  const calls = await runReport({
+    mismatch: true,
+    existing: [
+      ...labelledNoise(100),
+      { number: 42, title: LEGACY_TITLE, body: LEGACY_BODY, user: { type: 'Bot' } },
+    ],
+  });
+
+  assert.equal(
+    calls.filter((call) => call.op === 'create').length,
+    0,
+    'a legacy report on a later page is migrated rather than duplicated',
+  );
+  const updated = onlyCall(calls, 'update', 'the stale generated issue is rewritten');
+  assert.equal(updated.issue_number, 42);
+  assert.doesNotMatch(
+    String(updated.body),
+    /This is a service defect, not a client bug/i,
+    'the withdrawn verdict does not survive the migration',
   );
 });
 

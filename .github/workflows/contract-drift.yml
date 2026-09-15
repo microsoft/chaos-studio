@@ -352,7 +352,11 @@ jobs:
                 };
 
             const { owner, repo } = context.repo;
-            const existing = await github.rest.issues.listForRepo({
+            // Paginated: the label accumulates human-filed issues too, so the
+            // report this run must reuse can sit well beyond the first page.
+            // Reading one page would miss it and open a duplicate instead of
+            // reusing it or migrating a legacy generation.
+            const existing = await github.paginate(github.rest.issues.listForRepo, {
               owner,
               repo,
               state: 'open',
@@ -378,7 +382,7 @@ jobs:
               return report.legacyEvidence.every((pattern) => pattern.test(text));
             };
 
-            const issue = existing.data.find(isGeneratedReport);
+            const issue = existing.find(isGeneratedReport);
             if (issue) {
               const correction = report.correction;
 
