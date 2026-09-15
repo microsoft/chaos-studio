@@ -39,6 +39,36 @@ flow (NFR3). Reference the connection by name via the `azureSubscription` input.
 `subscriptionId`, `resourceGroup`, `workspaceName`, `scenarioName`, and
 `scenarioConfigurationName` are **identifiers, not secrets**.
 
+## Trusted trigger requirements
+
+Workload identity federation and least privilege establish *what* the service
+connection can do; they say nothing about *who* is allowed to trigger the
+pipeline that requests a chaos action. An ARM service connection with WIF
+grants a real Azure token to **whatever pipeline run resolves it** — if that
+run was triggered by an untrusted or unreviewed source, the chaos-capable
+credential is exposed to that source, not just to your reviewed pipeline.
+
+- Restrict pipeline triggers to trusted branches (`trigger:`/`pr:` scoped to
+  protected branches such as `main`/`release/*`), and do not allow **fork
+  pull requests** to trigger a pipeline that resolves a chaos-capable service
+  connection. Azure DevOps disables secrets/service-connection access for
+  fork PR builds by default — do not re-enable "Make secrets available to
+  builds of forks" (or an equivalent setting) for a pipeline in this family.
+- Gate any chaos-capable stage with an
+  [environment](https://learn.microsoft.com/azure/devops/pipelines/process/environments)
+  that requires **approvals/checks**, so a human reviews the run before the
+  chaos-capable service connection is authorized, and restrict the service
+  connection itself to specific pipelines
+  ([Security → service connection → Pipeline permissions](https://learn.microsoft.com/azure/devops/pipelines/library/service-endpoints)).
+- Do not grant a chaos-capable service connection to a pipeline that also
+  executes unreviewed, externally-contributed code (e.g. a build that runs
+  scripts from a fork or an unprotected shared template); doing so lets that
+  unreviewed code run chaos actions under your least-privilege identity.
+
+These requirements are in addition to, not a substitute for, the workload
+identity and least-privilege guidance in
+[the integration guide](../../docs/ci-cd-integrations.md#two-identity-guidance).
+
 ## ⚠️ No-wait warning
 
 With `waitForCompletion: false` the task succeeds as soon as the run is **started** —

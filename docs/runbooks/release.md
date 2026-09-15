@@ -134,6 +134,39 @@ gh attestation verify pkg/action-bundle.tar.gz --repo <owner>/<repo>
 This checks the Sigstore signature, confirms the artifact digest, and confirms
 the attestation was produced by this repository's `release-action` workflow.
 
+### 2a. GitHub Marketplace listing (manual operator/admin handoff)
+
+**The `release-action.yml` workflow creates only the GitHub Release and its
+tags — it does not publish or update a GitHub Marketplace listing.**
+Publishing `microsoft/chaos-studio` as a Marketplace **Action** is a separate,
+manual, repository-admin action that GitHub does not expose as an API a
+workflow can call; it must be done by hand, once per major listing change,
+through the repository's release UI:
+
+1. A repository **owner/admin** must have accepted the
+   [GitHub Marketplace Developer Agreement](https://docs.github.com/en/apps/github-marketplace/github-marketplace-overview/github-marketplace-developer-agreement)
+   for the organization before any listing can go live. Confirm this is on
+   file; it is a one-time, org-level acceptance, not part of this workflow.
+2. After the GitHub Release from section 2 is published, an admin opens the
+   release on github.com and checks **"Publish this Action to the GitHub
+   Marketplace"** (or, for an existing listing, confirms the new release
+   version is picked up) — this is a UI-only opt-in with no CLI/API
+   equivalent; the automated release workflow cannot perform it.
+3. Set/confirm the listing's **category** (and any primary/secondary category)
+   appropriate to a chaos-engineering/testing action, and review the listing's
+   name, icon (from `action.yml`'s `branding:`), and description for accuracy.
+4. **Verify the listing**, not just the release: visit
+   `https://github.com/marketplace/actions/<listing-slug>` and confirm the new
+   version is listed before considering the release fully handed off.
+
+This Marketplace enrollment/verification step is **distinct from and
+additional to** the automated release created in section 2 — a green
+`release-action.yml` run means the Release and its provenance are complete,
+**not** that the Action is discoverable on the Marketplace. Do not skip it for
+a release that is meant to be publicly discoverable. It has no bearing on the
+protected `release` environment or the credential-holding `publish` job; it is
+a separate, credential-free admin action taken after those complete.
+
 ## 3. Release the Azure Pipelines extension
 
 **Run this after section 2.** The exact version tag the GitHub release creates is the

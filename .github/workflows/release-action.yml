@@ -1036,7 +1036,8 @@ jobs:
             echo "Created immutable tag $TAG at $RELEASE_COMMIT."
           fi
 
-      - name: Stage assets in a DRAFT release, verify, then publish atomically
+      - name: Stage assets in a DRAFT release and verify (no publish yet)
+        id: stage
         env:
           GH_TOKEN: ${{ secrets.ACTION_RELEASE_TOKEN }}
           RELEASE_TOKEN: ${{ secrets.ACTION_RELEASE_TOKEN }}
@@ -1145,25 +1146,20 @@ jobs:
               echo "::notice::Release $TAG is already published (immutable); verifying assets + GitHub immutability without mutation."
               verify_final_assets
               require_immutable
+              echo "already-published=true" >> "$GITHUB_OUTPUT"
               ;;
             draft)
               echo "::notice::Repairing an incomplete DRAFT release $TAG (not public)."
               reconcile_draft_assets
               verify_final_assets
-              # Publish ATOMICALLY only after the complete asset set is verified.
-              gh release edit "$TAG" --repo "$REPO" --draft=false
-              # Confirm GitHub IMMUTABILITY first — this FREEZES the published assets + tag —
-              # THEN re-verify the frozen bytes. Ordering it this way closes the draft's
-              # verify->publish mutable window authoritatively: any tamper in that gap is
-              # frozen at publish and then caught by this post-immutability re-verification.
-              require_immutable
-              verify_final_assets
+              echo "already-published=false" >> "$GITHUB_OUTPUT"
               ;;
             absent)
               # First publish: create a DRAFT (NOT public) carrying all assets, verify
-              # the complete set + digests, THEN flip to published atomically. A failure
-              # before the flip leaves only a repairable draft — never a partial public
-              # release that a rerun cannot repair.
+              # the complete set + digests. Publication (draft=false) is deferred to a
+              # LATER step, after the required provenance attestations are generated
+              # and confirmed, so an attestation failure can never leave a public
+              # release without its required provenance (R1 fix).
               gh release create "$TAG" "${assets[@]}" \
                 --repo "$REPO" \
                 --title "$TAG" \
@@ -1172,28 +1168,32 @@ jobs:
                 --verify-tag \
                 --draft
               verify_final_assets
-              gh release edit "$TAG" --repo "$REPO" --draft=false
-              # Immutability (freeze) confirmed BEFORE the final re-verify, so the verified
-              # bytes are platform-frozen and cannot change between verification and publish.
-              require_immutable
-              verify_final_assets
+              echo "already-published=false" >> "$GITHUB_OUTPUT"
               ;;
           esac
-          echo "Release $TAG published and verified (exact asset set + digests + GitHub immutability)."
+          echo "Release $TAG staged and asset-verified (exact asset set + digests). Publication (if pending) follows attestation generation."
 
-      - name: Generate build provenance attestation bound to the published artifact digest
+      - name: Generate build provenance attestation bound to the staged artifact digest
+        # R1 fix: this attestation (and the release-commit attestation below) is
+        # generated BEFORE the draft is published. If either attestation fails,
+        # the release remains an unpublished (non-public) DRAFT — it is never
+        # possible for a public release to exist without its required
+        # provenance. Skipped when the release was already published in a prior,
+        # successful run (its attestations were already generated then).
+        if: steps.stage.outputs.already-published != 'true'
         uses: actions/attest-build-provenance@c074443f1aee8d4aeeae555aebba3282517141b2 # v2.2.3
         with:
           subject-path: pkg/action-bundle.tar.gz
           # NFR6/D18/E5-T3: binds a Sigstore-signed SLSA provenance statement to
           # the EXACT bytes just verified (the same sha256-checked
-          # action-bundle.tar.gz downloaded from the release above) and to this
+          # action-bundle.tar.gz staged in the draft release above) and to this
           # workflow run's source commit/ref — this is the genuine WORKFLOW
           # identity (the dispatch run's own source SHA), not the released
           # commit's identity. `subject-path` hashes the file itself, so the
           # attestation subject digest is independent of `$RELEASE_COMMIT`.
 
       - name: Generate a second attestation binding the artifact digest to the verified release commit
+        if: steps.stage.outputs.already-published != 'true'
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: pkg/action-bundle.tar.gz
@@ -1212,6 +1212,26 @@ jobs:
           # target.
           predicate: |
             {"releaseCommit":"${{ env.RELEASE_COMMIT }}","tag":"${{ env.TAG }}"}
+
+      - name: Publish the verified draft atomically (only after attestations succeed)
+        if: steps.stage.outputs.already-published != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.ACTION_RELEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Both required provenance attestations (above) have already succeeded by
+          # the time this step runs — GitHub Actions steps run sequentially and a
+          # failure in either attestation step would have stopped the job before
+          # reaching here. Flip the DRAFT to published ATOMICALLY only now, so a
+          # public release is never observed without its provenance (R1 fix).
+          gh release edit "$TAG" --repo "$REPO" --draft=false
+          # Confirm GitHub IMMUTABILITY first — this FREEZES the published assets + tag —
+          # THEN re-verify the frozen bytes. Ordering it this way closes the draft's
+          # verify->publish mutable window authoritatively: any tamper in that gap is
+          # frozen at publish and then caught by this post-immutability re-verification.
+          require_immutable
+          verify_final_assets
+          echo "Release $TAG published and verified (exact asset set + digests + GitHub immutability + provenance attestations)."
 
       - name: Advance the floating major tag (bare, lease-then-revalidate)
         env:

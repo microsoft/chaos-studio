@@ -92,7 +92,12 @@ extends:
               - task: TfxInstaller@4
                 displayName: Install tfx-cli
                 inputs:
-                  version: 'v0.x'
+                  # R2 fix: pin the EXACT reviewed tfx-cli version (not the mutable
+                  # 'v0.x' range) so identical repository commits always package/
+                  # publish with identical, checked-in tooling across PR, packaging,
+                  # and publication stages. Keep this pin identical to the other
+                  # TfxInstaller@4 uses in OneBranch.Official.yml.
+                  version: '0.17.0'
 
               - task: PackageAzureDevOpsExtension@4
                 displayName: Package development VSIX

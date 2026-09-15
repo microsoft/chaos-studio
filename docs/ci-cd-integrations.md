@@ -170,25 +170,61 @@ resources. Keep both separate from the identity that **deploys** your applicatio
 The `subscription-id`, `resource-group`, `workspace-name`, `scenario-name`, and
 `scenario-configuration-name` inputs are **identifiers, not secrets**.
 
+## Trusted trigger requirements
+
+Workload identity federation and least privilege (above) establish **what**
+the CI sign-in identity can do once authorized; they say nothing about
+**who** is allowed to trigger the pipeline/workflow that requests it. A
+chaos-capable identity handed to an untrusted or unreviewed trigger is a
+privilege-escalation path regardless of how narrowly its role is scoped.
+Before wiring either platform's example into a real pipeline:
+
+- Restrict the trigger to **trusted branches/environments** — e.g.
+  `push`/`workflow_dispatch` on protected branches, or `trigger`/`pr` scoped to
+  `main`/`release/*` on Azure Pipelines. Do not trigger a chaos-capable job from
+  a fork pull request, and do not use `pull_request_target`/`workflow_run` (or
+  an Azure Pipelines fork-secrets opt-in) to hand a fork's unreviewed code the
+  federated credential exchange.
+- Require **human approval** before the chaos-capable step runs when the
+  trigger could carry unreviewed code — a GitHub `environment` with required
+  reviewers, or an Azure Pipelines `environment`/check with approvals — so a
+  person, not just a role assignment, gates execution.
+- Never grant the chaos-capable identity (or the `id-token: write` permission /
+  service-connection access that obtains it) to a job that also executes
+  unreviewed, externally-contributed code paths — workflow files, composite
+  actions, scripts, or templates from a fork or an unprotected shared source.
+  Least privilege on the target workspace does not protect against unreviewed
+  code running *as* the trusted identity in the first place.
+
+See [`examples/github/README.md`](../examples/github/README.md#trusted-trigger-requirements)
+and [`examples/azure-pipelines/README.md`](../examples/azure-pipelines/README.md#trusted-trigger-requirements)
+for platform-specific mechanics.
+
 ## Concurrency guidance
 
 A scenario configuration has one active run at a time, and it also has exactly
 one `validations/latest` resource. ARM does not version or lock that resource:
 each `validate` call **overwrites** `validations/latest`, including its
 `executionPlanJson`, with no eTag/If-Match/idempotency key to detect the
-overwrite. In `validate-and-execute` mode this is safe because validate and
-execute run back-to-back in the same step. In `execute-only` mode (running a
-plan a prior stage validated) this is a real hazard: if **any** other run —
-another pipeline, a manual `az rest` call, a retry — calls `validate` on the
-same configuration between your validation stage and your execute stage, it
-silently replaces `validations/latest` and the `executionPlanJson` your
-`execute-only` step will run, with no error surfaced to either stage. Concurrency
-guidance below therefore isn't only about avoiding two overlapping *runs* of the
-same configuration; it's about avoiding an intervening *validate* call that
-supersedes the plan an already-completed validation stage is relying on.
+overwrite. This is a hazard in **both** `execute-only` mode (running a plan a
+prior stage validated) and `validate-and-execute` mode: another pipeline, a
+manual `az rest` call, or a retry that calls `validate` on the same
+configuration **while your own validate-and-execute call is polling for the
+run to finish** can silently replace `validations/latest` before your call's
+own execute request reads it — running back-to-back in the same step does
+**not** make the pair atomic, because polling is a separate, unlocked request
+against a resource any other caller can overwrite in between. Concurrency
+guidance below therefore isn't only about avoiding two overlapping *runs* of
+the same configuration; it's about avoiding an intervening *validate* call
+that supersedes the plan an in-flight or already-completed validation stage is
+relying on — for every mode, including combined `validate-and-execute` jobs.
+The integration does not implement client-side locking around
+`validations/latest`; every caller that targets the same configuration must
+adopt the coordinated concurrency controls below.
 
 To avoid overlapping runs of the same configuration, and to prevent a stray
-`validate` call from replacing the plan between validate and execute stages:
+`validate` call from replacing the plan between validate and execute stages
+(or during a `validate-and-execute` call's own polling window):
 
 - **GitHub Actions:** put the job in a
   [`concurrency`](https://docs.github.com/actions/using-jobs/using-concurrency)

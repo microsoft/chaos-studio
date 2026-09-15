@@ -387,6 +387,60 @@ test('the OneBranch pipeline binds the REBUILT runtime to the validated commit b
   assert.doesNotMatch(equalityStep.slice(0, equalityStep.indexOf('displayName')), /continue-on-error|\|\| true/);
 });
 
+test('the GitHub Action release requires both attestations to succeed before either publish path runs', () => {
+  // R1: an attestation failure must never leave a public release without its
+  // required provenance. Both attestation steps must run BEFORE the step that
+  // flips the draft to published, on EVERY path (first publish and draft repair).
+  const workflow = readText('.github/workflows/release-action.yml');
+  const stage = workflow.indexOf("- name: Stage assets in a DRAFT release and verify (no publish yet)");
+  const buildProv = workflow.indexOf('Generate build provenance attestation bound to the staged artifact digest');
+  const commitProv = workflow.indexOf('Generate a second attestation binding the artifact digest to the verified release commit');
+  const publish = workflow.indexOf('Publish the verified draft atomically (only after attestations succeed)');
+  assert.ok(stage > 0 && buildProv > 0 && commitProv > 0 && publish > 0, 'all four steps exist');
+  assert.ok(stage < buildProv, 'staging/verification precedes the first attestation');
+  assert.ok(buildProv < commitProv, 'the build-provenance attestation precedes the release-commit attestation');
+  assert.ok(commitProv < publish, 'both attestations precede the publish (draft=false) step');
+
+  // The staging step must NOT itself flip draft=false on any path (absent/draft/published);
+  // only the dedicated publish step (after attestations) may do that.
+  const stagingBody = workflow.slice(stage, buildProv);
+  assert.doesNotMatch(stagingBody, /--draft=false/);
+
+  // The publish step runs `gh release edit ... --draft=false` and is the ONLY
+  // step in the job that does so.
+  const publishBody = workflow.slice(publish);
+  assert.match(publishBody, /--draft=false/);
+  const draftFalseCount = (workflow.match(/--draft=false/g) || []).length;
+  assert.equal(draftFalseCount, 1, 'draft=false is flipped in exactly one place, after attestations');
+
+  // Both attestation steps must be skipped (not merely no-op) once the release
+  // was already published in a prior successful run, so a repeat run does not
+  // re-attest or re-publish.
+  assert.match(workflow.slice(buildProv, commitProv), /if: steps\.stage\.outputs\.already-published != 'true'/);
+  assert.match(workflow.slice(commitProv, publish), /if: steps\.stage\.outputs\.already-published != 'true'/);
+  assert.match(workflow.slice(publish), /if: steps\.stage\.outputs\.already-published != 'true'/);
+});
+
+test('the release/packaging pipelines pin an EXACT tfx-cli version, not a mutable range', () => {
+  // R2: identical repository commits must package/publish with identical,
+  // checked-in tooling — not whatever `v0.x` happens to resolve to that day.
+  const files = ['.pipelines/OneBranch.Official.yml', '.pipelines/OneBranch.PullRequest.yml'];
+  const pins = new Set<string>();
+  for (const file of files) {
+    const text = readText(file);
+    const matches = [...text.matchAll(/TfxInstaller@4[\s\S]*?version:\s*'([^']+)'/g)];
+    assert.ok(matches.length > 0, `${file} installs tfx-cli via TfxInstaller@4`);
+    for (const m of matches) {
+      const version = m[1];
+      assert.ok(version, `${file} has a captured tfx-cli version`);
+      assert.doesNotMatch(version, /^v?0\.x$/i, `${file} must not use a mutable tfx-cli range like 'v0.x'`);
+      assert.match(version, /^\d+\.\d+\.\d+$/, `${file} must pin an exact semver tfx-cli version`);
+      pins.add(version);
+    }
+  }
+  assert.equal(pins.size, 1, `all tfx-cli installs must use the SAME exact pinned version, found: ${[...pins].join(', ')}`);
+});
+
 test('both marketplaces are released from ONE core commit, provenance recorded on each side', () => {
   const runbook = readText('docs/runbooks/release.md');
   for (const marker of [
@@ -397,6 +451,29 @@ test('both marketplaces are released from ONE core commit, provenance recorded o
     assert.ok(runbook.includes(marker), `the release runbook names ${marker}`);
   }
   assert.match(runbook, /one commit/i);
+});
+
+test('the release runbook hands off GitHub Marketplace enrollment as a distinct manual step', () => {
+  // R5: release-action.yml creates the GitHub Release and its tags only; it does
+  // not enroll/update the GitHub Marketplace listing. The runbook must say so
+  // explicitly, and must give the operator/admin steps to do it, separate from
+  // (and after) the automated release in section 2.
+  const runbook = readText('docs/runbooks/release.md');
+  assert.match(runbook, /does not publish or update a GitHub Marketplace listing/i);
+  assert.match(runbook, /Developer Agreement/);
+  assert.match(runbook, /Publish this Action to the GitHub\s*\n?\s*Marketplace/);
+  assert.match(runbook, /categor(y|ies)/i);
+  assert.match(runbook, /marketplace\/actions\//, 'the runbook tells the operator to verify the live listing URL');
+
+  // The handoff must be scoped to section 2 (GitHub release) and precede section 3
+  // (Azure Pipelines extension), and must be clearly distinct from automated
+  // release completion.
+  const section2 = markdownSection(runbook, '## 2. Release the GitHub Action');
+  assert.match(section2, /distinct from and\s*\n?\s*additional to/i);
+  assert.ok(
+    runbook.indexOf('GitHub Marketplace listing') < runbook.indexOf('## 3. Release the Azure Pipelines extension'),
+    'the Marketplace handoff appears before the Azure Pipelines release section',
+  );
 });
 
 /**

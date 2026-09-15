@@ -38,6 +38,38 @@ secret or certificate is used. Configure a federated credential on the app
 registration/managed identity for your repo/environment first
 ([docs](https://learn.microsoft.com/azure/developer/github/connect-from-azure)).
 
+## Trusted trigger requirements
+
+Workload identity federation and least privilege establish *what* the runner
+identity can do; they say nothing about *who* is allowed to request that a
+chaos action run. `azure/login` with WIF mints a real Azure session for
+**whatever workflow run asks for it** — if that run was triggered by
+untrusted, unreviewed code, the chaos-capable credential is exposed to that
+code, not just to your reviewed pipeline.
+
+- **Never** trigger these workflows with `pull_request_target`,
+  `workflow_run`, or any other event that runs on a base-repo secret context
+  while checking out a fork's unreviewed head, unless the job explicitly
+  requires human approval before checkout/execution.
+- Restrict `on:` triggers to trusted refs — e.g. `push`/`workflow_dispatch` on
+  protected branches (`main`, `release/*`), not `pull_request` from forks.
+- If a chaos run must be triggerable from a pull request, gate it with a
+  GitHub [environment](https://docs.github.com/actions/deployment/targeting-different-environments/using-environments-for-deployment)
+  that requires **required reviewers** approval before the job (and therefore
+  the `id-token: write` permission and the federated credential exchange) runs.
+  A `fork` PR's `GITHUB_TOKEN` and default permissions are read-only precisely
+  because fork code is unreviewed; do not add `id-token: write` or any
+  chaos-capable environment to a job that executes fork-supplied code paths
+  (workflow files, composite actions, scripts) without that approval gate.
+- The federated credential's subject claim should be scoped to the trusted
+  branch/environment (e.g. `repo:ORG/REPO:ref:refs/heads/main` or
+  `repo:ORG/REPO:environment:chaos`), not to `pull_request` subjects, so even a
+  misconfigured trigger cannot mint a usable token outside that scope.
+
+These requirements are in addition to, not a substitute for, the workload
+identity and least-privilege guidance in
+[the integration guide](../../docs/ci-cd-integrations.md#two-identity-guidance).
+
 ## Supply-chain pinning
 
 **Every** action — third-party *and* `microsoft/chaos-studio` itself — is pinned to
