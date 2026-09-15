@@ -312,21 +312,35 @@ The gate is scoped to break that cycle **without weakening the production gate**
 1. Run this pipeline manually with `publishExtension: true`,
    `extensionManifest: vss-extension.dev.json`, and no `releaseTag`. The receipt gate
    is skipped (Dev manifest); build/sign/publish proceed normally and produce a signed,
-   private `ChaosStudioWorkspacesDev` VSIX on the Marketplace (unlisted, shared only
-   with the RV test organizations).
-2. Install `ChaosStudioWorkspacesDev` into the RV test organizations (per
+   private `ChaosStudioWorkspacesDev` VSIX on the Marketplace — **unlisted, but NOT yet
+   accessible to any organization.** Publishing a private (`public: false`) extension
+   only makes it exist in the publisher's account; it grants **no** organization
+   installation access by itself. Automated sharing as part of the pipeline run is
+   optional and is not configured here — do not assume the publish step shares it.
+2. **Mandatory manual step — share the extension before installing it.** An operator
+   with publisher access must explicitly share `ChaosStudioWorkspacesDev` with each
+   approved RV test organization (Marketplace → Manage publishers → `AzureChaosStudio`
+   → the extension → **Share/Unshare** → add each org by name — see
+   [Microsoft Learn: share a private extension](https://learn.microsoft.com/azure/devops/extend/publish/overview#share-your-extension)).
+   Confirm sharing succeeded (the extension appears under "Shared with" for every
+   approved organization) before proceeding — do not attempt installation until this
+   is confirmed.
+3. Install `ChaosStudioWorkspacesDev` into the RV test organizations (per
    "Environment prerequisites" above) alongside the corresponding private GitHub Action
    build, and execute RV1–RV3 against them.
-3. Record and stamp the receipt (`node scripts/lib/rv-receipt.mjs stamp|verify`, above)
+4. Record and stamp the receipt (`node scripts/lib/rv-receipt.mjs stamp|verify`, above)
    and commit it under `test/release-validation/receipts/<tag>.json`.
-4. Release the GitHub Action first (creates the exact `vMAJOR.MINOR.PATCH` tag —
+5. Release the GitHub Action first (creates the exact `vMAJOR.MINOR.PATCH` tag —
    [`release.md`](release.md)), then run this pipeline again with
    `extensionManifest: vss-extension.json` and `releaseTag` set to that tag. The
    production receipt gate now runs, verifies the committed receipt, binds this build
    to the shared release commit, and — only if all of that passes — signs and publishes
    the production `ChaosStudioWorkspaces` extension.
 
-Later releases repeat only steps 2–4 (using either the previously-published Dev build
-or a fresh private one for RV, as needed); step 1 need not be repeated once a
-`ChaosStudioWorkspacesDev` build already exists in the Marketplace, though re-running
-it to refresh the Dev build before a new RV pass is expected and safe.
+Later releases repeat only steps 3–5 (using either the previously-published Dev build
+or a fresh private one for RV, as needed); steps 1–2 need not be repeated once a
+`ChaosStudioWorkspacesDev` build already exists in the Marketplace **and** is still
+shared with the current set of approved RV organizations — re-confirm sharing (step 2)
+whenever the approved RV organization list changes, and re-running step 1 to refresh
+the Dev build before a new RV pass is expected and safe (sharing persists across
+version updates to the same extension, but should still be spot-checked).

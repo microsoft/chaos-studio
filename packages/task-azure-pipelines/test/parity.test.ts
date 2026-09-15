@@ -132,3 +132,48 @@ test('parity: the ARM bearer token the core hands the logger is masked via tl.se
     'the token never appears in any scalar output',
   );
 });
+
+test('parity: an empty mode input (blank pipeline expression) through the REAL adapter reader and core fails closed with zero credential/ARM calls — it must NOT fall through to the validate-and-execute default (FR16, R1)', async () => {
+  const clock = new FakeClock();
+  const transport = new FakeTransport(); // no routes → any call would throw
+  const cred = new FakeTokenCredentialProvider();
+  const host = new FakeTaskHost({ ...BASE_INPUTS, mode: '' });
+
+  const result = await runAzurePipelinesTask({
+    host,
+    cred,
+    signal: new AbortController().signal,
+    clock,
+    orchestrate: (io: RunContext) => orchestrate(io, transport, { rng: fixedRng(0.5) }),
+  });
+
+  assert.equal(result.success, false);
+  assert.equal(host.failed, true);
+  assert.match(host.failureMessage!, /identifier/);
+  assert.match(host.failureMessage!, /missing required input/);
+  assert.equal(transport.requests.length, 0, 'no ARM request for an empty mode expression');
+  assert.equal(cred.scopes.length, 0, 'no credential acquisition for an empty mode expression');
+});
+
+test('parity: an omitted mode input through the REAL adapter reader and core fails closed with zero credential/ARM calls (FR16, R1)', async () => {
+  const clock = new FakeClock();
+  const transport = new FakeTransport(); // no routes → any call would throw
+  const cred = new FakeTokenCredentialProvider();
+  const host = new FakeTaskHost({ ...BASE_INPUTS });
+
+  const result = await runAzurePipelinesTask({
+    host,
+    cred,
+    signal: new AbortController().signal,
+    clock,
+    orchestrate: (io: RunContext) => orchestrate(io, transport, { rng: fixedRng(0.5) }),
+  });
+
+  assert.equal(result.success, false);
+  assert.equal(host.failed, true);
+  assert.match(host.failureMessage!, /identifier/);
+  assert.match(host.failureMessage!, /missing required input/);
+  assert.equal(transport.requests.length, 0, 'no ARM request for an omitted mode');
+  assert.equal(cred.scopes.length, 0, 'no credential acquisition for an omitted mode');
+});
+

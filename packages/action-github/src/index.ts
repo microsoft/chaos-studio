@@ -56,13 +56,40 @@ export async function runSmokeSelfTest(): Promise<void> {
   dispose();
 }
 
+/**
+ * True when the process is executing inside a REAL GitHub Actions job (as
+ * opposed to the offline release smoke harness, which runs the bundle with a
+ * scrubbed environment via a plain `node <bundle>` invocation). GitHub Actions
+ * unconditionally sets `GITHUB_ACTIONS=true` for every job step; the smoke
+ * harness's scrubbed child environment (see `scripts/smoke-action-bundle.mjs`)
+ * never sets it (R2).
+ */
+function isRealGithubActionsExecution(): boolean {
+  return process.env.GITHUB_ACTIONS === 'true';
+}
+
 /** Compose the real host/credential/signal and run the Action. */
 export async function main(): Promise<void> {
   // Deterministic offline self-test path (release smoke harness only). Must
   // complete and exit 0 ONLY on genuine success — any thrown error below
   // propagates to the catch handler, which fails the process instead of
   // silently exiting 0.
+  //
+  // CONTAINMENT (R2): CHAOS_STUDIO_SMOKE_CHECK is an offline-only escape hatch
+  // that bypasses every required input, authentication, validation, and
+  // execution step. If it were ever inherited into a REAL GitHub Actions job
+  // (accidental workflow env leakage, a misconfigured self-hosted runner,
+  // etc.), the step would silently "pass" without doing anything — the exact
+  // opposite of fail-closed. So a real GitHub Actions execution context
+  // (`GITHUB_ACTIONS=true`, always set by the platform) explicitly REJECTS the
+  // smoke shortcut and fails hard rather than honoring it, even if the env var
+  // is present. Only the harness's scrubbed, non-Actions environment may use it.
   if (process.env.CHAOS_STUDIO_SMOKE_CHECK === '1') {
+    if (isRealGithubActionsExecution()) {
+      throw new Error(
+        'CHAOS_STUDIO_SMOKE_CHECK is not permitted inside a real GitHub Actions execution context (GITHUB_ACTIONS=true); refusing to bypass the step contract.',
+      );
+    }
     await runSmokeSelfTest();
     process.stdout.write('chaos-studio smoke self-test: OK\n');
     return;

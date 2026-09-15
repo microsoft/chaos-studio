@@ -53,13 +53,40 @@ export async function runSmokeSelfTest(): Promise<void> {
   dispose();
 }
 
+/**
+ * True when the process is executing inside a REAL Azure Pipelines agent (as
+ * opposed to the offline release smoke harness, which runs the bundle with a
+ * scrubbed environment via a plain `node <bundle>` invocation). Azure
+ * Pipelines agents unconditionally set `TF_BUILD=True` for every task
+ * execution; the smoke harness's scrubbed child environment (see
+ * `scripts/smoke-action-bundle.mjs`) never sets it (R2).
+ */
+function isRealAzurePipelinesExecution(): boolean {
+  return process.env.TF_BUILD === 'True';
+}
+
 /** Compose the real host/credential/signal and run the task. */
 export async function main(): Promise<void> {
   // Deterministic offline self-test path (release smoke harness only). Must
   // exit 0 ONLY on genuine success. This intentionally bypasses reading a real
   // ARM service connection (which does not exist in the harness's scrubbed
   // environment and would otherwise be reported as a false task failure).
+  //
+  // CONTAINMENT (R2): CHAOS_STUDIO_SMOKE_CHECK is an offline-only escape hatch
+  // that bypasses every required input, authentication, validation, and
+  // execution step. If it were ever inherited into a REAL Azure Pipelines
+  // agent execution (accidental pipeline-variable leakage, a misconfigured
+  // agent, etc.), the task would silently "pass" without doing anything — the
+  // exact opposite of fail-closed. So a real Azure Pipelines execution context
+  // (`TF_BUILD=True`, always set by the agent) explicitly REJECTS the smoke
+  // shortcut and fails hard rather than honoring it, even if the env var is
+  // present. Only the harness's scrubbed, non-agent environment may use it.
   if (process.env.CHAOS_STUDIO_SMOKE_CHECK === '1') {
+    if (isRealAzurePipelinesExecution()) {
+      throw new Error(
+        'CHAOS_STUDIO_SMOKE_CHECK is not permitted inside a real Azure Pipelines execution context (TF_BUILD=True); refusing to bypass the task contract.',
+      );
+    }
     await runSmokeSelfTest();
     process.stdout.write('chaos-studio smoke self-test: OK\n');
     return;

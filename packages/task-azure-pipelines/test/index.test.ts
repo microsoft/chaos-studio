@@ -64,11 +64,30 @@ test('runSmokeSelfTest completes without reading a real ARM service connection o
 
 test('main() honors CHAOS_STUDIO_SMOKE_CHECK=1 and resolves without reading the service connection', async () => {
   const previous = process.env.CHAOS_STUDIO_SMOKE_CHECK;
+  const previousTfBuild = process.env.TF_BUILD;
   process.env.CHAOS_STUDIO_SMOKE_CHECK = '1';
+  delete process.env.TF_BUILD; // offline harness environment: never a real agent execution
   try {
     await assert.doesNotReject(main());
   } finally {
     if (previous === undefined) delete process.env.CHAOS_STUDIO_SMOKE_CHECK;
     else process.env.CHAOS_STUDIO_SMOKE_CHECK = previous;
+    if (previousTfBuild === undefined) delete process.env.TF_BUILD;
+    else process.env.TF_BUILD = previousTfBuild;
+  }
+});
+
+test('main() REJECTS CHAOS_STUDIO_SMOKE_CHECK=1 inside a real Azure Pipelines execution context (TF_BUILD=True) instead of silently succeeding (R2)', async () => {
+  const previous = process.env.CHAOS_STUDIO_SMOKE_CHECK;
+  const previousTfBuild = process.env.TF_BUILD;
+  process.env.CHAOS_STUDIO_SMOKE_CHECK = '1';
+  process.env.TF_BUILD = 'True';
+  try {
+    await assert.rejects(main(), /not permitted inside a real Azure Pipelines execution context/);
+  } finally {
+    if (previous === undefined) delete process.env.CHAOS_STUDIO_SMOKE_CHECK;
+    else process.env.CHAOS_STUDIO_SMOKE_CHECK = previous;
+    if (previousTfBuild === undefined) delete process.env.TF_BUILD;
+    else process.env.TF_BUILD = previousTfBuild;
   }
 });

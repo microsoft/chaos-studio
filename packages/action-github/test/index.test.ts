@@ -64,11 +64,30 @@ test('runSmokeSelfTest completes without touching the network or leaking process
 
 test('main() honors CHAOS_STUDIO_SMOKE_CHECK=1 and resolves without running the real Action', async () => {
   const previous = process.env.CHAOS_STUDIO_SMOKE_CHECK;
+  const previousActions = process.env.GITHUB_ACTIONS;
   process.env.CHAOS_STUDIO_SMOKE_CHECK = '1';
+  delete process.env.GITHUB_ACTIONS; // offline harness environment: never a real Actions job
   try {
     await assert.doesNotReject(main());
   } finally {
     if (previous === undefined) delete process.env.CHAOS_STUDIO_SMOKE_CHECK;
     else process.env.CHAOS_STUDIO_SMOKE_CHECK = previous;
+    if (previousActions === undefined) delete process.env.GITHUB_ACTIONS;
+    else process.env.GITHUB_ACTIONS = previousActions;
+  }
+});
+
+test('main() REJECTS CHAOS_STUDIO_SMOKE_CHECK=1 inside a real GitHub Actions execution context (GITHUB_ACTIONS=true) instead of silently succeeding (R2)', async () => {
+  const previous = process.env.CHAOS_STUDIO_SMOKE_CHECK;
+  const previousActions = process.env.GITHUB_ACTIONS;
+  process.env.CHAOS_STUDIO_SMOKE_CHECK = '1';
+  process.env.GITHUB_ACTIONS = 'true';
+  try {
+    await assert.rejects(main(), /not permitted inside a real GitHub Actions execution context/);
+  } finally {
+    if (previous === undefined) delete process.env.CHAOS_STUDIO_SMOKE_CHECK;
+    else process.env.CHAOS_STUDIO_SMOKE_CHECK = previous;
+    if (previousActions === undefined) delete process.env.GITHUB_ACTIONS;
+    else process.env.GITHUB_ACTIONS = previousActions;
   }
 });

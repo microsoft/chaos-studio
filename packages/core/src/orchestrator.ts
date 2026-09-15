@@ -12,7 +12,6 @@
 
 import {
   CLEANUP_TIMEOUT_SECONDS,
-  DEFAULT_MODE,
   INPUT_DEFAULTS,
   INPUT_NAMES,
   MODES,
@@ -275,14 +274,38 @@ async function handleForwardFailure(
   return failure(io, outputs, normalized);
 }
 
-/** Read + validate the mode input; unknown/unset fails closed (FR16). */
+/**
+ * Read + validate the mode input; unknown/unset/empty fails closed (FR16, R1).
+ *
+ * The documented `validate-and-execute` default (D1) is applied ONLY by the
+ * platform metadata (`action.yml` `default:` / `task.json` `defaultValue`)
+ * when a user genuinely omits the `mode` input from their workflow/pipeline —
+ * the platform substitutes the default string before the adapter ever runs,
+ * so the core sees the literal `'validate-and-execute'` value in that case.
+ *
+ * A blank/whitespace expression (e.g. `mode: ${{ steps.x.outputs.y }}` that
+ * resolves empty) is NOT the same as omission: both `@actions/core` and
+ * `azure-pipelines-task-lib` report it as an empty string, which each
+ * adapter's {@link IInputReader} normalizes to `undefined` (matching the
+ * platform's own "unset" convention). If the core silently re-applied
+ * `contract.ts`'s `DEFAULT_MODE` to that `undefined`, an explicit-but-empty mode
+ * expression could start a chaos run instead of failing closed — this is
+ * exactly the gap FR16 requires be rejected. The core therefore MUST NOT
+ * default an undefined/empty mode; it always requires a concrete, valid
+ * member of {@link MODES} to reach this point.
+ */
 function readMode(io: RunContext): Mode {
   const raw = io.input.get(INPUT_NAMES.mode);
-  const value = raw && raw.length > 0 ? raw : DEFAULT_MODE;
-  if (!(MODES as readonly string[]).includes(value)) {
-    throw new CoreError('identifier', `unknown mode '${value}'; expected one of ${MODES.join(', ')}`);
+  if (raw === undefined || raw.length === 0) {
+    throw new CoreError(
+      'identifier',
+      `missing required input '${INPUT_NAMES.mode}'; expected one of ${MODES.join(', ')} (the platform-level default applies only when the input is genuinely omitted, not when it resolves empty)`,
+    );
   }
-  return value as Mode;
+  if (!(MODES as readonly string[]).includes(raw)) {
+    throw new CoreError('identifier', `unknown mode '${raw}'; expected one of ${MODES.join(', ')}`);
+  }
+  return raw as Mode;
 }
 
 /** Read + validate the five resource identifiers (FR14). */

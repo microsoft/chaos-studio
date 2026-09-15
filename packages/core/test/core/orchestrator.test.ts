@@ -263,6 +263,32 @@ test('an unknown mode fails closed with no network calls (FR16)', async () => {
   assert.equal(t.requests.length, 0);
 });
 
+test('an undefined (genuinely omitted) mode fails closed with no credential or network calls, rather than silently defaulting (FR16, R1)', async () => {
+  const t = new FakeTransport();
+  const cred = new FakeCredential();
+  const { io } = ctx({ ...BASE_IDS }, { cred });
+  const result = await orchestrate(io, t, OPTS);
+
+  assert.equal(result.success, false);
+  assert.match(result.failureReason!, /identifier/);
+  assert.match(result.failureReason!, /missing required input/);
+  assert.equal(t.requests.length, 0, 'no ARM call for an undefined mode');
+  assert.equal(cred.calls.length, 0, 'no credential/auth call for an undefined mode');
+});
+
+test('an empty-string mode (e.g. a blank workflow expression) fails closed exactly like an undefined mode — it must NOT silently start a chaos run via the documented default (FR16, R1)', async () => {
+  const t = new FakeTransport();
+  const cred = new FakeCredential();
+  const { io } = ctx({ ...BASE_IDS, mode: '' }, { cred });
+  const result = await orchestrate(io, t, OPTS);
+
+  assert.equal(result.success, false);
+  assert.match(result.failureReason!, /identifier/);
+  assert.match(result.failureReason!, /missing required input/);
+  assert.equal(t.requests.length, 0, 'no ARM call for an empty mode');
+  assert.equal(cred.calls.length, 0, 'no credential/auth call for an empty mode');
+});
+
 // ---------------------------------------------------------------------------
 // Timeout + cancellation + cleanup (FR10, FR11, D9, D10).
 // ---------------------------------------------------------------------------

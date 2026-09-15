@@ -36,6 +36,28 @@ takes effect on the consumer's next run with no action from them.
 2. **Incident only — repoint `v1` directly.** Performed by the release identity,
    because no other principal can write the ref:
 
+   > **Freeze publication BEFORE repointing.** The tag move alone does not stop a
+   > publication that is already pending or re-running for the bad highest version:
+   > if `release-action.yml` completes (or is manually re-run) for that version
+   > *after* you repoint `v1`, its floating-major step sees the bad version as
+   > still the highest and advances `v1` right back to it, silently undoing the
+   > rollback. The lease check in that workflow only prevents *concurrent*
+   > publications from racing each other — it does not know a version has been
+   > withdrawn, so it does not block a rerun of that same version on its own.
+   >
+   > Before repointing `v1`:
+   >   1. Cancel every pending or in-progress run of `release-action.yml` (and the
+   >      OneBranch pipeline, if triggered from the same tag) for the bad version,
+   >      via the Actions/Azure DevOps run list. Confirm no run for that version is
+   >      queued or running before proceeding.
+   >   2. Treat the bad version as permanently withdrawn: do **not** re-run or
+   >      re-dispatch its workflow/pipeline run under any circumstance, even to
+   >      "finish" a run that looked stuck. A withdrawn version must never
+   >      complete publication again.
+   >   3. Resumption is permitted **only** for a newer, approved patch version cut
+   >      from fixed code (the roll-forward path above) — never for the withdrawn
+   >      version itself.
+
    ```bash
    # Authenticated as the release identity (on the tag-ruleset bypass list).
    # <last-good-release-commit> is the commit the last-good VERSION tag resolves

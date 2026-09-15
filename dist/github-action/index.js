@@ -27290,11 +27290,16 @@ async function handleForwardFailure(io, outputs, client, transport, opts, err, a
 }
 function readMode(io) {
   const raw = io.input.get(INPUT_NAMES.mode);
-  const value = raw && raw.length > 0 ? raw : DEFAULT_MODE;
-  if (!MODES.includes(value)) {
-    throw new CoreError("identifier", `unknown mode '${value}'; expected one of ${MODES.join(", ")}`);
+  if (raw === void 0 || raw.length === 0) {
+    throw new CoreError(
+      "identifier",
+      `missing required input '${INPUT_NAMES.mode}'; expected one of ${MODES.join(", ")} (the platform-level default applies only when the input is genuinely omitted, not when it resolves empty)`
+    );
   }
-  return value;
+  if (!MODES.includes(raw)) {
+    throw new CoreError("identifier", `unknown mode '${raw}'; expected one of ${MODES.join(", ")}`);
+  }
+  return raw;
 }
 function readCoordinates(io) {
   const required = (name2) => {
@@ -31782,8 +31787,16 @@ async function runSmokeSelfTest() {
   }
   dispose();
 }
+function isRealGithubActionsExecution() {
+  return process.env.GITHUB_ACTIONS === "true";
+}
 async function main() {
   if (process.env.CHAOS_STUDIO_SMOKE_CHECK === "1") {
+    if (isRealGithubActionsExecution()) {
+      throw new Error(
+        "CHAOS_STUDIO_SMOKE_CHECK is not permitted inside a real GitHub Actions execution context (GITHUB_ACTIONS=true); refusing to bypass the step contract."
+      );
+    }
     await runSmokeSelfTest();
     process.stdout.write("chaos-studio smoke self-test: OK\n");
     return;
