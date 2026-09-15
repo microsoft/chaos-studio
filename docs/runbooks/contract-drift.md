@@ -54,16 +54,26 @@ It changes only by the reviewed procedure below.
 ## When the drift workflow fails
 
 The `drift` job runs repository code and holds no write permission; the `report` job
-holds `issues: write`, runs no repository code, and opens (or comments on) a single
-`contract-drift`-labelled service defect. Start from that issue.
+holds `issues: write`, runs no repository code, and files a single deduplicated issue.
+**Which** issue it files depends on an explicit contract verdict, not on the mere fact
+that the job failed:
+
+| Verdict | Label | Meaning |
+|---|---|---|
+| A contract check reported `contract=mismatch` — provenance re-derivation, the source-contract suite, or the pinned `api-version` assertion | `contract-drift` | A **confirmed** source-contract mismatch. Treat it as a service defect and follow the steps below. |
+| The job failed without any contract check reporting a mismatch — `npm ci`, the runner, a timeout, or the repository-side release-validation suite | `contract-drift-workflow-failure` | **Not** evidence of drift. Fix the workflow; do not file a service defect on the strength of it. Drift detection is not running until it is green. |
+
+Start from that issue.
 
 1. **Read which step failed.**
 
-   | Failing step | Meaning |
-   |---|---|
-   | Provenance re-derivation | A fixture, a source extract, or a recorded hash no longer agrees with the rest — usually an edit that bypassed the generator. |
-   | Contract / release-validation suites | An assertion about the wire shape or the RV evaluators broke. |
-   | Pinned `api-version` assertion | The constant moved, or a literal somewhere in the shipped surface disagrees with it. |
+   | Failing step | Contract evidence? | Meaning |
+   |---|---|---|
+   | Install workspace dependencies | No | Setup failure; says nothing about the contract. |
+   | Provenance re-derivation | Yes | A fixture, a source extract, or a recorded hash no longer agrees with the rest — usually an edit that bypassed the generator. |
+   | Source-contract suite | Yes | An assertion about the wire shape broke. |
+   | Release-validation suite | No | This repository's release machinery regressed (receipt evaluators, RBAC template, release gates) — a repository defect, not a protocol mismatch. |
+   | Pinned `api-version` assertion | Yes | The constant moved, or a literal somewhere in the shipped surface disagrees with it. |
 
 2. **Reproduce locally** at the same commit:
 

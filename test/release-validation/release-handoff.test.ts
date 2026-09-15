@@ -301,6 +301,34 @@ test('the OneBranch extension pipeline gates the VSIX publish on the same receip
   assert.match(publish, /dependsOn: sign\n/);
 });
 
+test('the OneBranch pipeline binds the REBUILT runtime to the validated commit before it is staged or packaged', () => {
+  const pipeline = readText('.pipelines/OneBranch.Official.yml');
+  const build = pipeline.slice(pipeline.indexOf('- stage: build'), pipeline.indexOf('- stage: sign'));
+
+  // The receipt gate proves the COMMITTED shipping paths are unchanged, but the
+  // pipeline REBUILDS dist and stages that generated runtime into the VSIX, so a
+  // changed build input outside those paths would otherwise ship unvalidated bytes.
+  const equality = build.indexOf('node scripts/lib/verify-built-runtime.mjs');
+  assert.ok(equality > 0, 'the rebuilt runtime is compared against the validated commit');
+
+  const rebuild = build.indexOf('- script: npm run build');
+  const stage = build.indexOf('Stage task runtime into every task folder');
+  const packageVsix = build.indexOf('PackageAzureDevOpsExtension@4');
+  assert.ok(rebuild > 0 && stage > 0 && packageVsix > 0, 'the build/stage/package steps exist');
+  assert.ok(equality > rebuild, 'the equality check runs AFTER the rebuild');
+  assert.ok(equality < stage, 'the equality check runs BEFORE the rebuilt runtime is staged');
+  assert.ok(equality < packageVsix, 'the equality check runs BEFORE the VSIX is packaged');
+
+  // The receipt gate publishes the validated commit for the equality check to consume.
+  assert.match(build, /task\.setvariable variable=ReleaseValidatedCommit/);
+  assert.match(build, /RUNTIME_BASELINE_COMMIT: \$\(ReleaseValidatedCommit\)/);
+  // ...and a publishing run without that baseline FAILS rather than degrading to HEAD.
+  const equalityStep = build.slice(build.lastIndexOf('- script: |', equality));
+  assert.match(equalityStep, /publishExtension/, 'a publishing run requires the validated baseline');
+  assert.doesNotMatch(equalityStep.slice(0, equalityStep.indexOf('displayName')), /\$\{\{ parameters/);
+  assert.doesNotMatch(equalityStep.slice(0, equalityStep.indexOf('displayName')), /continue-on-error|\|\| true/);
+});
+
 test('both marketplaces are released from ONE core commit, provenance recorded on each side', () => {
   const runbook = readText('docs/runbooks/release.md');
   for (const marker of [
@@ -356,6 +384,40 @@ test('drift opens a service defect with least privilege and never changes client
   assert.ok(!report.includes('actions/checkout'), 'the reporting job runs no repository code');
   assert.match(report, /service defect/i);
   assert.match(report, /contract-drift/);
+});
+
+test('only a CONFIRMED contract mismatch is reported as a source-contract service defect', () => {
+  const workflow = readText('.github/workflows/contract-drift.yml');
+  const drift = workflow.slice(workflow.indexOf('\n  drift:'), workflow.indexOf('\n  report:'));
+  const report = workflow.slice(workflow.indexOf('\n  report:'));
+
+  // The drift job publishes an EXPLICIT contract-check verdict; a step that cannot
+  // observe the contract (dependency install, the release-validation suite) never
+  // sets it, so its failure cannot masquerade as drift.
+  assert.match(drift, /\n {4}outputs:\n/);
+  assert.match(drift, /contractMismatch: \$\{\{[^}]*steps\./);
+  assert.match(drift, /contract=mismatch/);
+  for (const id of ['provenance', 'contract_suite', 'api_version']) {
+    assert.ok(drift.includes(`id: ${id}`), `the ${id} contract check is individually identified`);
+  }
+  // The release-validation suite is a SEPARATE step from the contract suite so its
+  // failure is reported for what it is.
+  const contractSuite = drift.slice(drift.indexOf('id: contract_suite'));
+  assert.ok(
+    contractSuite.slice(0, contractSuite.indexOf('id: release_validation_suite')).includes('packages/core/test/contract/**/*.test.ts'),
+    'the contract suite step runs the contract tests',
+  );
+  assert.ok(drift.includes('id: release_validation_suite'), 'the release-validation suite is its own step');
+  const afterRvId = drift.slice(drift.indexOf('id: release_validation_suite'));
+  const releaseValidation = afterRvId.slice(0, afterRvId.indexOf('\n      - name:'));
+  assert.ok(releaseValidation.includes('test/release-validation/**/*.test.ts'), 'the release-validation step runs that suite');
+  assert.ok(!releaseValidation.includes('contract=mismatch'), 'a release-validation failure does not claim contract drift');
+
+  // The reporting job branches on that verdict rather than on "the job failed".
+  assert.match(report, /needs\.drift\.outputs\.contractMismatch/);
+  // A non-contract failure is still reported, but never as a source-contract defect.
+  assert.match(report, /did not (confirm|report) a (source-)?contract mismatch|not evidence of contract drift/i);
+  assert.doesNotMatch(report, /continue-on-error/);
 });
 
 test('the drift workflow itself re-runs the TypeScript checks that guard it', () => {

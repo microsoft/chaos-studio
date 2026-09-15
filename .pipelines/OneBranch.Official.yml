@@ -219,6 +219,11 @@ extends:
                     exit 1
                   fi
                   echo "RV1-RV3 receipt accepted; shipped trees equal validated commit $VALIDATED_COMMIT."
+                  # Publish the validated commit so the POST-BUILD runtime-equality gate
+                  # below can bind the REBUILT bytes to it. The committed-tree comparison
+                  # above cannot see a build INPUT (scripts/build.mjs, root dependency
+                  # metadata) that changes what the rebuild emits.
+                  echo "##vso[task.setvariable variable=ReleaseValidatedCommit]$VALIDATED_COMMIT"
                 displayName: Release-validation receipt gate (RV1-RV3 evidence for this release)
                 # Inescapable on a PUBLISHING run. A non-publishing validation build still
                 # compiles and packages an unsigned VSIX without environment evidence.
@@ -240,6 +245,43 @@ extends:
 
               - script: npm run build
                 displayName: Build committed bundles
+
+              # POST-BUILD RUNTIME-EQUALITY GATE (E6-T2). The VSIX ships the runtime this
+              # pipeline just REBUILT, not the blobs the receipt gate compared. A build
+              # INPUT outside the four committed shipping paths — `scripts/build.mjs`, the
+              # root dependency metadata, a transitive bundler version — can therefore
+              # change the packaged bytes while that comparison still passes. Require the
+              # rebuilt runtime to equal the runtime COMMITTED at the validated commit,
+              # exactly: complete file set (added AND removed), git-normalized modes, and
+              # blob hashes. This runs BEFORE the runtime is staged into the task folders
+              # and long before anything is signed or published.
+              #
+              # On a PUBLISHING run the baseline is the receipt's validated commit and a
+              # missing baseline FAILS (it is never downgraded to HEAD). On a
+              # non-publishing build the baseline is HEAD, which is the same build-drift
+              # gate the GitHub `test` and `release-action` workflows enforce.
+              - script: |
+                  set -euo pipefail
+                  # An unset pipeline variable arrives as the literal macro, so require a
+                  # 40-character hex commit rather than trusting the string.
+                  BASELINE="${RUNTIME_BASELINE_COMMIT:-}"
+                  case "$BASELINE" in
+                    [0-9a-f]*) [ "${#BASELINE}" -eq 40 ] || BASELINE='' ;;
+                    *) BASELINE='' ;;
+                  esac
+                  if [ "${PUBLISHING}" = "True" ]; then
+                    if [ -z "$BASELINE" ]; then
+                      echo "##vso[task.logissue type=error]A publishing run has no validated baseline commit; the release-validation receipt gate must run before the rebuilt runtime can be bound to it."
+                      exit 1
+                    fi
+                  else
+                    BASELINE="$(git rev-parse HEAD)"
+                  fi
+                  node scripts/lib/verify-built-runtime.mjs "$BASELINE"
+                displayName: Bind the rebuilt runtime to the validated commit (byte-identical shipping invariant)
+                env:
+                  RUNTIME_BASELINE_COMMIT: $(ReleaseValidatedCommit)
+                  PUBLISHING: ${{ parameters.publishExtension }}
 
               - script: |
                   set -euo pipefail

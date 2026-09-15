@@ -125,6 +125,24 @@ the receipt and proceed to [`release.md`](release.md).
 Exit codes: `0` gate passed, `1` gate **failed** (evidence rejected), `2` usage or
 I/O error.
 
+Shipped-tree equality has a second half on the Azure Pipelines side, because the
+OneBranch `build` stage **rebuilds** `dist/` and packages the rebuilt runtime rather
+than the committed blobs. After `npm run build`, and before anything is staged,
+packaged, signed or published, it runs:
+
+```bash
+node scripts/lib/verify-built-runtime.mjs <validated-commit>
+```
+
+which requires the rebuilt `dist/` to equal the `dist/` committed at the receipt's
+validated commit exactly — the complete file set (added **and** removed),
+git-normalized modes, and blob hashes. That closes the gap where a changed build
+*input* outside the compared shipping paths (`scripts/build.mjs`, the root dependency
+metadata, a transitive bundler version) would otherwise produce packaged bytes RV1–RV3
+never exercised. On a publishing run a missing baseline **fails**; it is never
+downgraded to `HEAD`. Its exit codes match the receipt CLI: `0` pass, `1` mismatch
+(release blocked), `2` usage or I/O error.
+
 ---
 
 ## Responding to a failed RV

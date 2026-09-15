@@ -32,6 +32,24 @@ So changes to `docs/**` or to the receipt itself may land after the validated co
 changes to `packages/**`, `action.yml`, `dist/**`, or `azure-pipelines-extension/**`
 may not — they invalidate the RV evidence and require a re-run.
 
+That comparison covers the **committed** shipping paths. The Azure Pipelines
+extension additionally **rebuilds** `dist/` and packages the result, so a change to a
+build *input* that lives outside those paths — `scripts/build.mjs`, the root
+dependency metadata, a transitive bundler version — could otherwise alter the
+packaged bytes while the comparison still passed. The OneBranch `build` stage
+therefore also runs, after `npm run build` and **before** anything is staged,
+packaged, signed or published:
+
+```bash
+node scripts/lib/verify-built-runtime.mjs <validated-commit>
+```
+
+which requires the rebuilt `dist/` to equal the `dist/` committed at the validated
+commit exactly — the complete file set (added **and** removed), git-normalized modes,
+and blob hashes. If a build input moved, this fails and the fix is to re-run RV1–RV3
+against the commit being released, not to bypass the check. The same invariant is
+enforced on the GitHub side by the `validate` job's clean-rebuild comparison.
+
 ## 1. Confirm the evidence is in place
 
 ```bash
