@@ -26620,6 +26620,34 @@ var Deadline = class _Deadline {
     return this.clock.now() >= this.endMs;
   }
 };
+function readObservedWireShape(json) {
+  const props = json?.properties;
+  if (props === void 0 || props === null || typeof props !== "object") {
+    return {
+      businessState: void 0,
+      startTime: void 0,
+      endTime: void 0,
+      statusField: void 0,
+      startTimeField: void 0,
+      endTimeField: void 0,
+      errorChannelsPresent: []
+    };
+  }
+  const asString = (v) => typeof v === "string" ? v : void 0;
+  const status = asString(props["status"]);
+  const startTime = asString(props["startTime"]);
+  const endTime = asString(props["endTime"]);
+  const errorChannelsPresent = Object.keys(props).filter((k) => Array.isArray(props[k]));
+  return {
+    businessState: status,
+    startTime,
+    endTime,
+    statusField: status !== void 0 ? "status" : void 0,
+    startTimeField: startTime !== void 0 ? "startTime" : void 0,
+    endTimeField: endTime !== void 0 ? "endTime" : void 0,
+    errorChannelsPresent
+  };
+}
 var ArmHttpClient = class {
   clock;
   rng;
@@ -26800,7 +26828,8 @@ var ArmHttpClient = class {
           correlationId: parsed.correlationId,
           requestId: parsed.requestId,
           errorCode: parsed.errorCode,
-          errorMessage: parsed.errorMessage === void 0 ? void 0 : redact(parsed.errorMessage)
+          errorMessage: parsed.errorMessage === void 0 ? void 0 : redact(parsed.errorMessage),
+          ...readObservedWireShape(parsed.json)
         });
       }
       return parsed;

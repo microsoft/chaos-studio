@@ -435,6 +435,28 @@ test('the OneBranch pipeline binds the REBUILT runtime to the validated commit b
   assert.doesNotMatch(equalityStep.slice(0, equalityStep.indexOf('displayName')), /continue-on-error|\|\| true/);
 });
 
+test('the OneBranch PR pipeline binds the REBUILT runtime to HEAD before it is staged or packaged', () => {
+  const pipeline = readText('.pipelines/OneBranch.PullRequest.yml');
+
+  // R2: the PR pipeline rebuilds dist and immediately stages/packages it. Without
+  // an equality check the rebuild could silently diverge from what a reviewer
+  // approved and from what the GitHub CI / Official runtime-equality gates would
+  // reject, letting the same revision pass here while failing elsewhere.
+  const equality = pipeline.indexOf('node scripts/lib/verify-built-runtime.mjs');
+  assert.ok(equality > 0, 'the rebuilt runtime is compared against HEAD');
+
+  const rebuild = pipeline.indexOf('- script: npm run build');
+  const stage = pipeline.indexOf('Stage task runtime into every task folder');
+  const packageVsix = pipeline.indexOf('PackageAzureDevOpsExtension@4');
+  assert.ok(rebuild > 0 && stage > 0 && packageVsix > 0, 'the build/stage/package steps exist');
+  assert.ok(equality > rebuild, 'the equality check runs AFTER the rebuild');
+  assert.ok(equality < stage, 'the equality check runs BEFORE the rebuilt runtime is staged');
+  assert.ok(equality < packageVsix, 'the equality check runs BEFORE the VSIX is packaged');
+
+  const equalityStep = pipeline.slice(pipeline.lastIndexOf('- script:', equality));
+  assert.doesNotMatch(equalityStep.slice(0, equalityStep.indexOf('displayName')), /continue-on-error|\|\| true/);
+});
+
 test('the GitHub Action release requires both attestations to succeed before either publish path runs', () => {
   // R1: an attestation failure must never leave a public release without its
   // required provenance. Both attestation steps must run BEFORE the step that

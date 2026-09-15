@@ -79,6 +79,16 @@ extends:
               - script: npm run build
                 displayName: Build committed bundles
 
+              # R2 fix: the rebuild above can silently drift from the committed
+              # dist/ bundles (e.g. a source change that isn't reflected in the
+              # checked-in output) unless the two are explicitly compared. Bind
+              # the just-built runtime to the reviewed HEAD commit BEFORE it is
+              # staged into the task folders and packaged, so a PR that would
+              # fail the same GitHub CI / Official runtime-equality gate is
+              # rejected here too instead of packaging different bytes.
+              - script: node scripts/lib/verify-built-runtime.mjs "$(git rev-parse HEAD)"
+                displayName: Bind the rebuilt runtime to HEAD (byte-identical shipping invariant)
+
               - script: |
                   set -euo pipefail
                   # Stage the built task runtime into EVERY task folder so the
