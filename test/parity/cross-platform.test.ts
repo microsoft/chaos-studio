@@ -194,6 +194,9 @@ test('parity: a terminal Failed run ⇒ identical fail result + identical failur
   assertParity(gh, ado);
   assert.equal(gh.failed, true);
   assert.equal(gh.outputs['run-state'], 'Failed');
+  // R4: a normally observed Failed terminal run carries a real service endTime,
+  // which IS emitted as completed-at on both platforms (unlike timeout/cleanup).
+  assert.equal(gh.outputs['completed-at'], '2026-05-01T12:04:30Z', 'completed-at emitted for a normally observed Failed run');
 });
 
 test('parity: execute-only no-wait ⇒ identical last-observed outputs and pass on both platforms', async () => {

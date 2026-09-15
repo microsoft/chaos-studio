@@ -116,10 +116,23 @@ node scripts/lib/rv-receipt.mjs verify test/release-validation/receipts/<tag>.js
 The printed `receipt-core-commit` must be an ancestor of the tag's commit, and
 `receipt-digest` must match what section 4 recorded.
 
-> A cryptographic SLSA build-provenance attestation is **not** emitted today. Adding
-> one requires `attestations: write` on the publish job and is tracked as follow-up
-> work; until then the receipt, the committed `dist`, and the gate log are the audit
-> trail.
+**Cryptographic build provenance (GitHub-native attestation):** the `publish` job
+generates a [SLSA build-provenance attestation](https://docs.github.com/en/actions/security-guides/using-artifact-attestations-to-establish-provenance-for-builds)
+via `actions/attest-build-provenance`, using the job's own OIDC identity
+(`id-token: write`) — no long-lived signing secret. The attestation subject is
+the exact `action-bundle.tar.gz` bytes already verified against the release's
+published sha256 digest in the same job, so it is bound to the published
+artifact, not merely to the release commit. `attestations: write` is scoped to
+only the `publish` job (least privilege).
+
+Verify a published release's provenance with the GitHub CLI:
+
+```bash
+gh attestation verify pkg/action-bundle.tar.gz --repo <owner>/<repo>
+```
+
+This checks the Sigstore signature, confirms the artifact digest, and confirms
+the attestation was produced by this repository's `release-action` workflow.
 
 ## 3. Release the Azure Pipelines extension
 

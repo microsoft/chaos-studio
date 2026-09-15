@@ -220,7 +220,7 @@ test('execute-only no-wait: a genuinely PENDING observation CREDENTIAL is aborte
   assert.ok(log.warnings.some((w) => w.includes('no-wait last-observed GET failed')), 'the pending observation was handled non-fatally');
 });
 
-test('wait mode: a terminal Failed run fails the step, preserves the ARM error code, and does NOT emit completed-at even though the run has an endTime (D11, D12, VF10, finding #1)', async () => {
+test('wait mode: a terminal Failed run fails the step, preserves the ARM error code, and DOES emit completed-at from the observed endTime (D11, D12, VF10, R4)', async () => {
   const t = new FakeTransport()
     .on('POST', '/execute', executeAccept())
     .on('GET', '/runs/', runFailed());
@@ -230,9 +230,10 @@ test('wait mode: a terminal Failed run fails the step, preserves the ARM error c
   assert.equal(result.success, false);
   assert.equal(out.values['run-state'], 'Failed');
   assert.equal(out.values['started-at'], '2026-05-01T12:01:00Z', 'started-at is still emitted');
-  // The run-failed fixture carries an endTime, but completed-at is a SUCCESS-only
-  // output — it must not be populated for a Failed run.
-  assert.equal(out.values['completed-at'], undefined, 'completed-at is not emitted for a non-success terminal run');
+  // A Failed run was normally observed to a terminal state with a real
+  // service-provided endTime, so completed-at IS emitted (R4) — unlike the
+  // timeout/cleanup cases below where no normal terminal observation occurred.
+  assert.equal(out.values['completed-at'], '2026-05-01T12:04:30Z', 'completed-at is emitted for a normally observed Failed terminal run');
   assert.match(result.failureReason!, /run-failed/);
   assert.match(result.failureReason!, /InternalExecutionError/);
 });

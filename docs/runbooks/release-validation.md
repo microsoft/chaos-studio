@@ -24,6 +24,13 @@ receipt failure — never as a silently accommodating client change.
 | Role | The custom role from `security/chaos-studio-runner.role-template.json`, assigned at **workspace** scope |
 | Builds | The private Action build ref and the `ChaosStudioWorkspacesDev` VSIX, both built from the validated core commit |
 
+> **Task name in the dev extension:** `ChaosStudioWorkspacesDev` contributes
+> `AzureChaosStudioScenarioDev@1`, not `AzureChaosStudioScenario@1` (that name is
+> reserved for the production `ChaosStudioWorkspaces` extension). Any Azure
+> Pipelines example or fixture used during RV1–RV3 must reference
+> `AzureChaosStudioScenarioDev@1` — see
+> [`examples/azure-pipelines/README.md`](../../examples/azure-pipelines/README.md#prerequisite--install-the-extension).
+
 Record the workspace resource ID's sha256 (never the raw ID):
 
 ```bash

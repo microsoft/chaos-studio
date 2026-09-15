@@ -19,6 +19,8 @@ const ARM_HOST = 'management.azure.com';
 /** Optional context attached to a {@link CoreError}. */
 export interface CoreErrorContext {
   armErrorCode?: string;
+  /** Actionable ARM `error.message` (plus flattened nested `error.details[].message`), bounded (FR12). */
+  armErrorMessage?: string;
   correlationId?: string;
   requestId?: string;
   cause?: unknown;
@@ -32,6 +34,7 @@ export interface CoreErrorContext {
 export class CoreError extends Error {
   readonly category: ErrorCategory;
   readonly armErrorCode: string | undefined;
+  readonly armErrorMessage: string | undefined;
   readonly correlationId: string | undefined;
   readonly requestId: string | undefined;
 
@@ -40,6 +43,7 @@ export class CoreError extends Error {
     this.name = 'CoreError';
     this.category = category;
     this.armErrorCode = context.armErrorCode;
+    this.armErrorMessage = context.armErrorMessage;
     this.correlationId = context.correlationId;
     this.requestId = context.requestId;
   }

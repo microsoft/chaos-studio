@@ -34,6 +34,31 @@ test('GithubInputReader maps @actions/core inputs: unset→undefined/default, bo
   assert.equal(r.getInt('missing', 2700), 2700);
 });
 
+test('GithubInputReader.getInt REQUIRES an exact positive safe integer and REJECTS malformed/negative/zero/overflowing values (R3)', () => {
+  const host = new FakeActionsHost({
+    ok: '900',
+    partial: '5x',
+    fractional: '5.5',
+    negative: '-5',
+    zero: '0',
+    unsafe: '9007199254740993', // > Number.MAX_SAFE_INTEGER
+    padded: ' 42 ',
+    empty: '',
+  });
+  const r = new GithubInputReader(host);
+
+  assert.equal(r.getInt('ok', 2700), 900);
+  assert.equal(r.getInt('missing', 2700), 2700, 'unset → default');
+  assert.equal(r.getInt('padded', 2700), 42, 'surrounding whitespace is trimmed');
+  for (const name of ['partial', 'fractional', 'negative', 'zero', 'unsafe']) {
+    assert.throws(
+      () => r.getInt(name, 2700),
+      /invalid integer for input/,
+      `'${name}' must be rejected, not silently defaulted or truncated`,
+    );
+  }
+});
+
 test('GithubInputReader.getBool accepts case/space variants of true/false and REJECTS malformed values (fail-closed, no silent false)', () => {
   const host = new FakeActionsHost({
     t1: 'true',

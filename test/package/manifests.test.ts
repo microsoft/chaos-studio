@@ -125,10 +125,33 @@ test('both task manifests declare the canonical inputs (parity with action.yml, 
 });
 
 // ---------------------------------------------------------------------------
-// Extension manifests + clean-room task resolution: every task folder a manifest
-// packages exists on disk and its contributed task name matches the folder, so a
-// clean VSIX install resolves every declared task.
+// R6: example pipeline docs resolve against the correct extension per org type.
+// The private ChaosStudioWorkspacesDev build contributes AzureChaosStudioScenarioDev@1,
+// NOT AzureChaosStudioScenario@1 — the example README must document that
+// substitution explicitly rather than implying WorkspacesDev unlocks the
+// production task name.
 // ---------------------------------------------------------------------------
+
+test('the Azure Pipelines examples reference the production task name, and document the dev task-name substitution (R6)', () => {
+  const readme = readText('examples/azure-pipelines/README.md');
+  const prod = readJson(PROD_TASK) as { name: string; version: { Major: number } };
+  const dev = readJson(DEV_TASK) as { name: string; version: { Major: number } };
+  const prodTaskRef = `${prod.name}@${prod.version.Major}`;
+  const devTaskRef = `${dev.name}@${dev.version.Major}`;
+
+  assert.equal(prodTaskRef, 'AzureChaosStudioScenario@1');
+  assert.equal(devTaskRef, 'AzureChaosStudioScenarioDev@1');
+  assert.ok(readme.includes(prodTaskRef), `README references the production task '${prodTaskRef}'`);
+  assert.ok(readme.includes(devTaskRef), `README documents the dev task-name substitution '${devTaskRef}'`);
+  // The README must not claim the dev extension contributes the production name.
+  assert.doesNotMatch(
+    readme,
+    /WorkspacesDev[^\n]*(?:makes|contributes|resolves)[^\n]*AzureChaosStudioScenario@1/i,
+    'must not imply the dev extension contributes the production task name',
+  );
+});
+
+
 
 interface Manifest {
   id: string;

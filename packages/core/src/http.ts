@@ -130,6 +130,7 @@ export interface ParsedResponse {
   correlationId: string | undefined;
   requestId: string | undefined;
   errorCode: string | undefined;
+  errorMessage: string | undefined;
 }
 
 export interface Correlation {
@@ -204,6 +205,7 @@ export class ArmHttpClient {
       if (attempt >= MAX_GET_ATTEMPTS) {
         throw new CoreError('transport', `GET failed after ${attempt} attempts (last status ${parsed.status})`, {
           armErrorCode: parsed.errorCode,
+          armErrorMessage: parsed.errorMessage,
           correlationId: parsed.correlationId ?? this.lastCorrelation.correlationId,
           requestId: parsed.requestId ?? this.lastCorrelation.requestId,
         });
@@ -432,6 +434,7 @@ export class ArmHttpClient {
       correlationId,
       requestId,
       errorCode: headerValue(res.headers, 'x-ms-error-code') ?? bodyErrorCode(json),
+      errorMessage: bodyErrorMessage(json),
     };
   }
 }
@@ -444,6 +447,51 @@ function errText(err: unknown): string {
 export function bodyErrorCode(json: unknown): string | undefined {
   const code = (json as { error?: { code?: unknown } } | null)?.error?.code;
   return typeof code === 'string' ? code : undefined;
+}
+
+/** Bound on how much ARM-provided message/detail text is retained per error (avoid unbounded log growth). */
+const ARM_MESSAGE_MAX_CHARS = 2000;
+
+interface ArmErrorDetail {
+  code?: unknown;
+  message?: unknown;
+  details?: unknown;
+}
+
+/**
+ * Reads `error.message` plus nested `error.details[].message` from an ARM error
+ * envelope (FR12): authentication/request failures otherwise lose actionable
+ * diagnostics beyond the bare `error.code`. Nested details are flattened,
+ * de-duplicated by order of appearance, and the combined text is bounded so a
+ * pathological body cannot bloat logs/outputs. Secret-shaped content is NOT
+ * scrubbed here — the caller (via `redact`) scrubs the final combined text
+ * before logging.
+ */
+export function bodyErrorMessage(json: unknown): string | undefined {
+  const error = (json as { error?: ArmErrorDetail } | null)?.error;
+  if (error === undefined || error === null) return undefined;
+  const parts: string[] = [];
+  const seen = new Set<string>();
+  const addMessage = (m: unknown): void => {
+    if (typeof m === 'string' && m.length > 0 && !seen.has(m)) {
+      seen.add(m);
+      parts.push(m);
+    }
+  };
+  addMessage(error.message);
+  const visitDetails = (details: unknown, depth: number): void => {
+    if (!Array.isArray(details) || depth > 5) return;
+    for (const detail of details) {
+      const d = detail as ArmErrorDetail | undefined;
+      if (d === undefined || d === null) continue;
+      addMessage(d.message);
+      visitDetails(d.details, depth + 1);
+    }
+  };
+  visitDetails(error.details, 0);
+  if (parts.length === 0) return undefined;
+  const combined = parts.join(' | ');
+  return combined.length > ARM_MESSAGE_MAX_CHARS ? `${combined.slice(0, ARM_MESSAGE_MAX_CHARS)}…` : combined;
 }
 
 // ---------------------------------------------------------------------------
@@ -460,11 +508,17 @@ export interface ResourceStatus {
   errors: unknown[];
   businessErrors: unknown[];
   armErrorCode: string | undefined;
+  armErrorMessage: string | undefined;
 }
 
 function firstCode(arr: unknown[]): string | undefined {
   const code = (arr[0] as { code?: unknown } | undefined)?.code;
   return typeof code === 'string' ? code : undefined;
+}
+
+function firstMessage(arr: unknown[]): string | undefined {
+  const message = (arr[0] as { message?: unknown } | undefined)?.message;
+  return typeof message === 'string' && message.length > 0 ? message : undefined;
 }
 
 /** Reads the DX2 status shape from a resource body, given its business channel. */
@@ -482,6 +536,8 @@ export function readResourceStatus(json: unknown, businessChannel: string): Reso
     businessErrors,
     // ARM `error.code` is customer-actionable (VF10); prefer the system channel.
     armErrorCode: firstCode(errors) ?? firstCode(businessErrors),
+    // Preserve the matching actionable message alongside the code (R5/FR12).
+    armErrorMessage: firstMessage(errors) ?? firstMessage(businessErrors),
   };
 }
 
@@ -495,6 +551,7 @@ export function raiseForActionStatus(res: ParsedResponse, action: string): void 
   const category = res.status === 401 || res.status === 403 ? 'auth' : 'transport';
   throw new CoreError(category, `${action} failed with status ${res.status}`, {
     armErrorCode: res.errorCode,
+    armErrorMessage: res.errorMessage,
     correlationId: res.correlationId,
     requestId: res.requestId,
   });

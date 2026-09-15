@@ -264,6 +264,8 @@ export type ErrorCategory = (typeof ERROR_CATEGORIES)[number];
 export interface NormalizedError {
   category: ErrorCategory;
   armErrorCode?: string;
+  /** Actionable ARM `error.message` (plus flattened nested details), bounded and redacted (FR12). */
+  armErrorMessage?: string;
   message: string;
   correlationId?: string;
   requestId?: string;

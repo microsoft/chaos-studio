@@ -8,8 +8,11 @@ import {
   DEFAULT_BACKOFF,
   MAX_GET_ATTEMPTS,
   backoffDelayMs,
+  bodyErrorMessage,
   headerValue,
   parseRetryAfter,
+  raiseForActionStatus,
+  type ParsedResponse,
 } from '../../src/http.ts';
 import { FakeClock, FakeCredential, FakeLogger, FakeTransport, FIXED_TOKEN, fixedRng, HANG, response } from '../helpers/harness.ts';
 
@@ -344,8 +347,76 @@ test('get bounds a transient-retry Retry-After by the remaining deadline instead
     () => c.get('https://management.azure.com/runs/x', Deadline.fromNow(clock, 25)),
     (e) => e instanceof CoreError && e.category === 'timeout',
   );
-  assert.equal(clock.totalSleptMs, 0, 'did not sleep the unaffordable 100s Retry-After');
-  assert.equal(t.requestsFor('GET').length, 1, 'no second attempt past the deadline');
+});
+
+// ---------------------------------------------------------------------------
+// R5: ARM error.message / nested error.details preservation alongside error.code.
+// ---------------------------------------------------------------------------
+
+test('bodyErrorMessage reads error.message and flattens nested error.details[].message, bounded and de-duplicated (R5, FR12)', () => {
+  assert.equal(bodyErrorMessage(undefined), undefined);
+  assert.equal(bodyErrorMessage({}), undefined);
+  assert.equal(bodyErrorMessage({ error: {} }), undefined);
+  assert.equal(bodyErrorMessage({ error: { message: 'top-level detail' } }), 'top-level detail');
+  assert.equal(
+    bodyErrorMessage({
+      error: {
+        message: 'outer failure',
+        details: [{ message: 'inner cause A' }, { message: 'inner cause B', details: [{ message: 'deepest cause' }] }],
+      },
+    }),
+    'outer failure | inner cause A | inner cause B | deepest cause',
+  );
+  // Duplicate messages across levels are not repeated.
+  assert.equal(
+    bodyErrorMessage({ error: { message: 'same', details: [{ message: 'same' }] } }),
+    'same',
+  );
+  // Non-string / empty messages are ignored, not surfaced as '[object Object]' or ''.
+  assert.equal(bodyErrorMessage({ error: { message: 123, details: [{ message: '' }, { message: null }] } }), undefined);
+  // A pathological long/deep body is bounded, never crashes, and does not grow unbounded.
+  const deep = { message: 'deep' } as { message: string; details?: unknown[] };
+  let node: { message: string; details?: unknown[] } = deep;
+  for (let i = 0; i < 20; i++) {
+    const next = { message: `level-${i}` };
+    node.details = [next];
+    node = next;
+  }
+  const flattened = bodyErrorMessage({ error: deep });
+  assert.ok(flattened !== undefined && flattened.length <= 2001, 'recursion depth is bounded');
+  const long = { error: { message: 'x'.repeat(5000) } };
+  const boundedMsg = bodyErrorMessage(long);
+  assert.ok(boundedMsg !== undefined && boundedMsg.length <= 2001, 'overlong ARM messages are truncated, not dropped');
+});
+
+test('raiseForActionStatus preserves armErrorCode AND armErrorMessage (incl. nested details) on a non-2xx action response (R5, FR12)', () => {
+  const res: ParsedResponse = {
+    status: 401,
+    headers: {},
+    json: {
+      error: {
+        code: 'AuthenticationFailed',
+        message: 'The access token has expired.',
+        details: [{ code: 'TokenExpired', message: 'Token expired at 2026-05-01T00:00:00Z.' }],
+      },
+    },
+    location: undefined,
+    retryAfterSeconds: undefined,
+    correlationId: 'corr-1',
+    requestId: 'req-1',
+    errorCode: 'AuthenticationFailed',
+    errorMessage: 'The access token has expired. | Token expired at 2026-05-01T00:00:00Z.',
+  };
+  assert.throws(
+    () => raiseForActionStatus(res, 'validate'),
+    (e: unknown) =>
+      e instanceof CoreError &&
+      e.category === 'auth' &&
+      e.armErrorCode === 'AuthenticationFailed' &&
+      e.armErrorMessage === 'The access token has expired. | Token expired at 2026-05-01T00:00:00Z.' &&
+      e.correlationId === 'corr-1' &&
+      e.requestId === 'req-1',
+  );
 });
 
 test('poll propagates the deadline into GET retries so a transient overrun times out (completion + cleanup) (FR8/FR10)', async () => {

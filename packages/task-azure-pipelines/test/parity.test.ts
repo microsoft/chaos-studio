@@ -64,7 +64,7 @@ test('parity: a terminal Failed run fails the task with the core failure reason 
   assert.equal(host.failed, true, 'a failed run fails the task');
   assert.equal(host.outputs['run-id'], '22222222-2222-2222-2222-222222222222');
   assert.equal(host.outputs['run-state'], 'Failed');
-  assert.equal(host.outputs['completed-at'], undefined, 'completed-at is a success-only output (D11)');
+  assert.equal(host.outputs['completed-at'], '2026-05-01T12:04:30Z', 'completed-at is emitted for a normally observed Failed terminal run (R4)');
   assert.match(host.failureMessage!, /run-failed/, 'the task failure carries the core category');
   assert.match(host.failureMessage!, /InternalExecutionError/, 'the customer-actionable ARM error code is preserved');
 });

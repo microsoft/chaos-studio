@@ -77,8 +77,19 @@ export class GithubInputReader implements IInputReader {
   getInt(name: string, dflt: number): number {
     const v = this.get(name);
     if (v === undefined) return dflt;
-    const n = Number.parseInt(v, 10);
-    return Number.isNaN(n) ? dflt : n;
+    // Require an exact positive safe integer: no partial numeric strings (e.g.
+    // '5x'), fractions, leading/trailing whitespace, negatives, zero, or
+    // unsafe/overflowing magnitudes. `Number.parseInt` silently truncates
+    // partial matches and accepts out-of-range values, which could otherwise
+    // eliminate the completion deadline entirely (R3).
+    if (!/^[0-9]+$/.test(v.trim())) {
+      throw new CoreError('identifier', `invalid integer for input '${name}': '${v}' (expected a positive whole number)`);
+    }
+    const n = Number(v.trim());
+    if (!Number.isSafeInteger(n) || n <= 0) {
+      throw new CoreError('identifier', `invalid integer for input '${name}': '${v}' (expected a positive whole number)`);
+    }
+    return n;
   }
 }
 

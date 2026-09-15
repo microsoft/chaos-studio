@@ -107,6 +107,7 @@ export async function orchestrate(
         return failure(io, outputs, {
           category: 'validation-failed',
           armErrorCode: validation.armErrorCode,
+          armErrorMessage: validation.armErrorMessage,
           message: `validation did not succeed (terminal state ${validation.status})`,
           correlationId: validation.correlationId,
           requestId: validation.requestId,
@@ -139,20 +140,26 @@ export async function orchestrate(
         );
         emit('run-state', runOutcome.status);
         emit('started-at', runOutcome.startTime);
+        // completed-at is emitted for every NORMALLY OBSERVED terminal run —
+        // success, Failed, or Canceled alike (D11/D12) — because the service
+        // provided a real endTime for each of those terminal states. It is
+        // emitted before mapping success/failure so a Failed or Canceled run's
+        // completion timestamp is not lost. It stays omitted only when the
+        // run was never normally observed to a terminal state at all (e.g.
+        // this process's own timeout/cleanup cancellation, where no endTime
+        // was observed here).
+        emit('completed-at', runOutcome.endTime);
         emitCorrelation();
         if (runOutcome.disposition !== 'success') {
           return failure(io, outputs, {
             category: 'run-failed',
             armErrorCode: runOutcome.armErrorCode,
+            armErrorMessage: runOutcome.armErrorMessage,
             message: `run did not succeed (terminal state ${runOutcome.status})`,
             correlationId: runOutcome.correlationId,
             requestId: runOutcome.requestId,
           });
         }
-        // completed-at is emitted ONLY for a terminal-SUCCESS run (D11/D12): a
-        // Failed/Canceled run also carries an endTime, but its completion time is
-        // not a success output — it stays in the redacted diagnostics only.
-        emit('completed-at', runOutcome.endTime);
       } else {
         // No-wait: a single best-effort GET for last-observed state (D11). It
         // never fails the step — the step succeeds at STARTING the run. The
@@ -280,6 +287,7 @@ export function toNormalizedError(err: unknown, aborted: boolean): NormalizedErr
     return {
       category,
       armErrorCode: err.armErrorCode,
+      armErrorMessage: err.armErrorMessage === undefined ? undefined : redact(err.armErrorMessage),
       message: redact(aborted ? 'pipeline cancellation requested' : err.message),
       correlationId: err.correlationId,
       requestId: err.requestId,
@@ -310,6 +318,7 @@ function failure(io: RunContext, outputs: Record<string, string>, normalized: No
   const parts: string[] = [normalized.category];
   if (normalized.armErrorCode) parts.push(`(${normalized.armErrorCode})`);
   let reason = `${parts.join(' ')}: ${normalized.message}`;
+  if (normalized.armErrorMessage) reason += ` — ${normalized.armErrorMessage}`;
   const context: string[] = [];
   if (normalized.correlationId) context.push(`correlation-id=${normalized.correlationId}`);
   if (normalized.requestId) context.push(`request-id=${normalized.requestId}`);

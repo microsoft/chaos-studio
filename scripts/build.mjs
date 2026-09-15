@@ -1,55 +1,67 @@
 // build.mjs — regenerates the ENTIRE committed runtime-bundle tree under `dist/`.
 //
-// E1 has no adapter runtime yet, so each surface's committed bundle is a fail-fast
-// placeholder (E3 replaces the Action bundle; E4 replaces the task bundle). This
-// script is the SINGLE deterministic producer of every committed file under
-// `dist/` — both the `index.js` bundle AND the `README.md` beside it — so the
-// release/PR "dist integrity" gate is EFFECTIVE and EXACT: a clean `npm run build`
-// into an empty `dist/` must reproduce the committed tree file-for-file (paths,
-// modes, and blob hashes). If the build emitted only `index.js` while the commit
-// also carried `README.md`, the exact-tree comparison would necessarily fail; this
-// script therefore emits the READMEs too.
+// This is the SINGLE deterministic producer of every committed file under
+// `dist/` — both each surface's `index.js` bundle AND the `README.md` beside it —
+// so the release/PR "dist integrity" gate is EFFECTIVE and EXACT: a clean
+// `npm run build` into an empty `dist/` must reproduce the committed tree
+// file-for-file (paths, modes, and blob hashes).
 //
-// Later epics replace the placeholder `index.js` emitters below with the real
-// bundler (esbuild/ncc) for each adapter; the READMEs stay generated here so the
-// exact-tree gate keeps working unchanged.
+// Both platform bundles are produced by `esbuild`, bundling each adapter's real
+// entrypoint (`packages/action-github/src/index.ts`,
+// `packages/task-azure-pipelines/src/index.ts`) together with its runtime
+// dependencies (`@actions/core`, `@azure/identity`, `azure-pipelines-task-lib`,
+// etc.) into a single self-contained CommonJS file so the root Action / task can
+// run with no `node_modules` install step (R1). `import.meta.url` (used by each
+// entrypoint's main-module guard) is not natively expressible in CommonJS, so it
+// is rewritten at build time to an equivalent `pathToFileURL(__filename).href`
+// expression via esbuild's `define` + `banner` (deterministic, no behavior
+// change vs. the ESM source).
+//
+// `target: 'node20'` keeps both bundles compatible with the OLDEST runtime
+// either surface declares (the Action's `node24` in `action.yml` and the task's
+// `Node20_1` handler in `task.json`) — Node24 runs Node20-targeted output fine.
 //
 // All content is LF-only with a single trailing newline (byte-stable across
 // platforms; `.gitattributes` also pins these paths to `eol=lf`).
 //
 // Run: `npm run build`
 
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import esbuild from 'esbuild';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-// Machine-detectable marker the release gates grep for to refuse publishing a
-// placeholder. Assembled from fragments so this generator source is not itself
-// mistaken for a built bundle carrying the sentinel.
-const SENTINEL = ['__CHAOS_STUDIO', 'PLACEHOLDER', 'BUNDLE__'].join('_');
+/** Normalize esbuild output to LF-only with exactly one trailing newline. */
+function normalizeLf(text) {
+  return text.replace(/\r\n/g, '\n').replace(/\n*$/, '\n');
+}
 
-/** LF-only placeholder bundle for a surface. */
-function placeholderBundle(surface, readmePath, builtFrom, epic) {
-  return (
-    `// Placeholder for the committed ${surface} runtime bundle.\n` +
-    `//\n` +
-    `// The real bundle is reproducibly built from ${builtFrom} and committed\n` +
-    `// here by the release build in a later epic (${epic}). Until then this stub\n` +
-    `// fails fast so a partially-wired ${surface} never runs silently.\n` +
-    `//\n` +
-    `// The sentinel below is the machine-detectable marker release pipelines grep\n` +
-    `// for to refuse publishing a placeholder bundle. A real built bundle must not\n` +
-    `// contain this token. Marker: ${SENTINEL}\n` +
-    `//\n` +
-    `// eslint-disable-next-line no-console\n` +
-    `console.error(\n` +
-    `  'Azure Chaos Studio ${surface}: the runtime bundle has not been built yet ' +\n` +
-    `    '(${SENTINEL}). See ${readmePath}.',\n` +
-    `);\n` +
-    `process.exit(1);\n`
-  );
+/**
+ * Bundle a platform adapter entrypoint into a single self-contained CommonJS
+ * file (R1). Bundles ALL runtime dependencies (no external `node_modules`
+ * needed at run time); only Node built-ins stay external (implicit — esbuild's
+ * `platform: 'node'` never bundles built-ins).
+ */
+async function bundleAdapter(entryPoint) {
+  const result = await esbuild.build({
+    entryPoints: [entryPoint],
+    bundle: true,
+    platform: 'node',
+    target: 'node20',
+    format: 'cjs',
+    write: false,
+    logLevel: 'silent',
+    // `import.meta.url` has no CJS equivalent; esbuild's `define` substitutes a
+    // reference resolved by the `banner` below, so the main-module guard (only
+    // run `main()` when executed directly, never on import from tests) behaves
+    // identically to the ESM source under `tsx`/`node --experimental-strip-types`.
+    define: { 'import.meta.url': 'importMetaUrl' },
+    banner: { js: 'const importMetaUrl = require("url").pathToFileURL(__filename).href;' },
+  });
+  const [out] = result.outputFiles;
+  return normalizeLf(out.text);
 }
 
 const ACTION_README =
@@ -62,14 +74,15 @@ const ACTION_README =
   `\n` +
   `- **Source:** \`packages/action-github\` (thin \`@actions/core\` adapter over the\n` +
   `  shared core in \`packages/core\`).\n` +
-  `- **Build:** produced by \`npm run build\` (\`scripts/build.mjs\`) and verified by a\n` +
-  `  \`dist\`-integrity check that fails the build if the committed tree does not\n` +
-  `  match a clean rebuild file-for-file (supply-chain hardening, D18).\n` +
+  `- **Build:** produced by \`npm run build\` (\`scripts/build.mjs\`), which bundles\n` +
+  `  \`packages/action-github/src/index.ts\` and its runtime dependencies\n` +
+  `  (\`@actions/core\`, \`@azure/identity\`) into this single self-contained\n` +
+  `  CommonJS file via \`esbuild\`, and is verified by a \`dist\`-integrity check\n` +
+  `  that fails the build if the committed tree does not match a clean rebuild\n` +
+  `  file-for-file (supply-chain hardening, D18).\n` +
   `\n` +
   `Both \`index.js\` and this \`README.md\` are generated by \`scripts/build.mjs\` so the\n` +
-  `exact-tree integrity gate reproduces the whole directory. \`index.js\` is currently\n` +
-  `a **placeholder stub** that fails fast; the adapter and its real bundle are wired\n` +
-  `in a later epic (E3).\n`;
+  `exact-tree integrity gate reproduces the whole directory.\n`;
 
 const TASK_README =
   `# \`dist/azure-pipelines-task/\` — committed Azure Pipelines task bundle\n` +
@@ -83,34 +96,37 @@ const TASK_README =
   `  adapter over the shared core in \`packages/core\`).\n` +
   `- **Runtime:** the task uses the \`Node20_1\` execution handler (VF15, D19); a\n` +
   `  Node24 handler is added when Azure Pipelines ships one.\n` +
-  `- **Build:** both \`index.js\` and this \`README.md\` are generated by\n` +
-  `  \`npm run build\` (\`scripts/build.mjs\`) so the \`dist\`-integrity gate reproduces\n` +
-  `  the whole directory.\n` +
-  `\n` +
-  `\`index.js\` is currently a **placeholder stub** that fails fast. The adapter and\n` +
-  `its real bundle are wired in a later epic (E4).\n`;
+  `- **Build:** produced by \`npm run build\` (\`scripts/build.mjs\`), which bundles\n` +
+  `  \`packages/task-azure-pipelines/src/index.ts\` and its runtime dependencies\n` +
+  `  (\`@azure/identity\`, \`azure-pipelines-task-lib\`) into this single\n` +
+  `  self-contained CommonJS file via \`esbuild\`, so the \`dist\`-integrity gate\n` +
+  `  reproduces the whole directory.\n`;
 
-// The COMPLETE committed dist tree. Every committed file under dist/ is produced
-// here so the exact-tree integrity gate matches after a clean rebuild.
-const FILES = [
-  {
-    path: 'dist/github-action/index.js',
-    content: placeholderBundle('Action', 'dist/github-action/README.md', 'packages/action-github', 'E3+'),
-  },
-  { path: 'dist/github-action/README.md', content: ACTION_README },
-  {
-    path: 'dist/azure-pipelines-task/index.js',
-    content: placeholderBundle('task', 'dist/azure-pipelines-task/README.md', 'packages/task-azure-pipelines', 'E4'),
-  },
-  { path: 'dist/azure-pipelines-task/README.md', content: TASK_README },
-];
+async function main() {
+  // The COMPLETE committed dist tree. Every committed file under dist/ is
+  // produced here so the exact-tree integrity gate matches after a clean rebuild.
+  const FILES = [
+    {
+      path: 'dist/github-action/index.js',
+      content: await bundleAdapter(join(REPO_ROOT, 'packages/action-github/src/index.ts')),
+    },
+    { path: 'dist/github-action/README.md', content: ACTION_README },
+    {
+      path: 'dist/azure-pipelines-task/index.js',
+      content: await bundleAdapter(join(REPO_ROOT, 'packages/task-azure-pipelines/src/index.ts')),
+    },
+    { path: 'dist/azure-pipelines-task/README.md', content: TASK_README },
+  ];
 
-// Build into a clean dist/ so a stale file the build no longer emits cannot
-// linger (the release/PR gate additionally rebuilds into an empty dir).
-rmSync(join(REPO_ROOT, 'dist'), { recursive: true, force: true });
-for (const file of FILES) {
-  const full = join(REPO_ROOT, file.path);
-  mkdirSync(dirname(full), { recursive: true });
-  writeFileSync(full, file.content, 'utf8');
-  console.log(`Wrote ${file.path}`);
+  // Build into a clean dist/ so a stale file the build no longer emits cannot
+  // linger (the release/PR gate additionally rebuilds into an empty dir).
+  rmSync(join(REPO_ROOT, 'dist'), { recursive: true, force: true });
+  for (const file of FILES) {
+    const full = join(REPO_ROOT, file.path);
+    mkdirSync(dirname(full), { recursive: true });
+    writeFileSync(full, file.content, 'utf8');
+    console.log(`Wrote ${file.path} (${readFileSync(full, 'utf8').length} bytes)`);
+  }
 }
+
+await main();

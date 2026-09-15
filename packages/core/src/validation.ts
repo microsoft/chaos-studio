@@ -68,6 +68,7 @@ export async function acceptValidate(
     if (err instanceof CoreError && err.correlationId === undefined && err.requestId === undefined) {
       throw new CoreError(err.category, err.message, {
         armErrorCode: err.armErrorCode,
+        armErrorMessage: err.armErrorMessage,
         correlationId: res.correlationId,
         requestId: res.requestId,
         cause: err,

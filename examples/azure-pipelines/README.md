@@ -13,11 +13,20 @@ Minimal, per-mode pipelines for the **Azure Chaos Studio Scenario** task
 
 ## Prerequisite — install the extension
 
-These pipelines reference `AzureChaosStudioScenario@1`, contributed by the **Azure
-Chaos Studio Workspaces** extension (or the private `…WorkspacesDev` build). Install
-it in your Azure DevOps organization first so the task resolves. This is a separate
-extension from the existing `AzureChaosStudio.ChaosStudioExtension`; installing it
-does not change that extension or its V1 task.
+These pipelines reference `AzureChaosStudioScenario@1`, contributed by the
+**Azure Chaos Studio Workspaces** production marketplace extension. Install it
+in your Azure DevOps organization first so the task resolves. This is a
+separate extension from the existing `AzureChaosStudio.ChaosStudioExtension`;
+installing it does not change that extension or its V1 task.
+
+**Private preview / dev organizations:** the private `ChaosStudioWorkspacesDev`
+build contributes a **different task name**, `AzureChaosStudioScenarioDev@1`
+(same inputs/outputs, its own stable task GUID) — it does NOT make
+`AzureChaosStudioScenario@1` available. In a dev-only organization, substitute
+`AzureChaosStudioScenarioDev@1` for every `AzureChaosStudioScenario@1` step in
+these examples; do not mix the two task names in one pipeline. See the
+[release-validation runbook](../../docs/runbooks/release-validation.md) for how
+the dev build is installed and validated before the production task ships.
 
 ## Authentication — workload identity, no secret
 
