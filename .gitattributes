@@ -14,3 +14,9 @@ packages/core/fixtures/source-extracts/** text eol=lf
 # Keep the release-tooling shell script LF so it runs on the release runner / any
 # POSIX operator shell regardless of core.autocrlf (a CRLF checkout would break it).
 scripts/*.sh text eol=lf
+
+# Keep the preserved previous generation of the drift workflow byte-stable: it is
+# pinned to a historical blob hash by
+# test/release-validation/drift-report-issue.test.ts, so a platform-dependent
+# re-encoding would break that corroboration.
+test/release-validation/fixtures/contract-drift.legacy-generation.yml text eol=lf

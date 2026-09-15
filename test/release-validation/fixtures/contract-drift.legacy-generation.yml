@@ -19,25 +19,17 @@
 # whole contract (docs/runbooks/contract-drift.md).
 #
 # The policy this workflow enforces (per the release notes and D5/FR15): a protocol
-# mismatch OPENS AN ISSUE FOR TRIAGE and, once triage confirms the SERVICE moved, a
-# service defect with the service team. It never silently changes client behaviour,
-# never regenerates fixtures automatically, and never bumps the pinned `api-version`.
-# Those are deliberate, reviewed code changes that require a fresh RV1-RV3 pass
+# mismatch OPENS A SERVICE DEFECT. It never silently changes client behaviour, never
+# regenerates fixtures automatically, and never bumps the pinned `api-version`. Those
+# are deliberate, reviewed code changes that require a fresh RV1-RV3 pass
 # (docs/runbooks/contract-drift.md).
-#
-# WHAT A MISMATCH PROVES, precisely: these checks observe only THIS REPOSITORY's
-# committed artifacts, so a mismatch proves the shipped model of the contract no
-# longer agrees with itself — which an in-repo editing error produces exactly as
-# readily as a genuine service change. The reported issue therefore states the
-# mismatch and asks for triage against the authoritative source (or a live RV1
-# observation); it does not pre-judge it as a service defect.
 #
 # Split into two jobs on purpose:
 #   * `drift` checks out and RUNS repository code, and holds NO write permission.
 #   * `report` holds `issues: write` and runs NO repository code (no checkout), so a
 #     compromised fixture/script cannot reach the token that files the defect.
 #
-# The CONTRACT-MISMATCH claim is gated on an EXPLICIT contract verdict, never on "the job
+# The SERVICE-DEFECT claim is gated on an EXPLICIT contract verdict, never on "the job
 # failed". The three checks that can observe the source contract (provenance
 # re-derivation, the SOURCE-PROTOCOL suite, the pinned `api-version` assertion) are
 # evaluated by `scripts/lib/contract-drift.mjs`, which separates a CHECKED MISMATCH
@@ -51,7 +43,7 @@
 # contract evidence, and an unclassified new test file fails the `classify` check rather
 # than being assumed to be protocol evidence. A dependency-install failure, a runner
 # failure, an unevaluable check, or a repository-side regression is reported honestly as
-# a workflow failure under its own label, so a mismatch claim never rests on absent
+# a workflow failure under its own label, so a service defect never rests on absent
 # evidence.
 name: contract-drift
 
@@ -112,10 +104,8 @@ jobs:
       - name: Check every source-contract test is classified
         id: classify
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        # A CONTRACT MISMATCH is a claim about this repository's model of the SERVICE
-        # PROTOCOL — the starting point of a service-defect claim, once triage
-        # attributes it to the service — so only assertions that model that protocol
-        # may produce one. The contract test
+        # A CONTRACT MISMATCH is a claim about the SERVICE, so only assertions that
+        # can observe the service protocol may produce one. The contract test
         # directory also holds repository-only assertions (the packaged task
         # manifest, the signing pipeline, the release rulesets, the C# extraction
         # machinery), which are run separately and publish no contract evidence.
@@ -197,126 +187,27 @@ jobs:
             const runUrl = process.env.RUN_URL;
             const mismatch = process.env.CONTRACT_MISMATCH === 'true';
 
-            // Stamped into every body this workflow composes, so a later run can tell
-            // WHICH generation of the workflow wrote an open issue. Bodies without it
-            // predate the withdrawal of the "confirmed service defect" classification.
-            const CLASSIFICATION_MARKER = '<!-- contract-drift:classification=triage-required -->';
-            // Stamped into the corrective comment so it is posted once per issue rather
-            // than on every scheduled run.
-            const CORRECTION_MARKER = '<!-- contract-drift:correction=triage-required -->';
-
-            // The exact report the PREVIOUS generation of this workflow published. Kept
-            // verbatim so a leftover open issue can be recognized as machine-written and
-            // distinguished from one a human has since edited or filed themselves.
-            const LEGACY_MISMATCH_TITLE =
-              'contract-drift: the Microsoft.Chaos source contract no longer matches the shipped fixtures';
-            const LEGACY_MISMATCH_BODY = [
-              'The scheduled `contract-drift` workflow CONFIRMED a source-contract mismatch:',
-              'the committed fixtures, the provenance manifest, or the pinned `api-version` no',
-              'longer agree with each other or with the reviewed source extracts.',
-              '',
-              'Failing run: <run>',
-              '',
-              '**This is a service defect, not a client bug.** Per the release policy, a protocol',
-              'mismatch is escalated to the Chaos Studio service team rather than silently',
-              'accommodated in the client: do NOT regenerate fixtures, relax an assertion, or bump',
-              'the pinned `api-version` to make this green.',
-              '',
-              'Triage steps are in `docs/runbooks/contract-drift.md`.',
-            ].join('\n');
-            // Only the run URL differs between two issues written by that generation.
-            // The line must be EXACTLY the generated one — text appended to it is human
-            // content, so it is left in place and the body no longer compares equal.
-            const normalize = (text) =>
-              String(text == null ? '' : text)
-                .replace(/\r\n/g, '\n')
-                .replace(/^Failing run: \S+$/m, 'Failing run: <run>')
-                .trim();
-
-            // Two distinct reports, deduplicated by two distinct labels. The mismatch
-            // report states what the checks actually OBSERVED — that this repository's
-            // committed model of the contract no longer agrees with itself — and leaves
-            // the repository-defect / service-change verdict to triage, which needs
-            // evidence this workflow cannot obtain.
+            // Two distinct reports, deduplicated by two distinct labels, so a
+            // service defect is only ever raised on confirmed contract evidence.
             const report = mismatch
               ? {
                   label: 'contract-drift',
-                  title: 'contract-drift: the shipped fixtures no longer agree with the pinned source contract (triage required)',
+                  title: 'contract-drift: the Microsoft.Chaos source contract no longer matches the shipped fixtures',
                   body: [
-                    'The scheduled `contract-drift` workflow found a CONTRACT MISMATCH: the committed',
-                    'fixtures, the provenance manifest, or the pinned `api-version` no longer agree with',
-                    'each other or with the reviewed source extracts.',
+                    'The scheduled `contract-drift` workflow CONFIRMED a source-contract mismatch:',
+                    'the committed fixtures, the provenance manifest, or the pinned `api-version` no',
+                    'longer agree with each other or with the reviewed source extracts.',
                     '',
                     `Failing run: ${runUrl}`,
                     '',
-                    '**This needs triage before it is classified.** These checks observe only THIS',
-                    "REPOSITORY's committed artifacts, so the same mismatch is produced by an in-repo",
-                    'editing error (a fixture hand-edited, an extract re-pasted, a literal changed',
-                    'without the constant) and by a genuine change in the service source contract.',
-                    'Classify it against the authoritative service source — or a live-environment RV1',
-                    'observation — before escalating: only a confirmed protocol change is a **service',
-                    'defect** for the Chaos Studio service team; an in-repo inconsistency is a',
-                    'repository defect to fix here.',
+                    '**This is a service defect, not a client bug.** Per the release policy, a protocol',
+                    'mismatch is escalated to the Chaos Studio service team rather than silently',
+                    'accommodated in the client: do NOT regenerate fixtures, relax an assertion, or bump',
+                    'the pinned `api-version` to make this green.',
                     '',
-                    'Either way the client does not bend to make this green: do NOT regenerate fixtures,',
-                    'relax an assertion, or bump the pinned `api-version` to silence it.',
-                    '',
-                    'Triage steps (including how to tell the two causes apart) are in',
-                    '`docs/runbooks/contract-drift.md`.',
-                    '',
-                    CLASSIFICATION_MARKER,
+                    'Triage steps are in `docs/runbooks/contract-drift.md`.',
                   ].join('\n'),
-                  recurrence: `The scheduled drift check found the contract mismatch again: ${runUrl}`,
-                  // How to deal with an open issue written by an earlier generation of
-                  // this workflow, whose body declared the mismatch a confirmed service
-                  // defect. Only this report has one: the workflow-failure wording is
-                  // unchanged between generations and needs no correction.
-                  correction: {
-                    legacyTitle: LEGACY_MISMATCH_TITLE,
-                    legacyBody: LEGACY_MISMATCH_BODY,
-                    // Narrow on purpose. A generated report is identified by the
-                    // STRUCTURE the previous generation emitted — its opening
-                    // finding, its machine-written run link, the withdrawn verdict
-                    // and its runbook pointer — not by the withdrawn verdict alone,
-                    // which a human issue may legitimately quote or discuss.
-                    // Authorship is checked separately; together they mean a human
-                    // issue cannot be reclassified even if it quotes the old report
-                    // in full.
-                    // Anchored at the start of a line so quoted or indented text
-                    // ("> Failing run: …") does not count, but not at the end:
-                    // a human may annotate a generated line, and doing so must not
-                    // strip the issue of its provenance.
-                    legacyEvidence: [
-                      /^The scheduled `contract-drift` workflow CONFIRMED a source-contract mismatch:/m,
-                      /^Failing run: \S+/m,
-                      /^\*\*This is a service defect, not a client bug\.\*\* Per the release policy/m,
-                      /^Triage steps are in `docs\/runbooks\/contract-drift\.md`\./m,
-                    ],
-                    notice: [
-                      '**Correction — this report was filed with a classification that has since been withdrawn.**',
-                      '',
-                      'An earlier generation of the `contract-drift` workflow declared every contract',
-                      'mismatch a **service defect** outright. That verdict was never established by the',
-                      "checks: they observe only THIS REPOSITORY's committed artifacts, so an in-repo",
-                      'editing error (a fixture hand-edited, an extract re-pasted, a literal changed',
-                      'without the constant) produces exactly the same mismatch as a genuine change in',
-                      'the service source contract.',
-                      '',
-                      'Classify this against the authoritative service source — or a live-environment RV1',
-                      'observation — before escalating. Only a confirmed protocol change is a service',
-                      'defect for the Chaos Studio service team; an in-repo inconsistency is a repository',
-                      'defect to fix here.',
-                      '',
-                      'Either way the client does not bend to make this green: do NOT regenerate fixtures,',
-                      'relax an assertion, or bump the pinned `api-version` to silence it.',
-                      '',
-                      'Triage steps are in `docs/runbooks/contract-drift.md`. The title and body above are',
-                      'left as filed, and any triage already recorded on this issue stands — this notice',
-                      'corrects only the automated classification.',
-                      '',
-                      CORRECTION_MARKER,
-                    ].join('\n'),
-                  },
+                  recurrence: `The scheduled drift check confirmed the contract mismatch again: ${runUrl}`,
                 }
               : {
                   label: 'contract-drift-workflow-failure',
@@ -336,8 +227,6 @@ jobs:
                     'Identify the failing step in the run log. While this workflow is failing, drift',
                     'detection is NOT running: fix it promptly, because a real protocol mismatch would',
                     'go unnoticed (`docs/runbooks/contract-drift.md`).',
-                    '',
-                    CLASSIFICATION_MARKER,
                   ].join('\n'),
                   recurrence: `The scheduled drift check failed again without confirming contract drift: ${runUrl}`,
                 };
@@ -355,74 +244,6 @@ jobs:
             // opening a new issue on every scheduled run.
             if (existing.data.length > 0) {
               const issue = existing.data[0];
-              const correction = report.correction;
-
-              // An issue is STALE when it still carries a classification this workflow
-              // no longer publishes. That demands positive evidence it was GENERATED by
-              // the previous generation, not merely that it contains the withdrawn
-              // wording: this workflow authored it, it carries no current marker, and
-              // the whole structure of the old report is present. Quoting the old
-              // verdict — even the entire old body — in a human-filed issue therefore
-              // never attracts a correction, because a human is not this workflow.
-              const authoredByWorkflow = Boolean(issue.user) && issue.user.type === 'Bot';
-              const legacyBodyText = String(issue.body == null ? '' : issue.body);
-              const stale =
-                Boolean(correction) &&
-                authoredByWorkflow &&
-                !legacyBodyText.includes(CLASSIFICATION_MARKER) &&
-                correction.legacyEvidence.every((pattern) => pattern.test(legacyBodyText));
-
-              if (stale) {
-                // Pristine = still exactly what the previous generation wrote. Nothing
-                // human is in the title or body, so migrating them destroys no triage.
-                const pristine =
-                  issue.title === correction.legacyTitle &&
-                  normalize(issue.body) === normalize(correction.legacyBody);
-
-                if (pristine) {
-                  await github.rest.issues.update({
-                    owner,
-                    repo,
-                    issue_number: issue.number,
-                    title: report.title,
-                    body: report.body,
-                  });
-                  core.notice(
-                    `Migrated legacy ${report.label} issue #${issue.number} to the corrected classification.`,
-                  );
-                } else {
-                  // Someone has edited the title or body, or filed it themselves. Their
-                  // triage is authoritative and is never overwritten — the correction is
-                  // recorded alongside it, once. Paginated: on a long-running issue the
-                  // marker can sit well beyond the first page, and missing it would
-                  // re-post the notice on every scheduled run.
-                  const comments = await github.paginate(github.rest.issues.listComments, {
-                    owner,
-                    repo,
-                    issue_number: issue.number,
-                    per_page: 100,
-                  });
-                  const alreadyCorrected = comments.some((comment) =>
-                    String(comment.body == null ? '' : comment.body).includes(CORRECTION_MARKER),
-                  );
-                  if (alreadyCorrected) {
-                    core.notice(
-                      `Legacy ${report.label} issue #${issue.number} already carries the corrective triage notice.`,
-                    );
-                  } else {
-                    await github.rest.issues.createComment({
-                      owner,
-                      repo,
-                      issue_number: issue.number,
-                      body: correction.notice,
-                    });
-                    core.notice(
-                      `Added a corrective triage notice to legacy ${report.label} issue #${issue.number}.`,
-                    );
-                  }
-                }
-              }
-
               await github.rest.issues.createComment({
                 owner,
                 repo,

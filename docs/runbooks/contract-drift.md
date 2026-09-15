@@ -82,22 +82,29 @@ An earlier generation of this workflow declared every contract mismatch a **serv
 defect** outright. That classification was withdrawn — the checks observe only this
 repository — so an issue opened under it carries a verdict this repository no longer
 stands behind. Every body the workflow composes now ends with a classification marker;
-an open `contract-drift` issue that lacks the marker **and** still contains the
-withdrawn wording verbatim is recognized as stale, and handled by whether a human has
-touched it:
+an open `contract-drift` issue is recognized as stale only when **this workflow wrote
+it** (the issue is bot-authored), it **lacks the marker**, and the **whole structure of
+the old report** is present — its opening finding, its generated run link, the withdrawn
+verdict and its runbook pointer. All three are required, because containing the old
+wording is not by itself evidence that the workflow produced it. A stale issue is then
+handled by whether a human has since touched it:
 
 | The stale issue | What the next scheduled run does |
 |---|---|
-| Still exactly as the workflow wrote it (workflow-authored, title and body unedited) | Its title and body are **migrated** to the current triage-required classification. No human triage exists to lose. |
-| Edited, retitled, or filed by a person | Title and body are **left as filed** — recorded triage is authoritative. A one-time corrective comment states that the automated service-defect classification was withdrawn and that the mismatch must be triaged against the authoritative source or a live RV1 observation. |
+| Still exactly as the workflow wrote it (title and body unedited) | Its title and body are **migrated** to the current triage-required classification. No human triage exists to lose. |
+| Edited or retitled by a person | Title and body are **left as filed** — recorded triage is authoritative. A one-time corrective comment states that the automated service-defect classification was withdrawn and that the mismatch must be triaged against the authoritative source or a live RV1 observation. |
 
 The corrective comment carries its own marker and is posted once per issue, not on
 every run. A current-generation issue, a `contract-drift-workflow-failure` issue (whose
-wording never changed), and a human-filed issue that merely quotes the old text are all
-left alone. The behaviour is covered in
-`test/release-validation/drift-report-issue.test.ts`, which evaluates the workflow's own
-inline reporting script and replays the previous generation out of git history rather
-than against a copy of its wording.
+wording never changed), and any human-filed issue are all left alone — including one
+that quotes the old report in full, since the corrective notice asserts the issue was
+filed by an earlier generation of the workflow and that would be untrue of it. The
+behaviour is covered in `test/release-validation/drift-report-issue.test.ts`, which
+evaluates the workflow's own inline reporting script and replays the previous generation
+from `test/release-validation/fixtures/contract-drift.legacy-generation.yml` — a
+byte-identical copy of that workflow revision, preserved as a fixture so the guard holds
+in the shallow checkouts CI uses and cannot degrade into comparing the current wording
+with itself.
 
 ### Only source-protocol assertions can produce a mismatch
 

@@ -296,16 +296,79 @@ test('human triage is never overwritten: a corrective notice is added instead', 
   assert.match(body, /docs\/runbooks\/contract-drift\.md/);
 });
 
-test('an issue opened by a human is never rewritten by the workflow', async () => {
+test('an issue opened by a human is never rewritten OR reclassified by the workflow', async () => {
+  // Even a human issue that reproduces the old report exactly is not a report
+  // this workflow filed, so the corrective notice — which asserts the issue "was
+  // filed with a classification that has since been withdrawn" — would be a
+  // false statement about someone else's issue.
   const calls = await runReport({
     mismatch: true,
     existing: [{ number: 43, title: LEGACY_TITLE, body: LEGACY_BODY, user: { type: 'User' } }],
   });
   assert.equal(updatesOn(calls).length, 0, 'only workflow-authored issues are migrated');
-  assert.ok(
-    commentsOn(calls).some((call) => /correction/i.test(String(call.body))),
-    'the stale classification is still corrected in a comment',
+  assert.equal(
+    commentsOn(calls).filter((call) => /correction/i.test(String(call.body))).length,
+    0,
+    'a human-filed issue is never told it was filed by an earlier workflow generation',
   );
+});
+
+test('a human issue quoting the complete legacy report in full is left alone', async () => {
+  // Regression: matching the withdrawn verdict alone — or even every structural
+  // line of the old report — cannot distinguish a generated report from a human
+  // discussion that quotes one. This issue reproduces the ENTIRE legacy
+  // signature while arguing against its verdict; reclassifying it would
+  // contradict the argument its author is making.
+  const quoted = [
+    'Filing this because I disagree with the verdict the bot used to publish:',
+    '',
+    ...LEGACY_BODY.split('\n').map((line) => (line === '' ? '>' : `> ${line}`)),
+    '',
+    'That classification was wrong — the checks only ever looked at this repo.',
+  ].join('\n');
+
+  const calls = await runReport({
+    mismatch: true,
+    existing: [
+      {
+        number: 44,
+        title: 'Discussion: the drift report should not assert a service defect',
+        body: quoted,
+        user: { type: 'User' },
+      },
+    ],
+  });
+  assert.equal(updatesOn(calls).length, 0, 'a human issue is never rewritten');
+  const posted = onlyCall(calls, 'createComment', 'only the recurrence comment');
+  assert.doesNotMatch(
+    String(posted.body),
+    /correction/i,
+    'quoting the old report does not make it a report this workflow filed',
+  );
+});
+
+test('a bot issue quoting only the withdrawn verdict is not treated as a generated report', async () => {
+  // The verdict paragraph on its own is not evidence of generation: the rest of
+  // the old report's structure has to be there too.
+  const calls = await runReport({
+    mismatch: true,
+    existing: [
+      {
+        number: 45,
+        title: 'automation digest: open drift topics',
+        body: [
+          'Carried over from last week:',
+          '',
+          '**This is a service defect, not a client bug.** Per the release policy, a protocol',
+          'mismatch is escalated to the Chaos Studio service team.',
+        ].join('\n'),
+        user: { type: 'Bot' },
+      },
+    ],
+  });
+  assert.equal(updatesOn(calls).length, 0);
+  const posted = onlyCall(calls, 'createComment', 'only the recurrence comment');
+  assert.doesNotMatch(String(posted.body), /correction/i);
 });
 
 test('text appended to the generated run-URL line counts as human content', async () => {
@@ -421,40 +484,42 @@ test('an unrelated issue carrying the drift label is not rewritten', async () =>
 
 // ---------------------------------------------------------------------------
 // Non-tautology guard: the legacy template is checked against the REAL previous
-// generation, replayed out of git history, rather than against a copy of itself.
+// generation, replayed from an independently preserved copy of that workflow.
+//
+// The copy is a committed fixture rather than a `git log` search, for two
+// reasons. A search is unsound: the CURRENT workflow quotes the withdrawn
+// wording verbatim (it has to, to recognize a stale issue), so scanning history
+// for that wording selects HEAD and the guard degrades into comparing the
+// template with itself. And it is unavailable: every job that runs this suite
+// uses a default shallow checkout, which has no history to search, so a
+// history-dependent assertion would fail scheduled runs on healthy artifacts.
+// The fixture is byte-identical to the blob named below; `git` is used only to
+// re-confirm that when full history happens to be present.
 // ---------------------------------------------------------------------------
 
+/** The last revision whose reporting step published the withdrawn verdict. */
+const LEGACY_GENERATION_REV = '69ebe4e121da47a9e01d520aa9092133706b0337';
+const LEGACY_GENERATION_PATH = 'test/release-validation/fixtures/contract-drift.legacy-generation.yml';
+
 test('the legacy template matches the issue the previous workflow generation actually wrote', async () => {
-  const path = '.github/workflows/contract-drift.yml';
-  const revisions = spawnSync('git', ['rev-list', 'HEAD', '--', path], {
-    cwd: repoRoot,
-    encoding: 'utf8',
-  });
-  if (revisions.status !== 0) {
-    assert.fail(`git rev-list failed: ${revisions.stderr}`);
-  }
+  const legacySource = readText(`./${LEGACY_GENERATION_PATH}`);
 
-  // The newest revision whose workflow still published the withdrawn verdict.
-  let legacySource: string | undefined;
-  for (const revision of revisions.stdout.split('\n').filter(Boolean)) {
-    const blob = spawnSync('git', ['show', `${revision}:${path}`], {
-      cwd: repoRoot,
-      encoding: 'utf8',
-    });
-    if (blob.status !== 0) continue;
-    if (blob.stdout.includes('**This is a service defect, not a client bug.**')) {
-      legacySource = blob.stdout.replace(/\r\n/g, '\n');
-      break;
-    }
-  }
-  assert.ok(
-    legacySource,
-    'the previous generation is still reachable in history — if it is not, this guard must be retired deliberately',
-  );
-
-  // Replay it: let the OLD script compose the issue it would have opened.
+  // The fixture is a PRIOR generation, established from what it emits rather
+  // than from its source text: it publishes the withdrawn verdict as its own
+  // report and carries no classification marker. A copy of the current workflow
+  // could not satisfy both.
   const legacyCalls = await runReport({ mismatch: true, script: extractScript(legacySource) });
   const legacyIssue = onlyCall(legacyCalls, 'create', 'the previous generation opened a mismatch issue');
+  assert.match(
+    String(legacyIssue.body),
+    /\*\*This is a service defect, not a client bug\.\*\*/,
+    'the preserved generation really did publish the withdrawn verdict',
+  );
+  assert.doesNotMatch(
+    String(legacyIssue.body),
+    /contract-drift:classification=triage-required/,
+    'the preserved generation predates the classification marker',
+  );
 
   // Hand that exact issue to the CURRENT script: it must be recognized and migrated.
   const calls = await runReport({
@@ -470,4 +535,34 @@ test('the legacy template matches the issue the previous workflow generation act
   });
   const updated = onlyCall(calls, 'update', 'a genuinely legacy issue is recognized and migrated');
   assert.doesNotMatch(String(updated.body), /This is a service defect, not a client bug/i);
+});
+
+test('the preserved legacy generation is the historical artifact it claims to be', () => {
+  // Corroboration only. Shallow checkouts (every job that runs this suite) have
+  // no history, so an unreachable revision is not a failure — the replay above
+  // is the guard. When history IS present the fixture must match the blob
+  // exactly, so it cannot be quietly rewritten into a copy of the current file.
+  const reachable = spawnSync('git', ['cat-file', '-e', `${LEGACY_GENERATION_REV}^{commit}`], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+  });
+  if (reachable.status !== 0) return;
+
+  const historical = spawnSync(
+    'git',
+    ['rev-parse', `${LEGACY_GENERATION_REV}:.github/workflows/contract-drift.yml`],
+    { cwd: repoRoot, encoding: 'utf8' },
+  );
+  assert.equal(historical.status, 0, `the pinned revision still carries the workflow: ${historical.stderr}`);
+
+  const fixture = spawnSync('git', ['hash-object', LEGACY_GENERATION_PATH], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+  });
+  assert.equal(fixture.status, 0, `hashing the fixture failed: ${fixture.stderr}`);
+  assert.equal(
+    fixture.stdout.trim(),
+    historical.stdout.trim(),
+    'the preserved fixture is byte-identical to the workflow at the pinned revision',
+  );
 });
