@@ -62,6 +62,15 @@ parameters:
     values:
       - vss-extension.json
       - vss-extension.dev.json
+  # Basename (no directory, no `.json`) of the release-validation receipt under
+  # test/release-validation/receipts/. RV1-RV3 are executed by an operator against
+  # a real target preview environment and recorded as a receipt; a PUBLISHING run
+  # re-verifies that evidence in the build stage before anything is signed. Empty
+  # by default so a publishing run without recorded evidence FAILS CLOSED.
+  - name: releaseValidationReceipt
+    displayName: Release-validation receipt basename (test/release-validation/receipts/<name>.json)
+    type: string
+    default: ''
 
 resources:
   repositories:
@@ -139,6 +148,86 @@ extends:
                 displayName: Use Node 24
                 inputs:
                   versionSpec: '24.x'
+
+              # RELEASE-VALIDATION GATE (E6-T1/E6-T2). RV1-RV3 — target-region protocol
+              # smoke, WIF/RBAC proof, and cancellation operational bounds — run against a
+              # real preview environment and are recorded as a receipt committed under
+              # test/release-validation/receipts/ (the workspace scope is hashed, so the
+              # receipt carries no resource IDs). This step RE-EVALUATES every recorded
+              # observation against the source-proven contract constants, so a receipt that
+              # merely CLAIMS `passed` is rejected. It runs in the UNSIGNED build stage,
+              # which holds no signing or Marketplace credential, and it runs BEFORE
+              # packaging — so a publishing run cannot reach the Marketplace without
+              # green, current, commit-bound evidence. The same CLI backs the GitHub Action
+              # release workflow, so BOTH marketplaces gate on the SAME receipt and the
+              # SAME core commit (D16).
+              #
+              # SCOPE OF THE GATE, precisely: it runs only on a PUBLISHING run. A
+              # non-publishing main-branch build still reaches the `sign` stage and can
+              # produce a signed VSIX without RV evidence — that artifact is never
+              # published, because the `publish` stage additionally requires
+              # `publishExtension` and consumes only the artifact signed in its OWN run,
+              # whose `build` stage therefore ran this gate. The enforced invariant is
+              # "nothing is PUBLISHED without evidence", not "nothing is ever signed".
+              - script: |
+                  set -euo pipefail
+                  if [ -z "${RECEIPT_NAME}" ]; then
+                    echo "##vso[task.logissue type=error]A publishing run requires the releaseValidationReceipt parameter. Run RV1-RV3 in the target preview environment and commit the receipt (docs/runbooks/release-validation.md)."
+                    exit 1
+                  fi
+                  # Basename only — never a path — so the parameter cannot reach outside
+                  # the tracked receipts directory.
+                  case "${RECEIPT_NAME}" in
+                    *[!A-Za-z0-9._-]*|.*|*..*)
+                      echo "##vso[task.logissue type=error]Invalid releaseValidationReceipt '${RECEIPT_NAME}'; use a plain basename."
+                      exit 1 ;;
+                  esac
+                  receipt="test/release-validation/receipts/${RECEIPT_NAME}.json"
+                  if [ ! -f "$receipt" ]; then
+                    echo "##vso[task.logissue type=error]No release-validation receipt at '$receipt' (docs/runbooks/release-validation.md)."
+                    exit 1
+                  fi
+                  verified="$(node scripts/lib/rv-receipt.mjs verify "$receipt")"
+                  printf '%s\n' "$verified"
+                  VALIDATED_COMMIT="$(printf '%s\n' "$verified" | sed -n 's/^receipt-core-commit=//p')"
+                  case "$VALIDATED_COMMIT" in
+                    [0-9a-f]*) [ "${#VALIDATED_COMMIT}" -eq 40 ] || VALIDATED_COMMIT='' ;;
+                    *) VALIDATED_COMMIT='' ;;
+                  esac
+                  if [ -z "$VALIDATED_COMMIT" ]; then
+                    echo "##vso[task.logissue type=error]The receipt did not yield a 40-character validated core commit."
+                    exit 1
+                  fi
+                  # ADO checks out shallow by default; deepen so the ancestry/tree
+                  # comparisons below can see the validated commit. Failing to obtain it
+                  # fails the gate rather than skipping it.
+                  if [ -f "$(git rev-parse --git-dir)/shallow" ]; then
+                    git fetch --unshallow --quiet || git fetch --deepen=250 --quiet
+                  fi
+                  BUILD_COMMIT="$(git rev-parse HEAD)"
+                  # The validated commit must be history this build descends from...
+                  if ! git merge-base --is-ancestor "$VALIDATED_COMMIT" "$BUILD_COMMIT"; then
+                    echo "##vso[task.logissue type=error]Receipt commit $VALIDATED_COMMIT is not an ancestor of build commit $BUILD_COMMIT; RV1-RV3 validated different history."
+                    exit 1
+                  fi
+                  # ...and the SHIPPING trees must be byte-identical to what RV1-RV3 ran,
+                  # so a receipt cannot be reused across a behavior change. Docs/receipt
+                  # commits between the two are deliberately allowed.
+                  if ! git diff --quiet "$VALIDATED_COMMIT" "$BUILD_COMMIT" -- packages action.yml dist azure-pipelines-extension; then
+                    echo "##vso[task.logissue type=error]Build commit $BUILD_COMMIT changes shipped code relative to the validated commit $VALIDATED_COMMIT; re-run RV1-RV3 for this commit."
+                    git diff --name-only "$VALIDATED_COMMIT" "$BUILD_COMMIT" -- packages action.yml dist azure-pipelines-extension
+                    exit 1
+                  fi
+                  echo "RV1-RV3 receipt accepted; shipped trees equal validated commit $VALIDATED_COMMIT."
+                displayName: Release-validation receipt gate (RV1-RV3 evidence for this release)
+                # Inescapable on a PUBLISHING run. A non-publishing validation build still
+                # compiles and packages an unsigned VSIX without environment evidence.
+                condition: and(succeeded(), eq('${{ parameters.publishExtension }}', 'True'))
+                env:
+                  RECEIPT_NAME: ${{ parameters.releaseValidationReceipt }}
+                  # Environment evidence goes stale as the service deploys; re-run RV1-RV3
+                  # rather than releasing against an old observation.
+                  MAX_AGE_DAYS: '30'
 
               - script: npm ci
                 displayName: Install workspace dependencies

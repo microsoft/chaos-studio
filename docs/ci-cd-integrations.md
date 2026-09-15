@@ -10,6 +10,9 @@ canonical outputs, same pass/fail rule).
 - **Azure Pipelines task:** `AzureChaosStudioScenario@1`, shipped by the
   **Azure Chaos Studio Workspaces** extension, `Node20_1` runtime.
 
+> **Maintainers:** release, release-validation, rollback/deprecation, and
+> contract-drift procedures live in [`docs/runbooks/`](runbooks/README.md).
+
 ## Modes
 
 Both platforms share one `mode` input:

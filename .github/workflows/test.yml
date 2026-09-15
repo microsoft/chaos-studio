@@ -137,6 +137,10 @@ jobs:
               # embedded matcher re-runs its regression tests (and cannot bypass them).
               - '.github/workflows/release.yml'
               - '.github/workflows/release-action.yml'
+              # The scheduled drift workflow asserts the pinned api-version and re-runs
+              # the contract/release-validation suites; release-handoff.test.ts pins its
+              # shape, so a change to it must re-run those tests.
+              - '.github/workflows/contract-drift.yml'
 
   typescript:
     name: TypeScript (typecheck + core tests)

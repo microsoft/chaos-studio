@@ -1,0 +1,150 @@
+{
+  "$comment": "TEMPLATE ONLY — not evidence. Copy this file, run RV1-RV3 against the target preview environment per docs/runbooks/release-validation.md, replace every placeholder with what you OBSERVED, set template to false, then stamp and verify with: node scripts/lib/rv-receipt.mjs stamp <file> && node scripts/lib/rv-receipt.mjs verify <file>. The validator rejects this file as-is (template: true, checks not-run), so a checked-in receipt can never satisfy the release gate.",
+  "schemaVersion": 1,
+  "kind": "chaos-studio-release-validation-receipt",
+  "template": true,
+  "apiVersion": "2026-05-01-preview",
+  "coreCommit": "<40-character commit SHA of the released microsoft/chaos-studio commit>",
+  "generatedAt": "<ISO-8601 instant when the receipt was assembled>",
+  "environment": {
+    "cloud": "AzureCloud",
+    "region": "<target preview region>",
+    "workspaceScopeHash": "<sha256 hex of the target workspace resource ID>"
+  },
+  "artifacts": [
+    {
+      "platform": "github-action",
+      "build": "<private Action build ref used for the run>",
+      "coreCommit": "<same 40-character commit SHA>"
+    },
+    {
+      "platform": "azure-pipelines-task",
+      "build": "<ChaosStudioWorkspacesDev VSIX version used for the run>",
+      "coreCommit": "<same 40-character commit SHA>"
+    }
+  ],
+  "checks": [
+    {
+      "id": "RV1",
+      "status": "not-run",
+      "observedAt": "<ISO-8601 instant>",
+      "observations": {
+        "region": "<target preview region>",
+        "apiVersion": "2026-05-01-preview",
+        "transcripts": [
+          {
+            "platform": "github-action",
+            "validate": {
+              "acceptedStatus": 0,
+              "locationSuffix": "<trailing Location segments>",
+              "retryAfterSeconds": 0,
+              "terminalStatus": 0,
+              "terminalState": "<observed properties.status>"
+            },
+            "execute": {
+              "acceptedStatus": 0,
+              "locationSuffix": "<trailing Location segments>",
+              "retryAfterSeconds": 0,
+              "terminalStatus": 0,
+              "terminalState": "<observed properties.status>",
+              "runId": "<run GUID from the execute Location>",
+              "runResourceIdSuffix": "<runs/{runId}>"
+            },
+            "cancel": {
+              "acceptedStatus": 0,
+              "locationSuffix": "<trailing Location segments>",
+              "retryAfterSeconds": 0,
+              "terminalStatus": 0,
+              "terminalState": "<observed properties.status>"
+            },
+            "wire": {
+              "statusField": "<status field name on the returned resources>",
+              "startTimeField": "<start time field name>",
+              "endTimeField": "<end time field name>",
+              "validationErrorChannels": [],
+              "runErrorChannels": []
+            }
+          },
+          {
+            "platform": "azure-pipelines-task",
+            "validate": {
+              "acceptedStatus": 0,
+              "locationSuffix": "<trailing Location segments>",
+              "retryAfterSeconds": 0,
+              "terminalStatus": 0,
+              "terminalState": "<observed properties.status>"
+            },
+            "execute": {
+              "acceptedStatus": 0,
+              "locationSuffix": "<trailing Location segments>",
+              "retryAfterSeconds": 0,
+              "terminalStatus": 0,
+              "terminalState": "<observed properties.status>",
+              "runId": "<run GUID from the execute Location>",
+              "runResourceIdSuffix": "<runs/{runId}>"
+            },
+            "cancel": {
+              "acceptedStatus": 0,
+              "locationSuffix": "<trailing Location segments>",
+              "retryAfterSeconds": 0,
+              "terminalStatus": 0,
+              "terminalState": "<observed properties.status>"
+            },
+            "wire": {
+              "statusField": "<status field name on the returned resources>",
+              "startTimeField": "<start time field name>",
+              "endTimeField": "<end time field name>",
+              "validationErrorChannels": [],
+              "runErrorChannels": []
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "RV2",
+      "status": "not-run",
+      "observedAt": "<ISO-8601 instant>",
+      "observations": {
+        "assignmentScope": "workspace",
+        "roleDefinition": {
+          "$comment": "The role definition the CI identity actually held during the run.",
+          "Actions": []
+        },
+        "federatedIdentities": [
+          {
+            "platform": "github-action",
+            "tokenAcquired": false,
+            "secretless": false
+          },
+          {
+            "platform": "azure-pipelines-task",
+            "tokenAcquired": false,
+            "secretless": false
+          }
+        ],
+        "negativeCases": [
+          {
+            "$comment": "One entry per invoked operation: remove it, then record which calls failed and which still succeeded.",
+            "removedOperation": "<Microsoft.Chaos operation>",
+            "failedOperations": [],
+            "succeededOperations": []
+          }
+        ],
+        "operationsProvenNotRequired": []
+      }
+    },
+    {
+      "id": "RV3",
+      "status": "not-run",
+      "observedAt": "<ISO-8601 instant>",
+      "observations": {
+        "cancelToCanceledSeconds": 0,
+        "duplicateCancelAccepted": false,
+        "duplicateCancelTerminalState": "<observed properties.status>",
+        "cancelOnTerminalRunAccepted": false,
+        "cleanupFailurePreservesOriginalFailure": false
+      }
+    }
+  ]
+}

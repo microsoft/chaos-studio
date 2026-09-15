@@ -274,6 +274,46 @@ jobs:
           node scripts/smoke-action-bundle.mjs "$BUNDLE"
           echo "Action bundle passed the placeholder guard and deterministic smoke test."
 
+      - name: Release-validation receipt gate (RV1-RV3 evidence for this release)
+        env:
+          RELEASE_COMMIT: ${{ steps.resolve.outputs.releaseCommit }}
+          # Environment evidence goes stale as the service deploys; re-run RV1-RV3
+          # rather than releasing against an old observation.
+          MAX_AGE_DAYS: '30'
+        run: |
+          set -euo pipefail
+          # RV1-RV3 run against a real target preview environment and are recorded
+          # as a receipt committed under test/release-validation/receipts/<tag>.json
+          # (the workspace scope is hashed, so the receipt carries no resource IDs).
+          # This gate re-evaluates every observation against the source-proven
+          # contract — a receipt that merely CLAIMS `passed` is rejected.
+          receipt="test/release-validation/receipts/${TAG}.json"
+          if [[ ! -f "$receipt" ]]; then
+            echo "::error::No release-validation receipt at '$receipt'. Run RV1-RV3 in the target preview environment and commit the receipt (docs/runbooks/release-validation.md)."
+            exit 1
+          fi
+          verified="$(node scripts/lib/rv-receipt.mjs verify "$receipt")"
+          printf '%s\n' "$verified"
+          VALIDATED_COMMIT="$(printf '%s\n' "$verified" | sed -n 's/^receipt-core-commit=//p')"
+          if [[ ! "$VALIDATED_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::The receipt did not yield a 40-character validated core commit."
+            exit 1
+          fi
+          # The validated commit must be reviewed history the release descends from...
+          if ! git merge-base --is-ancestor "$VALIDATED_COMMIT" "$RELEASE_COMMIT"; then
+            echo "::error::Receipt commit $VALIDATED_COMMIT is not an ancestor of release commit $RELEASE_COMMIT; RV1-RV3 validated different history."
+            exit 1
+          fi
+          # ...and the SHIPPING trees must be byte-identical to what RV1-RV3 ran,
+          # so a receipt cannot be reused across a behavior change. Docs/receipt
+          # commits between the two are deliberately allowed.
+          if ! git diff --quiet "$VALIDATED_COMMIT" "$RELEASE_COMMIT" -- packages action.yml dist azure-pipelines-extension; then
+            echo "::error::Release commit $RELEASE_COMMIT changes shipped code relative to the validated commit $VALIDATED_COMMIT; re-run RV1-RV3 for this commit."
+            git diff --name-only "$VALIDATED_COMMIT" "$RELEASE_COMMIT" -- packages action.yml dist azure-pipelines-extension
+            exit 1
+          fi
+          echo "RV1-RV3 receipt accepted for $TAG; shipped trees equal validated commit $VALIDATED_COMMIT."
+
   package:
     name: Package the committed dist from git (no repo code, no secret)
     needs: validate

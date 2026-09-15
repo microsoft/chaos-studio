@@ -1,0 +1,176 @@
+# Source-contract drift detection (E6-T3).
+#
+# The shared core encodes the Microsoft.Chaos `2026-05-01-preview` wire protocol as
+# SOURCE-DERIVED fixtures plus a provenance manifest that binds each fixture to an
+# authoritative source extract and pins its hash. Those fixtures are the client's
+# only model of the service. If the service's source contract moves, this repository
+# must find out on a SCHEDULE — not from a customer pipeline failing in production.
+#
+# DETECTION SCOPE — be precise about what this can and cannot see. It runs against the
+# COMMITTED fixtures, source extracts, and pinned constants, so it detects:
+#   * a fixture/extract/recorded-hash that no longer agrees with the rest (including an
+#     edit that bypassed the generator),
+#   * a broken wire-shape or RV-evaluator assertion, and
+#   * an `api-version` literal that disagrees with the pinned constant.
+# It CANNOT observe the upstream service source directly — that would need authenticated
+# access to the service repository — so an upstream change that nobody has mirrored here
+# is NOT detected by this workflow. RV1 against a live environment is only a PARTIAL
+# compensating control: it observes the success/cancellation paths it exercises, not the
+# whole contract (docs/runbooks/contract-drift.md).
+#
+# The policy this workflow enforces (per the release notes and D5/FR15): a protocol
+# mismatch OPENS A SERVICE DEFECT. It never silently changes client behaviour, never
+# regenerates fixtures automatically, and never bumps the pinned `api-version`. Those
+# are deliberate, reviewed code changes that require a fresh RV1-RV3 pass
+# (docs/runbooks/contract-drift.md).
+#
+# Split into two jobs on purpose:
+#   * `drift` checks out and RUNS repository code, and holds NO write permission.
+#   * `report` holds `issues: write` and runs NO repository code (no checkout), so a
+#     compromised fixture/script cannot reach the token that files the defect.
+name: contract-drift
+
+on:
+  schedule:
+    # Weekly, Mondays 07:00 UTC — early enough in the week that a drift defect can be
+    # triaged before a release is cut.
+    - cron: '0 7 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  drift:
+    name: Re-derive the source contract and diff it
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+
+      - name: Install workspace dependencies
+        run: npm ci
+
+      - name: Re-derive the provenance manifest and fail on any drift
+        run: |
+          set -euo pipefail
+          # Regenerate the manifest from the committed fixtures and source extracts.
+          # It is deterministic, so a clean tree means nothing moved; a diff means a
+          # fixture, an extract, or a recorded hash no longer agrees with the rest.
+          node packages/core/fixtures/scripts/generate-provenance.mjs
+          if ! git diff --exit-code -- packages/core/fixtures; then
+            echo "::error::The source-contract provenance manifest is not reproducible from the committed fixtures/extracts. Do NOT regenerate and commit blindly — see docs/runbooks/contract-drift.md."
+            exit 1
+          fi
+          echo "Provenance manifest re-derives byte-identically."
+
+      - name: Re-run the source-contract and release-validation suites
+        run: |
+          set -euo pipefail
+          # The contract suite asserts the fixtures against the reviewed source
+          # extracts; the release-validation suite asserts the RV receipt evaluators,
+          # the RBAC role template, and the release/handoff gates. Both must stay green
+          # for the pinned protocol to be trustworthy.
+          node --test "packages/core/test/contract/**/*.test.ts" "test/release-validation/**/*.test.ts"
+
+      - name: Assert the pinned api-version has not moved anywhere in the repo
+        run: |
+          set -euo pipefail
+          # D5/FR15: the `api-version` is a PINNED CONSTANT, never a customer input. It
+          # changes only by a reviewed code change plus a fresh RV1-RV3 pass. Assert the
+          # constant, and assert that every other api-version literal in the shipped
+          # surface agrees with it.
+          PINNED='2026-05-01-preview'
+          if ! grep -q "export const API_VERSION = '${PINNED}'" packages/core/src/contract.ts; then
+            echo "::error::packages/core/src/contract.ts no longer pins API_VERSION='${PINNED}'. An api-version bump requires a fresh RV1-RV3 pass (docs/runbooks/contract-drift.md)."
+            exit 1
+          fi
+          # A no-match from the inner grep means nothing disagrees, so it is evaluated
+          # as an `if` condition — no failure is ever suppressed.
+          if mismatched="$(grep -rIoE 'api-version=[0-9]{4}-[0-9]{2}-[0-9]{2}(-preview)?' \
+            packages/core/src packages/core/fixtures action.yml azure-pipelines-extension \
+            | grep -v "api-version=${PINNED}")"; then
+            echo "::error::Found api-version literals that disagree with the pinned ${PINNED}:"
+            printf '%s\n' "$mismatched"
+            exit 1
+          fi
+          echo "The pinned api-version ${PINNED} is consistent across the shipped surface."
+
+  report:
+    name: Open a service defect for the drift
+    needs: drift
+    # Only when the detection job actually FAILED, and never on a cancelled run.
+    if: ${{ failure() && needs.drift.result == 'failure' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      # NOTE: this job deliberately has NO repository checkout step. It holds the only
+      # write permission in the workflow and must run no repository code; it composes
+      # the issue from workflow context alone.
+      - name: File (or update) the drift service defect
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        with:
+          script: |
+            const title = 'contract-drift: the Microsoft.Chaos source contract no longer matches the shipped fixtures';
+            const body = [
+              'The scheduled `contract-drift` workflow failed, which means the committed',
+              'source-contract fixtures, the provenance manifest, or the pinned `api-version`',
+              'no longer agree with each other or with the reviewed source extracts.',
+              '',
+              `Failing run: ${process.env.RUN_URL}`,
+              '',
+              '**This is a service defect, not a client bug.** Per the release policy, a protocol',
+              'mismatch is escalated to the Chaos Studio service team rather than silently',
+              'accommodated in the client: do NOT regenerate fixtures, relax an assertion, or bump',
+              'the pinned `api-version` to make this green.',
+              '',
+              'Triage steps are in `docs/runbooks/contract-drift.md`.',
+            ].join('\n');
+
+            const { owner, repo } = context.repo;
+            const existing = await github.rest.issues.listForRepo({
+              owner,
+              repo,
+              state: 'open',
+              labels: 'contract-drift',
+              per_page: 100,
+            });
+
+            // One durable defect per drift episode: comment on the open one rather than
+            // opening a new issue on every scheduled run.
+            if (existing.data.length > 0) {
+              const issue = existing.data[0];
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: issue.number,
+                body: `The scheduled drift check failed again: ${process.env.RUN_URL}`,
+              });
+              core.notice(`Updated existing contract-drift service defect #${issue.number}.`);
+              return;
+            }
+
+            const created = await github.rest.issues.create({
+              owner,
+              repo,
+              title,
+              body,
+              labels: ['contract-drift'],
+            });
+            core.notice(`Opened contract-drift service defect #${created.data.number}.`);
