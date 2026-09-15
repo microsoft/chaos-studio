@@ -52,10 +52,15 @@ function runCli(args: string[], env: Record<string, string> = {}) {
 const REQUIRED_OPS = Object.values(PROVIDER_OPERATIONS);
 const COMMIT = 'a'.repeat(40);
 
-/** One adapter's synthetic RV1 transcript, internally consistent with the contract. */
+/**
+ * One adapter's synthetic RV1 transcript, internally consistent with the
+ * contract. `successRunId` and `cancelRunId` must be different runs (a
+ * terminal-run cancel is a no-op, RV3).
+ */
 function rv1Transcript(
   platform: 'github-action' | 'azure-pipelines-task',
-  runId: string,
+  successRunId: string,
+  cancelRunId: string,
 ): Rv1Transcript {
   return {
     platform,
@@ -66,21 +71,32 @@ function rv1Transcript(
       terminalStatus: 200,
       terminalState: 'Succeeded',
     },
-    execute: {
+    successRun: {
       acceptedStatus: 202,
-      locationSuffix: `runs/${runId}`,
-      runId,
-      runResourceIdSuffix: `runs/${runId}`,
+      locationSuffix: `runs/${successRunId}`,
+      runId: successRunId,
+      runResourceIdSuffix: `runs/${successRunId}`,
       retryAfterSeconds: 10,
       terminalStatus: 200,
       terminalState: 'Succeeded',
     },
-    cancel: {
-      acceptedStatus: 202,
-      locationSuffix: `runs/${runId}`,
-      retryAfterSeconds: 10,
-      terminalStatus: 200,
-      terminalState: 'Canceled',
+    cancellationRun: {
+      execute: {
+        acceptedStatus: 202,
+        locationSuffix: `runs/${cancelRunId}`,
+        runId: cancelRunId,
+        runResourceIdSuffix: `runs/${cancelRunId}`,
+        retryAfterSeconds: 10,
+        terminalStatus: 200,
+        terminalState: 'Succeeded',
+      },
+      cancel: {
+        acceptedStatus: 202,
+        locationSuffix: `runs/${cancelRunId}`,
+        retryAfterSeconds: 10,
+        terminalStatus: 200,
+        terminalState: 'Canceled',
+      },
     },
     wire: {
       statusField: 'status',
@@ -115,8 +131,16 @@ function receipt(): Receipt {
           region: 'westus2',
           apiVersion: API_VERSION,
           transcripts: [
-            rv1Transcript('github-action', '3f2504e0-4f89-11d3-9a0c-0305e82c3301'),
-            rv1Transcript('azure-pipelines-task', '3f2504e0-4f89-11d3-9a0c-0305e82c3302'),
+            rv1Transcript(
+              'github-action',
+              '3f2504e0-4f89-11d3-9a0c-0305e82c3301',
+              '3f2504e0-4f89-11d3-9a0c-0305e82c3311',
+            ),
+            rv1Transcript(
+              'azure-pipelines-task',
+              '3f2504e0-4f89-11d3-9a0c-0305e82c3302',
+              '3f2504e0-4f89-11d3-9a0c-0305e82c3312',
+            ),
           ],
         },
       },
@@ -243,8 +267,8 @@ test('the receipt CLI fails closed on a missing file, unreadable JSON, or an unk
 test('a receipt whose observations contradict the contract fails the CLI gate', () => {
   const lying = receipt();
   // Declared passed, but the observed run never reached a terminal success.
-  (lying.checks[0]!.observations as { transcripts: Array<{ execute: { terminalState: string } }> })
-    .transcripts[0]!.execute.terminalState = 'Failed';
+  (lying.checks[0]!.observations as { transcripts: Array<{ successRun: { terminalState: string } }> })
+    .transcripts[0]!.successRun.terminalState = 'Failed';
   const result = runCli(['verify', writeReceipt(stamp(lying))]);
   assert.equal(result.status, 1);
   assert.match(result.stderr, /RV1/);

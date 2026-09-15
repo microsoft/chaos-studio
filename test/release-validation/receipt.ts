@@ -81,13 +81,30 @@ export interface LroObservation {
   terminalState: string;
 }
 
+/** One accepted execute call and the run identity it produced. */
+export type ExecuteObservation = LroObservation & { runId: string; runResourceIdSuffix: string };
+
+/**
+ * A cancellation requires its OWN run: terminal-run cancellation is a no-op
+ * (RV3), so cancelling the same run already observed Succeeded in
+ * `successRun` cannot happen for real. The operator instead executes a
+ * SECOND run and cancels it while in flight.
+ */
+export interface Rv1CancellationRun {
+  /** The execute call that started the run subsequently canceled. */
+  execute: ExecuteObservation;
+  cancel: LroObservation;
+}
+
 /** The protocol transcript one adapter produced against the live service. */
 export interface Rv1Transcript {
   /** Which shipping adapter produced this transcript. */
   platform: ReleasePlatform;
   validate: LroObservation;
-  execute: LroObservation & { runId: string; runResourceIdSuffix: string };
-  cancel: LroObservation;
+  /** A run driven to completion, observed Succeeded — proves the success path. */
+  successRun: ExecuteObservation;
+  /** A separate, independently identified run driven to Canceled — proves cancellation. */
+  cancellationRun: Rv1CancellationRun;
   /** The deployed wire shape, as observed on the returned resources. */
   wire: {
     statusField: string;
@@ -294,16 +311,19 @@ export function evaluateRv1(o: Rv1Observations): CheckResult {
     }
     checkTranscript(failures, transcript);
   }
-  // Each adapter must have driven its OWN run. Identical run IDs would mean one run
-  // was recorded twice rather than each private build being exercised. GUIDs are
-  // case-insensitive, so compare them case-folded — otherwise re-casing one copy
-  // would defeat the check.
-  const runIds = transcripts
-    .map((t) => t.execute?.runId)
-    .filter((id): id is string => typeof id === 'string')
-    .map((id) => id.toLowerCase());
+  // Each adapter must have driven its OWN success run and its OWN cancellation
+  // run — and those two runs must themselves be DIFFERENT runs, since a
+  // terminal-run cancellation is a no-op (RV3) and cannot turn a Succeeded run
+  // into a Canceled one. Identical run IDs across adapters would also mean one
+  // run was recorded twice rather than each private build being exercised.
+  // GUIDs are case-insensitive, so compare them case-folded — otherwise
+  // re-casing one copy would defeat the check.
+  const allRunIds = transcripts.flatMap((t) => [t.successRun?.runId, t.cancellationRun?.execute?.runId]);
+  const runIds = allRunIds.filter((id): id is string => typeof id === 'string').map((id) => id.toLowerCase());
   if (new Set(runIds).size !== runIds.length) {
-    failures.push('transcripts: every adapter must exercise its own run (duplicate run IDs)');
+    failures.push(
+      'transcripts: every success run and cancellation run must be distinct (duplicate run IDs found)',
+    );
   }
 
   return result('RV1', failures);
@@ -314,29 +334,41 @@ function checkTranscript(failures: string[], t: Rv1Transcript): void {
   const at = (message: string): string => `${t.platform}: ${message}`;
 
   checkLro(failures, `${t.platform} validate`, t.validate, 'validations/latest', VALIDATION_TERMINAL_SUCCESS);
-  checkLro(failures, `${t.platform} execute`, t.execute, undefined, RUN_TERMINAL_SUCCESS);
-  checkLro(failures, `${t.platform} cancel`, t.cancel, undefined, ['Canceled']);
+  checkLro(failures, `${t.platform} success execute`, t.successRun, undefined, RUN_TERMINAL_SUCCESS);
+  checkLro(failures, `${t.platform} cancellation execute`, t.cancellationRun.execute, undefined, RUN_TERMINAL_SUCCESS);
+  checkLro(failures, `${t.platform} cancel`, t.cancellationRun.cancel, undefined, ['Canceled']);
 
   // The run ID is the final `/runs/{runId}` segment of the execute Location and
   // must parse as a GUID before the client trusts it (DX3, VF5).
-  if (!GUID_PATTERN.test(t.execute.runId)) {
-    failures.push(at(`execute run ID '${t.execute.runId}' is not a GUID`));
+  for (const [label, execute] of [
+    ['success', t.successRun] as const,
+    ['cancellation', t.cancellationRun.execute] as const,
+  ]) {
+    if (!GUID_PATTERN.test(execute.runId)) {
+      failures.push(at(`${label} run ID '${execute.runId}' is not a GUID`));
+    }
+    if (execute.runResourceIdSuffix !== `runs/${execute.runId}`) {
+      failures.push(
+        at(`${label} resource ID '${execute.runResourceIdSuffix}' does not end with the observed run ID`),
+      );
+    }
+    if (execute.locationSuffix !== `runs/${execute.runId}`) {
+      failures.push(at(`${label} execute Location '${execute.locationSuffix}' does not address run '${execute.runId}'`));
+    }
   }
-  if (t.execute.runResourceIdSuffix !== `runs/${t.execute.runId}`) {
+  // The cancel acceptance must address the SAME run its own execute call
+  // started, not the success run or an unrelated one.
+  if (t.cancellationRun.cancel.locationSuffix !== `runs/${t.cancellationRun.execute.runId}`) {
     failures.push(
-      at(`execute resource ID '${t.execute.runResourceIdSuffix}' does not end with the observed run ID`),
+      at(
+        `cancel Location '${t.cancellationRun.cancel.locationSuffix}' does not address run '${t.cancellationRun.execute.runId}'`,
+      ),
     );
   }
-  // Both the execute acceptance and the cancel acceptance return a Location that
-  // addresses the SAME run. These suffixes are compared here rather than via
-  // `checkLro`'s fixed-suffix argument because the expected value is derived from
-  // the observed run ID, and leaving them unchecked would let a receipt record a
-  // Location pointing at an unrelated run.
-  if (t.execute.locationSuffix !== `runs/${t.execute.runId}`) {
-    failures.push(at(`execute Location '${t.execute.locationSuffix}' does not address run '${t.execute.runId}'`));
-  }
-  if (t.cancel.locationSuffix !== `runs/${t.execute.runId}`) {
-    failures.push(at(`cancel Location '${t.cancel.locationSuffix}' does not address run '${t.execute.runId}'`));
+  // The success run must NOT be the run that was canceled — proving these are
+  // genuinely independent journeys, not one run relabeled twice.
+  if (t.successRun.runId.toLowerCase() === t.cancellationRun.execute.runId.toLowerCase()) {
+    failures.push(at('the success run and the cancellation run must be different runs'));
   }
 
   if (t.wire.statusField !== STATUS_FIELD) {

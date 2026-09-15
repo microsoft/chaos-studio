@@ -57,8 +57,17 @@ const COMMIT = 'a'.repeat(40);
  */
 const stamp = (r: Receipt): Receipt => ({ ...r, digest: receiptDigest(r) });
 
-/** One adapter's synthetic transcript that matches the source-proven contract exactly. */
-function transcript(platform: 'github-action' | 'azure-pipelines-task', runId: string): Rv1Transcript {
+/**
+ * One adapter's synthetic transcript that matches the source-proven contract
+ * exactly. `successRunId` and `cancelRunId` MUST be different runs: a
+ * terminal-run cancellation is a no-op (RV3), so the same run cannot be
+ * observed both Succeeded and, separately, Canceled.
+ */
+function transcript(
+  platform: 'github-action' | 'azure-pipelines-task',
+  successRunId: string,
+  cancelRunId: string,
+): Rv1Transcript {
   return {
     platform,
     validate: {
@@ -68,21 +77,32 @@ function transcript(platform: 'github-action' | 'azure-pipelines-task', runId: s
       terminalStatus: 200,
       terminalState: 'Succeeded',
     },
-    execute: {
+    successRun: {
       acceptedStatus: 202,
-      locationSuffix: `runs/${runId}`,
-      runId,
-      runResourceIdSuffix: `runs/${runId}`,
+      locationSuffix: `runs/${successRunId}`,
+      runId: successRunId,
+      runResourceIdSuffix: `runs/${successRunId}`,
       retryAfterSeconds: 10,
       terminalStatus: 200,
       terminalState: 'Succeeded',
     },
-    cancel: {
-      acceptedStatus: 202,
-      locationSuffix: `runs/${runId}`,
-      retryAfterSeconds: 10,
-      terminalStatus: 200,
-      terminalState: 'Canceled',
+    cancellationRun: {
+      execute: {
+        acceptedStatus: 202,
+        locationSuffix: `runs/${cancelRunId}`,
+        runId: cancelRunId,
+        runResourceIdSuffix: `runs/${cancelRunId}`,
+        retryAfterSeconds: 10,
+        terminalStatus: 200,
+        terminalState: 'Succeeded',
+      },
+      cancel: {
+        acceptedStatus: 202,
+        locationSuffix: `runs/${cancelRunId}`,
+        retryAfterSeconds: 10,
+        terminalStatus: 200,
+        terminalState: 'Canceled',
+      },
     },
     wire: {
       statusField: 'status',
@@ -94,8 +114,10 @@ function transcript(platform: 'github-action' | 'azure-pipelines-task', runId: s
   };
 }
 
-const ACTION_RUN_ID = '3f2504e0-4f89-11d3-9a0c-0305e82c3301';
-const TASK_RUN_ID = '3f2504e0-4f89-11d3-9a0c-0305e82c3302';
+const ACTION_SUCCESS_RUN_ID = '3f2504e0-4f89-11d3-9a0c-0305e82c3301';
+const ACTION_CANCEL_RUN_ID = '3f2504e0-4f89-11d3-9a0c-0305e82c3311';
+const TASK_SUCCESS_RUN_ID = '3f2504e0-4f89-11d3-9a0c-0305e82c3302';
+const TASK_CANCEL_RUN_ID = '3f2504e0-4f89-11d3-9a0c-0305e82c3312';
 
 /** A synthetic RV1 transcript set — one per adapter — matching the contract exactly. */
 function rv1(): Rv1Observations {
@@ -103,8 +125,8 @@ function rv1(): Rv1Observations {
     region: 'westus2',
     apiVersion: API_VERSION,
     transcripts: [
-      transcript('github-action', ACTION_RUN_ID),
-      transcript('azure-pipelines-task', TASK_RUN_ID),
+      transcript('github-action', ACTION_SUCCESS_RUN_ID, ACTION_CANCEL_RUN_ID),
+      transcript('azure-pipelines-task', TASK_SUCCESS_RUN_ID, TASK_CANCEL_RUN_ID),
     ],
   };
 }
@@ -212,10 +234,10 @@ test('RV1 requires exactly one transcript per shipping adapter, each from its ow
 
   // Re-recording ONE run under two platforms is not two runs.
   const sameRun = rv1();
-  sameRun.transcripts[1] = { ...transcript('azure-pipelines-task', ACTION_RUN_ID) };
+  sameRun.transcripts[1] = { ...transcript('azure-pipelines-task', ACTION_SUCCESS_RUN_ID, ACTION_CANCEL_RUN_ID) };
   const reused = evaluateRv1(sameRun);
   assert.equal(reused.pass, false);
-  assert.ok(reused.failures.some((f) => f.includes('its own run')));
+  assert.ok(reused.failures.some((f) => f.includes('distinct')));
 
   const unknownPlatform = rv1();
   (unknownPlatform.transcripts[1] as { platform: string }).platform = 'jenkins';
@@ -223,10 +245,26 @@ test('RV1 requires exactly one transcript per shipping adapter, each from its ow
 
   // GUIDs are case-insensitive: re-casing one copy is still the same single run.
   const reCased = rv1();
-  reCased.transcripts[1] = transcript('azure-pipelines-task', ACTION_RUN_ID.toUpperCase());
+  reCased.transcripts[1] = transcript(
+    'azure-pipelines-task',
+    ACTION_SUCCESS_RUN_ID.toUpperCase(),
+    TASK_CANCEL_RUN_ID,
+  );
   const folded = evaluateRv1(reCased);
   assert.equal(folded.pass, false);
-  assert.ok(folded.failures.some((f) => f.includes('its own run')));
+  assert.ok(folded.failures.some((f) => f.includes('distinct')));
+
+  // The success run and cancellation run within ONE adapter's transcript must
+  // also be different runs — a terminal-run cancel is a no-op (RV3), so the
+  // same run cannot be both Succeeded and separately observed Canceled.
+  const sameRunWithinAdapter = rv1();
+  sameRunWithinAdapter.transcripts[0]!.cancellationRun.execute.runId = ACTION_SUCCESS_RUN_ID;
+  sameRunWithinAdapter.transcripts[0]!.cancellationRun.execute.runResourceIdSuffix = `runs/${ACTION_SUCCESS_RUN_ID}`;
+  sameRunWithinAdapter.transcripts[0]!.cancellationRun.execute.locationSuffix = `runs/${ACTION_SUCCESS_RUN_ID}`;
+  sameRunWithinAdapter.transcripts[0]!.cancellationRun.cancel.locationSuffix = `runs/${ACTION_SUCCESS_RUN_ID}`;
+  const sameJourney = evaluateRv1(sameRunWithinAdapter);
+  assert.equal(sameJourney.pass, false);
+  assert.ok(sameJourney.failures.some((f) => f.includes('must be different runs')));
 });
 
 test('RV1 evaluates EVERY adapter transcript, not just the first', () => {
@@ -240,22 +278,22 @@ test('RV1 evaluates EVERY adapter transcript, not just the first', () => {
 
 test('RV1 fails when the execute Location run segment is not a GUID or disagrees with the run ID', () => {
   const notGuid = rv1();
-  notGuid.transcripts[0]!.execute.runId = 'latest';
-  notGuid.transcripts[0]!.execute.runResourceIdSuffix = 'runs/latest';
+  notGuid.transcripts[0]!.successRun.runId = 'latest';
+  notGuid.transcripts[0]!.successRun.runResourceIdSuffix = 'runs/latest';
   assert.equal(evaluateRv1(notGuid).pass, false);
 
   const mismatch = rv1();
-  mismatch.transcripts[0]!.execute.runResourceIdSuffix = `runs/${TASK_RUN_ID}`;
+  mismatch.transcripts[0]!.successRun.runResourceIdSuffix = `runs/${TASK_SUCCESS_RUN_ID}`;
   assert.equal(evaluateRv1(mismatch).pass, false);
 
   // The execute acceptance Location must address the run it reported...
   const strayExecuteLocation = rv1();
-  strayExecuteLocation.transcripts[0]!.execute.locationSuffix = `runs/${TASK_RUN_ID}`;
+  strayExecuteLocation.transcripts[0]!.successRun.locationSuffix = `runs/${TASK_SUCCESS_RUN_ID}`;
   assert.equal(evaluateRv1(strayExecuteLocation).pass, false);
 
   // ...and the cancel acceptance must address that SAME run, not another one.
   const strayCancelLocation = rv1();
-  strayCancelLocation.transcripts[0]!.cancel.locationSuffix = `runs/${TASK_RUN_ID}`;
+  strayCancelLocation.transcripts[0]!.cancellationRun.cancel.locationSuffix = `runs/${TASK_SUCCESS_RUN_ID}`;
   assert.equal(evaluateRv1(strayCancelLocation).pass, false);
 });
 
@@ -265,11 +303,11 @@ test('RV1 fails when a terminal state is outside the source-proven terminal sets
   assert.equal(evaluateRv1(badValidation).pass, false);
 
   const badRun = rv1();
-  badRun.transcripts[0]!.execute.terminalState = 'Failed';
+  badRun.transcripts[0]!.successRun.terminalState = 'Failed';
   assert.equal(evaluateRv1(badRun).pass, false);
 
   const badCancel = rv1();
-  badCancel.transcripts[0]!.cancel.terminalState = 'Succeeded';
+  badCancel.transcripts[0]!.cancellationRun.cancel.terminalState = 'Succeeded';
   assert.equal(evaluateRv1(badCancel).pass, false);
 });
 

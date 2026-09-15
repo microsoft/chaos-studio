@@ -41,21 +41,33 @@
               "terminalStatus": 0,
               "terminalState": "<observed properties.status>"
             },
-            "execute": {
+            "$comment_runs": "successRun and cancellationRun.execute MUST be TWO SEPARATE runs: cancelling an already-terminal (Succeeded) run is a no-op (RV3), so the same run can never be observed both Succeeded and, independently, Canceled.",
+            "successRun": {
               "acceptedStatus": 0,
               "locationSuffix": "<trailing Location segments>",
               "retryAfterSeconds": 0,
               "terminalStatus": 0,
-              "terminalState": "<observed properties.status>",
+              "terminalState": "<observed properties.status, must be Succeeded>",
               "runId": "<run GUID from the execute Location>",
               "runResourceIdSuffix": "<runs/{runId}>"
             },
-            "cancel": {
-              "acceptedStatus": 0,
-              "locationSuffix": "<trailing Location segments>",
-              "retryAfterSeconds": 0,
-              "terminalStatus": 0,
-              "terminalState": "<observed properties.status>"
+            "cancellationRun": {
+              "execute": {
+                "acceptedStatus": 0,
+                "locationSuffix": "<trailing Location segments>",
+                "retryAfterSeconds": 0,
+                "terminalStatus": 0,
+                "terminalState": "<observed properties.status before cancel>",
+                "runId": "<a DIFFERENT run GUID from successRun>",
+                "runResourceIdSuffix": "<runs/{runId}>"
+              },
+              "cancel": {
+                "acceptedStatus": 0,
+                "locationSuffix": "<trailing Location segments>",
+                "retryAfterSeconds": 0,
+                "terminalStatus": 0,
+                "terminalState": "<observed properties.status, must be Canceled>"
+              }
             },
             "wire": {
               "statusField": "<status field name on the returned resources>",
@@ -74,21 +86,32 @@
               "terminalStatus": 0,
               "terminalState": "<observed properties.status>"
             },
-            "execute": {
+            "successRun": {
               "acceptedStatus": 0,
               "locationSuffix": "<trailing Location segments>",
               "retryAfterSeconds": 0,
               "terminalStatus": 0,
-              "terminalState": "<observed properties.status>",
+              "terminalState": "<observed properties.status, must be Succeeded>",
               "runId": "<run GUID from the execute Location>",
               "runResourceIdSuffix": "<runs/{runId}>"
             },
-            "cancel": {
-              "acceptedStatus": 0,
-              "locationSuffix": "<trailing Location segments>",
-              "retryAfterSeconds": 0,
-              "terminalStatus": 0,
-              "terminalState": "<observed properties.status>"
+            "cancellationRun": {
+              "execute": {
+                "acceptedStatus": 0,
+                "locationSuffix": "<trailing Location segments>",
+                "retryAfterSeconds": 0,
+                "terminalStatus": 0,
+                "terminalState": "<observed properties.status before cancel>",
+                "runId": "<a DIFFERENT run GUID from successRun>",
+                "runResourceIdSuffix": "<runs/{runId}>"
+              },
+              "cancel": {
+                "acceptedStatus": 0,
+                "locationSuffix": "<trailing Location segments>",
+                "retryAfterSeconds": 0,
+                "terminalStatus": 0,
+                "terminalState": "<observed properties.status, must be Canceled>"
+              }
             },
             "wire": {
               "statusField": "<status field name on the returned resources>",
