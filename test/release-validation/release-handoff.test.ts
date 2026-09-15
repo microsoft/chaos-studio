@@ -368,11 +368,20 @@ test('the source-contract drift workflow runs on a schedule and fails closed', (
   assert.match(triggers, /\n {2}workflow_dispatch:/);
   assert.match(workflow, /^permissions:\n {2}contents: read$/m);
   const drift = workflow.slice(workflow.indexOf('\n  drift:'), workflow.indexOf('\n  report:'));
-  assert.ok(drift.includes('node packages/core/fixtures/scripts/generate-provenance.mjs'));
-  assert.match(drift, /git diff --exit-code/);
-  assert.ok(drift.includes('packages/core/test/contract/**/*.test.ts'));
+  // The contract checks are EVALUATED by the drift CLI (behavioural coverage lives in
+  // contract-drift-checks.test.ts); the workflow only wires them up.
+  for (const check of ['provenance', 'contract-suite', 'api-version']) {
+    assert.ok(
+      drift.includes(`node scripts/lib/contract-drift.mjs ${check}`),
+      `the drift job runs the ${check} check`,
+    );
+  }
+  const checks = readText('scripts/lib/contract-drift.mjs');
+  assert.ok(checks.includes('packages/core/fixtures/scripts/generate-provenance.mjs'));
+  assert.match(checks, /'diff', '--exit-code'/);
+  assert.ok(checks.includes('packages/core/test/contract/**/*.test.ts'));
+  assert.ok(checks.includes(API_VERSION), 'the pinned api-version is asserted across the repo');
   assert.ok(drift.includes('test/release-validation/**/*.test.ts'));
-  assert.ok(drift.includes(API_VERSION), 'the pinned api-version is asserted across the repo');
   assert.doesNotMatch(drift, /continue-on-error|\|\| true/);
 });
 
@@ -396,22 +405,47 @@ test('only a CONFIRMED contract mismatch is reported as a source-contract servic
   // sets it, so its failure cannot masquerade as drift.
   assert.match(drift, /\n {4}outputs:\n/);
   assert.match(drift, /contractMismatch: \$\{\{[^}]*steps\./);
-  assert.match(drift, /contract=mismatch/);
   for (const id of ['provenance', 'contract_suite', 'api_version']) {
     assert.ok(drift.includes(`id: ${id}`), `the ${id} contract check is individually identified`);
   }
+  // `contract=mismatch` is recorded ONLY by the drift CLI's checked-mismatch path —
+  // never by a shell wrapper that cannot tell a mismatch from a command error.
+  assert.doesNotMatch(drift, /GITHUB_OUTPUT/, 'no step writes a raw contract verdict of its own');
+  const checks = readText('scripts/lib/contract-drift.mjs');
+  assert.ok(checks.includes("appendFileSync(outputFile, 'contract=mismatch\\n')"));
+
   // The release-validation suite is a SEPARATE step from the contract suite so its
   // failure is reported for what it is.
   const contractSuite = drift.slice(drift.indexOf('id: contract_suite'));
   assert.ok(
-    contractSuite.slice(0, contractSuite.indexOf('id: release_validation_suite')).includes('packages/core/test/contract/**/*.test.ts'),
-    'the contract suite step runs the contract tests',
+    contractSuite
+      .slice(0, contractSuite.indexOf('id: release_validation_suite'))
+      .includes('node scripts/lib/contract-drift.mjs contract-suite'),
+    'the contract suite step runs the contract check',
   );
   assert.ok(drift.includes('id: release_validation_suite'), 'the release-validation suite is its own step');
   const afterRvId = drift.slice(drift.indexOf('id: release_validation_suite'));
-  const releaseValidation = afterRvId.slice(0, afterRvId.indexOf('\n      - name:'));
+  const nextStep = afterRvId.indexOf('\n      - name:');
+  const releaseValidation = nextStep === -1 ? afterRvId : afterRvId.slice(0, nextStep);
   assert.ok(releaseValidation.includes('test/release-validation/**/*.test.ts'), 'the release-validation step runs that suite');
-  assert.ok(!releaseValidation.includes('contract=mismatch'), 'a release-validation failure does not claim contract drift');
+  assert.ok(!releaseValidation.includes('contract-drift.mjs'), 'a release-validation failure does not claim contract drift');
+
+  // Every contract check must PUBLISH its verdict even when a sibling step already
+  // failed; otherwise a repository-side regression could skip the api-version check
+  // and downgrade real drift to a mere workflow failure. The release-validation suite
+  // runs last for the same reason.
+  for (const id of ['provenance', 'contract_suite', 'api_version']) {
+    const step = drift.slice(drift.indexOf(`id: ${id}`));
+    assert.match(
+      step.slice(0, step.indexOf('run:')),
+      /if: \$\{\{ !cancelled\(\) && steps\.install\.outcome == 'success' \}\}/,
+      `the ${id} check runs independently of the other checks' outcome`,
+    );
+  }
+  assert.ok(
+    drift.indexOf('id: api_version') < drift.indexOf('id: release_validation_suite'),
+    'no repository-side suite runs ahead of a contract check',
+  );
 
   // The reporting job branches on that verdict rather than on "the job failed".
   assert.match(report, /needs\.drift\.outputs\.contractMismatch/);

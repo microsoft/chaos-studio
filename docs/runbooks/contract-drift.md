@@ -61,27 +61,43 @@ that the job failed:
 | Verdict | Label | Meaning |
 |---|---|---|
 | A contract check reported `contract=mismatch` — provenance re-derivation, the source-contract suite, or the pinned `api-version` assertion | `contract-drift` | A **confirmed** source-contract mismatch. Treat it as a service defect and follow the steps below. |
-| The job failed without any contract check reporting a mismatch — `npm ci`, the runner, a timeout, or the repository-side release-validation suite | `contract-drift-workflow-failure` | **Not** evidence of drift. Fix the workflow; do not file a service defect on the strength of it. Drift detection is not running until it is green. |
+| The job failed without any contract check reporting a mismatch — `npm ci`, the runner, a timeout, the repository-side release-validation suite, or a contract check that **could not be evaluated** | `contract-drift-workflow-failure` | **Not** evidence of drift. Fix the workflow; do not file a service defect on the strength of it. Drift detection is not running until it is green. |
 
-Start from that issue.
+The three contract checks are evaluated by `scripts/lib/contract-drift.mjs`, which
+reports a three-way verdict — a shell wrapper cannot, because `git diff --exit-code`
+exits `1` for "there are differences" and `128` for "git could not run", and
+`node --test` exits nonzero for a failed assertion, a syntax error, an unresolvable
+import and an empty glob alike:
 
-1. **Read which step failed.**
+| Exit | Verdict | Effect |
+|---|---|---|
+| `0` | Checked; the contract matches. | Nothing recorded. |
+| `1` | Checked; an **identified** disagreement (a `git diff` that reported differences, a failing contract **assertion**, a literal that disagrees with the pin). | Records `contract=mismatch`; only this can become a service defect. |
+| `2` | The check **could not be evaluated** (a failed `git`, an unreadable file, a test file that will not parse or import, an empty test discovery, a test that died before any contract assertion ran). | Records nothing; reported as a drift-check failure. |
+
+Start from that issue. All three contract checks run **independently** of one another
+(and ahead of the repository-side release-validation suite), so one failure never
+suppresses another check's verdict.
+
+1. **Read which step failed**, and whether it reported a mismatch (exit 1) or an
+   unevaluable check (exit 2 — the log says so explicitly).
 
    | Failing step | Contract evidence? | Meaning |
    |---|---|---|
    | Install workspace dependencies | No | Setup failure; says nothing about the contract. |
-   | Provenance re-derivation | Yes | A fixture, a source extract, or a recorded hash no longer agrees with the rest — usually an edit that bypassed the generator. |
-   | Source-contract suite | Yes | An assertion about the wire shape broke. |
+   | Provenance re-derivation | Only on exit 1 | A fixture, a source extract, or a recorded hash no longer agrees with the rest — usually an edit that bypassed the generator. |
+   | Source-contract suite | Only on exit 1 | A contract **assertion** about the wire shape broke. |
    | Release-validation suite | No | This repository's release machinery regressed (receipt evaluators, RBAC template, release gates) — a repository defect, not a protocol mismatch. |
-   | Pinned `api-version` assertion | Yes | The constant moved, or a literal somewhere in the shipped surface disagrees with it. |
+   | Pinned `api-version` assertion | Only on exit 1 | The constant moved, or a literal somewhere in the shipped surface disagrees with it. |
 
 2. **Reproduce locally** at the same commit:
 
    ```bash
    npm ci
-   node packages/core/fixtures/scripts/generate-provenance.mjs
-   git diff -- packages/core/fixtures
-   node --test "packages/core/test/contract/**/*.test.ts" "test/release-validation/**/*.test.ts"
+   node scripts/lib/contract-drift.mjs provenance
+   node scripts/lib/contract-drift.mjs contract-suite
+   node scripts/lib/contract-drift.mjs api-version
+   node --test "test/release-validation/**/*.test.ts"
    ```
 
 3. **Classify the cause.**
@@ -109,9 +125,12 @@ of the following, in order:
    extracts for the new version, update the fixtures through
    `packages/core/fixtures/scripts/generate-provenance.mjs`, and review every diff
    against the authoritative source.
-2. **Change the constant.** Update `API_VERSION` in `packages/core/src/contract.ts`.
-   There is exactly one pinned value; no per-operation or per-adapter override, and no
-   input that lets a caller select it.
+2. **Change the constant.** Update `API_VERSION` in `packages/core/src/contract.ts`,
+   and the `PINNED_API_VERSION` the drift check audits it against in
+   `scripts/lib/contract-drift.mjs` (deliberately restated there: a check that read its
+   expectation from the file it audits would never fail). There is exactly one pinned
+   value; no per-operation or per-adapter override, and no input that lets a caller
+   select it.
 3. **Update every literal** in the shipped surface (`packages/core/src`,
    `packages/core/fixtures`, `action.yml`, `azure-pipelines-extension`, and the
    documentation) so the drift workflow's consistency assertion passes.
@@ -129,6 +148,11 @@ A bump that skips step 5 is not a bump — it is shipping an unvalidated protoco
 
 `.github/workflows/contract-drift.yml` is itself covered by the TypeScript path filter
 in `.github/workflows/test.yml`, and its shape is pinned by
-`test/release-validation/release-handoff.test.ts`. Weakening the workflow (removing the
-schedule, suppressing a failure, dropping a suite) fails those tests on the pull
-request, which is intentional: the drift detector cannot be quietly disabled.
+`test/release-validation/release-handoff.test.ts`. The checks it runs live in
+`scripts/lib/contract-drift.mjs`, whose mismatch-versus-execution-error behaviour is
+covered by `test/release-validation/contract-drift-checks.test.ts` — including the
+cases where the check fails *before* any contract assertion runs. Weakening the
+workflow (removing the schedule, suppressing a failure, dropping a suite) or blurring
+that distinction fails those tests on the pull request, which is intentional: the drift
+detector cannot be quietly disabled, and it cannot be made to claim evidence it does
+not have.

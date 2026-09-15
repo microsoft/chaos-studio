@@ -30,10 +30,14 @@
 #     compromised fixture/script cannot reach the token that files the defect.
 #
 # The SERVICE-DEFECT claim is gated on an EXPLICIT contract verdict, never on "the job
-# failed": only the three checks that can observe the source contract (provenance
-# re-derivation, the source-contract suite, the pinned `api-version` assertion) set
-# `contract=mismatch`. A dependency-install failure, a runner failure, or a
-# repository-side release-validation regression is reported honestly as a workflow
+# failed". The three checks that can observe the source contract (provenance
+# re-derivation, the source-contract suite, the pinned `api-version` assertion) are
+# evaluated by `scripts/lib/contract-drift.mjs`, which separates a CHECKED MISMATCH
+# (exit 1, records `contract=mismatch`) from a check that could NOT BE EVALUATED
+# (exit 2, records nothing): a failed `git`, an unreadable file, a test file that will
+# not parse or import, an empty test discovery, or a test that dies before any contract
+# assertion runs. A dependency-install failure, a runner failure, an unevaluable check,
+# or a repository-side release-validation regression is reported honestly as a workflow
 # failure under its own label, so a service defect never rests on absent evidence.
 name: contract-drift
 
@@ -75,38 +79,48 @@ jobs:
       # SETUP, not evidence. A failure here says nothing about the source contract,
       # and it sets no contract output, so the reporting job will not claim drift.
       - name: Install workspace dependencies
+        id: install
         run: npm ci
 
       - name: Re-derive the provenance manifest and fail on any drift
         id: provenance
-        run: |
-          set -euo pipefail
-          # Regenerate the manifest from the committed fixtures and source extracts.
-          # It is deterministic, so a clean tree means nothing moved; a diff means a
-          # fixture, an extract, or a recorded hash no longer agrees with the rest.
-          node packages/core/fixtures/scripts/generate-provenance.mjs
-          if ! git diff --exit-code -- packages/core/fixtures; then
-            echo "contract=mismatch" >> "$GITHUB_OUTPUT"
-            echo "::error::The source-contract provenance manifest is not reproducible from the committed fixtures/extracts. Do NOT regenerate and commit blindly — see docs/runbooks/contract-drift.md."
-            exit 1
-          fi
-          echo "Provenance manifest re-derives byte-identically."
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        # Every contract check is EVALUATED by scripts/lib/contract-drift.mjs, which
+        # reports one of three verdicts: 0 = checked and matching, 1 = checked and
+        # MISMATCHING (it writes `contract=mismatch` to this step's output), 2 = the
+        # check could NOT be evaluated (it writes nothing). A shell wrapper cannot make
+        # that distinction — `git diff --exit-code` exits 1 for "there are differences"
+        # and 128 for "git could not run"; `node --test` exits nonzero for a failed
+        # assertion, a syntax error and an empty glob alike — so the service-defect
+        # claim would otherwise rest on absent evidence.
+        run: node scripts/lib/contract-drift.mjs provenance
 
       - name: Re-run the source-contract suite
         id: contract_suite
-        run: |
-          set -euo pipefail
-          # The contract suite asserts the fixtures against the reviewed source
-          # extracts, so its failure IS contract evidence: the shipped wire shapes no
-          # longer agree with the source the fixtures were derived from.
-          if ! node --test "packages/core/test/contract/**/*.test.ts"; then
-            echo "contract=mismatch" >> "$GITHUB_OUTPUT"
-            echo "::error::The source-contract suite failed; the shipped fixtures no longer agree with the reviewed source extracts (docs/runbooks/contract-drift.md)."
-            exit 1
-          fi
+        # Each contract check runs INDEPENDENTLY of the others' outcome: one check
+        # failing must not skip another and suppress the verdict it would have
+        # published, which would downgrade real drift to a mere workflow failure.
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        # A mismatch here is recorded only when an IDENTIFIED contract assertion
+        # observed the shipped fixtures disagreeing with the reviewed source extracts.
+        # A broken import, an unparseable test file, an empty discovery, or a test that
+        # dies during setup is a drift-check failure, not a service defect.
+        run: node scripts/lib/contract-drift.mjs contract-suite
 
+      - name: Assert the pinned api-version has not moved anywhere in the repo
+        id: api_version
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        # D5/FR15: the `api-version` is a PINNED CONSTANT, never a customer input. It
+        # changes only by a reviewed code change plus a fresh RV1-RV3 pass. The check
+        # asserts the constant and every other api-version literal in the shipped
+        # surface; a file it cannot read is an execution error, never a mismatch.
+        run: node scripts/lib/contract-drift.mjs api-version
+
+      # LAST, and deliberately so: this suite observes THIS REPOSITORY, so it must never
+      # run ahead of a contract check and prevent it from publishing its verdict.
       - name: Re-run the release-validation suite
         id: release_validation_suite
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: |
           set -euo pipefail
           # The release-validation suite asserts the RV receipt evaluators, the RBAC
@@ -115,32 +129,6 @@ jobs:
           # so it deliberately records NO contract verdict, and a failure here is
           # reported as a repository regression rather than as a service defect.
           node --test "test/release-validation/**/*.test.ts"
-
-      - name: Assert the pinned api-version has not moved anywhere in the repo
-        id: api_version
-        run: |
-          set -euo pipefail
-          # D5/FR15: the `api-version` is a PINNED CONSTANT, never a customer input. It
-          # changes only by a reviewed code change plus a fresh RV1-RV3 pass. Assert the
-          # constant, and assert that every other api-version literal in the shipped
-          # surface agrees with it.
-          PINNED='2026-05-01-preview'
-          if ! grep -q "export const API_VERSION = '${PINNED}'" packages/core/src/contract.ts; then
-            echo "contract=mismatch" >> "$GITHUB_OUTPUT"
-            echo "::error::packages/core/src/contract.ts no longer pins API_VERSION='${PINNED}'. An api-version bump requires a fresh RV1-RV3 pass (docs/runbooks/contract-drift.md)."
-            exit 1
-          fi
-          # A no-match from the inner grep means nothing disagrees, so it is evaluated
-          # as an `if` condition — no failure is ever suppressed.
-          if mismatched="$(grep -rIoE 'api-version=[0-9]{4}-[0-9]{2}-[0-9]{2}(-preview)?' \
-            packages/core/src packages/core/fixtures action.yml azure-pipelines-extension \
-            | grep -v "api-version=${PINNED}")"; then
-            echo "contract=mismatch" >> "$GITHUB_OUTPUT"
-            echo "::error::Found api-version literals that disagree with the pinned ${PINNED}:"
-            printf '%s\n' "$mismatched"
-            exit 1
-          fi
-          echo "The pinned api-version ${PINNED} is consistent across the shipped surface."
 
   report:
     name: Report the drift-check failure
@@ -198,10 +186,12 @@ jobs:
                   body: [
                     'The scheduled `contract-drift` workflow failed, but it did NOT confirm a source-contract mismatch.',
                     'None of the contract checks (provenance re-derivation, the source-contract suite, the',
-                    'pinned `api-version` assertion) reported drift. The failure is therefore in the workflow',
-                    'itself — dependency installation, the runner, a timeout, or the repository-side',
-                    'release-validation suite — and is not evidence of contract drift. Do not file a service',
-                    'defect on the strength of it.',
+                    'pinned `api-version` assertion) reported drift. Either the failure is outside them —',
+                    'dependency installation, the runner, a timeout, or the repository-side release-validation',
+                    'suite — or a contract check COULD NOT BE EVALUATED (a failed `git`, an unreadable file, a',
+                    'test file that will not parse or import, an empty test discovery, or a test that died',
+                    'before any contract assertion ran). Neither is evidence of contract drift. Do not file a',
+                    'service defect on the strength of it.',
                     '',
                     `Failing run: ${runUrl}`,
                     '',
