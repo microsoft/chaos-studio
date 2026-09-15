@@ -21,13 +21,16 @@ impact caused by a published integration.
 
 1. **One commit, two marketplaces.** Every release ships artifacts built from a
    single validated core commit; both release configs prove it before publishing,
-   from one shared release commit.
+   from one shared release commit — the commit the exact version tag resolves to,
+   which the OneBranch build is matched against (`scripts/lib/release-commit.mjs`).
 2. **Evidence, not assertion.** RV1–RV3 results are recorded as a receipt whose
    observations are *re-evaluated* against the source-proven contract. A receipt
    that merely claims `passed` is rejected.
-3. **A protocol mismatch is a service defect.** The client is never quietly changed
-   to accommodate a wire change; the pinned `api-version` moves only by a reviewed
-   code change plus a fresh RV pass.
+3. **A confirmed protocol mismatch is a service defect.** The client is never quietly
+   changed to accommodate a wire change; the pinned `api-version` moves only by a
+   reviewed code change plus a fresh RV pass. A drift finding is triaged against the
+   authoritative source first — the checks see only this repository, so a repository
+   editing error looks the same to them as a service change.
 4. **Secrets never meet repository code.** Publishing jobs consume prebuilt,
    verified artifacts and run no repository code; gates that execute repository code
    hold no credential.

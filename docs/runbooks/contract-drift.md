@@ -37,10 +37,11 @@ automation will reliably discover for you.
 
 ## The policy
 
-A protocol mismatch is a **service defect**, not a client bug. When the contract and
-the service disagree, the response is to escalate to the Chaos Studio service team —
+A **confirmed** protocol mismatch — one triage attributes to the service, not to this
+repository — is a **service defect**, not a client bug. When the contract and the
+service disagree, the response is to escalate to the Chaos Studio service team —
 never to quietly change the client to match. Concretely, the following are prohibited
-as a response to a red drift run:
+as a response to a red drift run, whichever cause triage lands on:
 
 - regenerating fixtures and committing the result to make the diff go away,
 - relaxing or deleting a contract assertion,
@@ -60,7 +61,7 @@ that the job failed:
 
 | Verdict | Label | Meaning |
 |---|---|---|
-| A contract check reported `contract=mismatch` — provenance re-derivation, the **source-protocol** suite, or the pinned `api-version` assertion | `contract-drift` | A **confirmed** source-contract mismatch. Treat it as a service defect and follow the steps below. |
+| A contract check reported `contract=mismatch` — provenance re-derivation, the **source-protocol** suite, or the pinned `api-version` assertion | `contract-drift` | A **confirmed mismatch between this repository's committed artifacts**: the fixtures, extracts, recorded hashes and pinned constants no longer agree. That is real and blocks releases, but it does **not** by itself say whether the repository or the service moved — these checks cannot see the service. Triage it with step 3 below before classifying it as a service defect. |
 | The job failed without any contract check reporting a mismatch — `npm ci`, the runner, a timeout, the repository-policy assertions, the repository-side release-validation suite, or a contract check that **could not be evaluated** | `contract-drift-workflow-failure` | **Not** evidence of drift. Fix the workflow; do not file a service defect on the strength of it. Drift detection is not running until it is green. |
 
 The three contract checks are evaluated by `scripts/lib/contract-drift.mjs`, which
@@ -72,7 +73,7 @@ import and an empty glob alike:
 | Exit | Verdict | Effect |
 |---|---|---|
 | `0` | Checked; the contract matches. | Nothing recorded. |
-| `1` | Checked; an **identified** disagreement (a `git diff` that reported differences, a failing **source-protocol** assertion, an exported `API_VERSION` that disagrees with the pin). | Records `contract=mismatch`; only this can become a service defect. |
+| `1` | Checked; an **identified** disagreement (a `git diff` that reported differences, a failing **source-protocol** assertion, an exported `API_VERSION` that disagrees with the pin). | Records `contract=mismatch`; only this can become a service defect, and only after triage attributes it to the service. |
 | `2` | The check **could not be evaluated** (a failed `git`, an unreadable file, a test file that will not parse or import, an empty test discovery, a test that died before any contract assertion ran, an unclassified contract test). | Records nothing; reported as a drift-check failure. |
 
 ### Only source-protocol assertions can produce a mismatch
@@ -138,7 +139,12 @@ suppresses another check's verdict.
    node --test "test/release-validation/**/*.test.ts"
    ```
 
-3. **Classify the cause.**
+3. **Classify the cause.** The drift checks cannot do this for you: they observe only
+   this repository, so classification needs evidence from outside it — the
+   authoritative service source for the pinned version, or a live-environment RV1
+   observation ([`release-validation.md`](release-validation.md)). Until you have
+   that evidence, the issue is an unclassified contract mismatch, not a service
+   defect.
 
    - *An in-repo edit that bypassed the generator* (a fixture hand-edited, an extract
      re-pasted): this is a repository defect. Restore the extract from the

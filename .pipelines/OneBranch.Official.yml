@@ -62,13 +62,18 @@ parameters:
     values:
       - vss-extension.json
       - vss-extension.dev.json
-  # Basename (no directory, no `.json`) of the release-validation receipt under
-  # test/release-validation/receipts/. RV1-RV3 are executed by an operator against
-  # a real target preview environment and recorded as a receipt; a PUBLISHING run
-  # re-verifies that evidence in the build stage before anything is signed. Empty
-  # by default so a publishing run without recorded evidence FAILS CLOSED.
-  - name: releaseValidationReceipt
-    displayName: Release-validation receipt basename (test/release-validation/receipts/<name>.json)
+  # The EXACT release version tag (vMAJOR.MINOR.PATCH) this publication belongs to.
+  # It selects BOTH halves of the release evidence, so they can never disagree:
+  #   * the release-validation receipt at test/release-validation/receipts/<tag>.json —
+  #     RV1-RV3 are executed by an operator against a real target preview environment
+  #     and recorded there; a PUBLISHING run re-verifies that evidence in the build
+  #     stage before anything is signed; and
+  #   * the SHARED RELEASE COMMIT — the commit the GitHub release published that tag
+  #     from. Publishing the VSIX from any other commit would break "both marketplaces
+  #     from ONE commit" (D16), which a per-pipeline receipt gate alone cannot prevent.
+  # Empty by default so a publishing run without recorded evidence FAILS CLOSED.
+  - name: releaseTag
+    displayName: Exact release tag (vMAJOR.MINOR.PATCH) — selects the receipt and the shared release commit
     type: string
     default: ''
 
@@ -160,7 +165,15 @@ extends:
               # packaging — so a publishing run cannot reach the Marketplace without
               # green, current, commit-bound evidence. The same CLI backs the GitHub Action
               # release workflow, so BOTH marketplaces gate on the SAME receipt and the
-              # SAME core commit (D16).
+              # SAME core commit (D16) — and, because the receipt gate alone would accept
+              # ANY receipt-bearing descendant, the step additionally binds this build to
+              # the commit the GitHub release published `releaseTag` from
+              # (scripts/lib/release-commit.mjs), so the two marketplaces cannot ship two
+              # different commits.
+              #
+              # ORDERING CONSEQUENCE: the GitHub Action release runs FIRST, because the
+              # exact version tag it creates is the shared release record this build is
+              # matched against (docs/runbooks/release.md).
               #
               # SCOPE OF THE GATE, precisely: it runs only on a PUBLISHING run. A
               # non-publishing main-branch build still reaches the `sign` stage and can
@@ -171,18 +184,17 @@ extends:
               # "nothing is PUBLISHED without evidence", not "nothing is ever signed".
               - script: |
                   set -euo pipefail
-                  if [ -z "${RECEIPT_NAME}" ]; then
-                    echo "##vso[task.logissue type=error]A publishing run requires the releaseValidationReceipt parameter. Run RV1-RV3 in the target preview environment and commit the receipt (docs/runbooks/release-validation.md)."
+                  if [ -z "${RELEASE_TAG}" ]; then
+                    echo "##vso[task.logissue type=error]A publishing run requires the releaseTag parameter (the exact vMAJOR.MINOR.PATCH release tag). Run RV1-RV3 in the target preview environment, commit the receipt, and release the GitHub Action first (docs/runbooks/release.md)."
                     exit 1
                   fi
-                  # Basename only — never a path — so the parameter cannot reach outside
-                  # the tracked receipts directory.
-                  case "${RECEIPT_NAME}" in
-                    *[!A-Za-z0-9._-]*|.*|*..*)
-                      echo "##vso[task.logissue type=error]Invalid releaseValidationReceipt '${RECEIPT_NAME}'; use a plain basename."
-                      exit 1 ;;
-                  esac
-                  receipt="test/release-validation/receipts/${RECEIPT_NAME}.json"
+                  # Exact SemVer only — never a path — so the parameter cannot reach
+                  # outside the tracked receipts directory or name another ref.
+                  if ! printf '%s' "${RELEASE_TAG}" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
+                    echo "##vso[task.logissue type=error]Invalid releaseTag '${RELEASE_TAG}'; use an exact vMAJOR.MINOR.PATCH tag with no leading zeros and no prerelease suffix."
+                    exit 1
+                  fi
+                  receipt="test/release-validation/receipts/${RELEASE_TAG}.json"
                   if [ ! -f "$receipt" ]; then
                     echo "##vso[task.logissue type=error]No release-validation receipt at '$receipt' (docs/runbooks/release-validation.md)."
                     exit 1
@@ -205,6 +217,19 @@ extends:
                     git fetch --unshallow --quiet || git fetch --deepen=250 --quiet
                   fi
                   BUILD_COMMIT="$(git rev-parse HEAD)"
+                  # SHARED RELEASE COMMIT. The receipt gate below proves this build ships
+                  # what RV1-RV3 validated — but so would ANY other receipt-bearing
+                  # descendant of the validated commit, so the two marketplaces could pass
+                  # their own gates on DIFFERENT commits. The GitHub release records its
+                  # choice immutably as the exact version tag, so require this build to BE
+                  # that commit. Tags are fetched first, so a tagless clone cannot degrade
+                  # the binding into "the release record is simply absent" (the check fails
+                  # closed when the tag does not resolve).
+                  if ! git fetch --tags --force --quiet; then
+                    echo "##vso[task.logissue type=error]Could not fetch tags; the shared release commit cannot be resolved."
+                    exit 1
+                  fi
+                  node scripts/lib/release-commit.mjs assert-tag-commit "${RELEASE_TAG}" "$BUILD_COMMIT"
                   # The validated commit must be history this build descends from...
                   if ! git merge-base --is-ancestor "$VALIDATED_COMMIT" "$BUILD_COMMIT"; then
                     echo "##vso[task.logissue type=error]Receipt commit $VALIDATED_COMMIT is not an ancestor of build commit $BUILD_COMMIT; RV1-RV3 validated different history."
@@ -224,12 +249,12 @@ extends:
                   # above cannot see a build INPUT (scripts/build.mjs, root dependency
                   # metadata) that changes what the rebuild emits.
                   echo "##vso[task.setvariable variable=ReleaseValidatedCommit]$VALIDATED_COMMIT"
-                displayName: Release-validation receipt gate (RV1-RV3 evidence for this release)
+                displayName: Release-validation receipt gate (RV1-RV3 evidence + the shared release commit)
                 # Inescapable on a PUBLISHING run. A non-publishing validation build still
                 # compiles and packages an unsigned VSIX without environment evidence.
                 condition: and(succeeded(), eq('${{ parameters.publishExtension }}', 'True'))
                 env:
-                  RECEIPT_NAME: ${{ parameters.releaseValidationReceipt }}
+                  RELEASE_TAG: ${{ parameters.releaseTag }}
                   # Environment evidence goes stale as the service deploys; re-run RV1-RV3
                   # rather than releasing against an old observation.
                   MAX_AGE_DAYS: '30'

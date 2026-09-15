@@ -72,6 +72,10 @@ Marketplace. It has no "revert" operation, so rollback means **publishing forwar
 3. Run the Official pipeline with `publishExtension = true` at the new **release
    commit** — the commit that carries the new receipt, which the pipeline reads from
    its own checkout (the validated core commit it records normally predates it).
+   Release the Action's new version tag first and pass it as `releaseTag`: the
+   pipeline binds its build commit to the commit that tag resolves to, so both
+   marketplaces roll forward from one commit
+   ([`release.md`](release.md) section 3).
    `PackageAzureDevOpsExtension` stamps a strictly increasing task version, so agents
    pick up the corrected task rather than a cached older one.
 4. If the defect is severe and no fix is ready, **unpublish** the extension

@@ -281,11 +281,11 @@ test('the Action release gates on an RV receipt inside the non-secret validate j
 
 test('the OneBranch extension pipeline gates the VSIX publish on the same receipt', () => {
   const pipeline = readText('.pipelines/OneBranch.Official.yml');
-  assert.match(pipeline, /- name: releaseValidationReceipt/);
+  assert.match(pipeline, /- name: releaseTag/);
   const build = pipeline.slice(pipeline.indexOf('- stage: build'), pipeline.indexOf('- stage: sign'));
   assert.ok(build.includes('node scripts/lib/rv-receipt.mjs verify'), 'the gate runs in the unsigned build stage');
   assert.ok(build.includes('test/release-validation/receipts/'), 'receipts come from the tracked receipts directory');
-  assert.match(build, /RECEIPT_NAME: \$\{\{ parameters\.releaseValidationReceipt \}\}/);
+  assert.match(build, /RELEASE_TAG: \$\{\{ parameters\.releaseTag \}\}/);
   // The gate must be inescapable on a publishing run.
   assert.match(build, /eq\('\$\{\{ parameters\.publishExtension \}\}', 'True'\)/);
   // The signing/publish stages hold the credentials and run no repository code.
@@ -299,6 +299,38 @@ test('the OneBranch extension pipeline gates the VSIX publish on the same receip
   assert.match(publish, /eq\('\$\{\{ parameters\.publishExtension \}\}', true\)/);
   assert.match(pipeline, /- stage: sign\n {8}dependsOn: build\n/);
   assert.match(publish, /dependsOn: sign\n/);
+});
+
+test('the OneBranch publication is bound to the SAME release commit as the GitHub release', () => {
+  // A green receipt alone does not make two pipelines ship one commit: two distinct
+  // receipt-bearing descendants of the validated core commit each satisfy their own
+  // receipt gate. The GitHub release records its choice immutably as the exact
+  // version tag, so the VSIX build must be that tag's commit. (The BEHAVIOUR —
+  // including rejection of a different receipt-bearing commit — is covered in
+  // release-commit-binding.test.ts; this pins the wiring.)
+  const pipeline = readText('.pipelines/OneBranch.Official.yml');
+  const build = pipeline.slice(pipeline.indexOf('- stage: build'), pipeline.indexOf('- stage: sign'));
+
+  assert.ok(
+    build.includes('node scripts/lib/release-commit.mjs assert-tag-commit'),
+    'the build stage binds its build commit to the release tag',
+  );
+  // The tag is fetched before it is resolved — a shallow/tagless checkout must not
+  // be able to degrade the binding into "the tag is simply absent".
+  assert.match(build, /git fetch --tags/);
+  // ONE parameter drives both the receipt lookup and the commit binding, so the
+  // pipeline cannot be pointed at one release's receipt and another's commit.
+  assert.match(build, /receipts\/\$\{RELEASE_TAG\}\.json/);
+  assert.doesNotMatch(pipeline, /releaseValidationReceipt/);
+
+  const binding = build.slice(build.indexOf('node scripts/lib/release-commit.mjs assert-tag-commit'));
+  assert.doesNotMatch(binding.slice(0, binding.indexOf('displayName')), /continue-on-error|\|\| true/);
+  // The binding is part of the publishing gate, so it runs before anything is
+  // packaged, signed, or published.
+  assert.ok(
+    build.indexOf('node scripts/lib/release-commit.mjs') < build.indexOf('PackageAzureDevOpsExtension@4'),
+    'the commit binding precedes packaging',
+  );
 });
 
 test('the OneBranch pipeline binds the REBUILT runtime to the validated commit before it is staged or packaged', () => {
@@ -539,17 +571,50 @@ test('only explicitly classified SOURCE-PROTOCOL assertions can produce a contra
   );
 });
 
-test('drift opens a service defect with least privilege and never changes client behavior', () => {
+test('drift files a contract-mismatch report with least privilege and never changes client behavior', () => {
   const workflow = readText('.github/workflows/contract-drift.yml');
   const report = workflow.slice(workflow.indexOf('\n  report:'));
   assert.match(report, /needs: drift/);
   assert.match(report, /issues: write/);
   assert.ok(!report.includes('actions/checkout'), 'the reporting job runs no repository code');
-  assert.match(report, /service defect/i);
   assert.match(report, /contract-drift/);
+  // The escalation PATH stays documented — a confirmed service change is still filed
+  // with the service team rather than accommodated in the client.
+  assert.match(report, /service defect/i);
+  assert.match(report, /do NOT regenerate fixtures/i);
 });
 
-test('only a CONFIRMED contract mismatch is reported as a source-contract service defect', () => {
+test('a local contract mismatch is reported as requiring triage, NOT as a confirmed service defect', () => {
+  // The drift checks observe the COMMITTED fixtures, extracts, recorded hashes and
+  // pinned constants. Those disagreeing proves the repository's model of the contract
+  // is internally inconsistent — which an in-repo editing error produces just as
+  // readily as a genuine service change. docs/runbooks/contract-drift.md requires the
+  // two to be told apart during triage, so the issue must not pre-empt that verdict.
+  const workflow = readText('.github/workflows/contract-drift.yml');
+  const script = workflow.slice(workflow.indexOf('const report = mismatch'));
+  const mismatchBody = script.slice(0, script.indexOf('recurrence:'));
+
+  assert.doesNotMatch(
+    mismatchBody,
+    /This is a service defect/i,
+    'the mismatch report must not declare a service defect before triage',
+  );
+  assert.match(mismatchBody, /triage/i, 'the mismatch report asks for triage');
+  // Both candidate causes are named, so neither is assumed.
+  assert.match(mismatchBody, /repository/i, 'an in-repo editing error is named as a candidate cause');
+  assert.match(mismatchBody, /service/i, 'a genuine service change is named as a candidate cause');
+  // Confirmation is explicitly tied to evidence this workflow cannot produce.
+  assert.match(
+    mismatchBody,
+    /authoritative source|live environment|live RV|RV1/i,
+    'service-defect classification is reserved for authoritative source or live-environment evidence',
+  );
+  // The client-behaviour policy is unconditional and stays.
+  assert.match(mismatchBody, /do NOT regenerate fixtures/i);
+  assert.match(mismatchBody, /docs\/runbooks\/contract-drift\.md/);
+});
+
+test('only a CONFIRMED contract mismatch is reported as source-contract drift', () => {
   const workflow = readText('.github/workflows/contract-drift.yml');
   const drift = workflow.slice(workflow.indexOf('\n  drift:'), workflow.indexOf('\n  report:'));
   const report = workflow.slice(workflow.indexOf('\n  report:'));

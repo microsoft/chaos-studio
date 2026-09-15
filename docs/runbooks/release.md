@@ -123,6 +123,12 @@ The printed `receipt-core-commit` must be an ancestor of the tag's commit, and
 
 ## 3. Release the Azure Pipelines extension
 
+**Run this after section 2.** The exact version tag the GitHub release creates is the
+**shared release record**: the OneBranch build requires its own build commit to be the
+commit that tag resolves to. A per-pipeline receipt gate cannot enforce that on its own
+— any receipt-bearing descendant of the validated core commit would satisfy it, so the
+two marketplaces could each pass their own gate on a *different* commit.
+
 Run the `.pipelines/OneBranch.Official.yml` Official pipeline from `refs/heads/main`
 at the **same release commit** used in section 2 — the receipt-bearing commit, since
 this pipeline also reads the receipt from its own checkout. Both marketplaces are
@@ -131,11 +137,21 @@ that receipt. Set:
 
 - `publishExtension` = `true`
 - `extensionManifest` = `vss-extension.json`
-- `releaseValidationReceipt` = the receipt basename from step 1 (for example
-  `v1.0.0`) — the basename only, under
-  `test/release-validation/receipts/`.
+- `releaseTag` = the exact release tag from section 2 (for example `v1.0.0`). It
+  selects **both** halves of the evidence — the receipt at
+  `test/release-validation/receipts/<tag>.json` and the shared release commit — so the
+  two can never disagree.
 
-The unsigned `build` stage runs the same receipt gate before packaging, the `sign`
+The unsigned `build` stage runs the same receipt gate before packaging, and
+additionally runs:
+
+```bash
+node scripts/lib/release-commit.mjs assert-tag-commit <tag> <build-commit>
+```
+
+which resolves `refs/tags/<tag>` and **rejects any other build commit** (an ancestor,
+a later receipt-bearing commit, or a branch that happens to share the tag's name). If
+the tag does not exist yet, the build fails: release the Action first. The `sign`
 stage is a deployment job bound to the ESRP signing environment, and the `publish`
 stage is a `releaseJob` that re-verifies the signature of the artifact it received
 before spending the Marketplace credential.
