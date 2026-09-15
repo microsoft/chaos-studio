@@ -52,11 +52,12 @@ Prefer waiting unless you deliberately want fire-and-forget.
 
 ## Job timeout budget: reserve time for cleanup beyond `completion-timeout-seconds`
 
-`completion-timeout-seconds` (default `2700`) bounds only how long the
-integration **waits for the run to complete**. On a completion timeout, best-effort
-cleanup runs `cancel` and polls for the run to reach `Canceled` — and that cleanup
-has its **own fixed budget of 300 seconds**, separate from and **in addition to**
-`completion-timeout-seconds`.
+`completion-timeout-seconds` (default `2700`) is an **end-to-end deadline shared
+across configuration validation, execute-request acceptance, and run-completion
+polling** — it is not scoped only to waiting for the run to finish. On a
+completion timeout, best-effort cleanup runs `cancel` and polls for the run to
+reach `Canceled` — and that cleanup has its **own fixed budget of 300 seconds**,
+separate from and **in addition to** `completion-timeout-seconds`.
 
 **These two mechanisms are different, and increasing the job timeout affects only
 one of them:**

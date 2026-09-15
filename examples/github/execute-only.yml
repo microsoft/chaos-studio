@@ -41,7 +41,11 @@ jobs:
           wait-for-completion: 'true'
 
       - name: Show the run outputs
+        env:
+          RUN_ID: ${{ steps.chaos.outputs.run-id }}
+          RUN_STATE: ${{ steps.chaos.outputs.run-state }}
+          RUN_RESOURCE_ID: ${{ steps.chaos.outputs.run-resource-id }}
         run: |
-          echo "run id:       ${{ steps.chaos.outputs.run-id }}"
-          echo "run state:    ${{ steps.chaos.outputs.run-state }}"
-          echo "run resource: ${{ steps.chaos.outputs.run-resource-id }}"
+          echo "run id:       $RUN_ID"
+          echo "run state:    $RUN_STATE"
+          echo "run resource: $RUN_RESOURCE_ID"

@@ -166,18 +166,27 @@ here as a relationship, not as a duplicate row:
 
 ## Change-set reconciliation & corrective-pass baseline
 
+> **Historical E1 review bookkeeping.** This section documents the state of the E1
+> branch **at the time E1 was completed and committed**, not the current worktree
+> HEAD (which has since moved on through E2–E6 corrective passes). All file states
+> ("new"/"untracked" vs. "pre-existing"/"tracked") and the reproduction commands
+> below are relative to the **E1 commit range** — they are not expected to reproduce
+> against the present HEAD, where these paths are all tracked/committed.
+
 This inventory is the **committed** record of E1's completion status (the acceptance
-state that reviewers need lives here, not in the git-ignored plan file). The worktree is
-a **cumulative** E1 branch: the full change set is **99 paths** — **8 pre-existing files
-modified** (`.github/CODEOWNERS`, `.github/dependabot.yml`, `.github/workflows/release.yml`,
-`.github/workflows/test.yml`, `.gitignore`, `CONTRIBUTING.md`, `README.md`,
-`copilot-cli-plugin/CONTRIBUTING.md`) plus **91 new untracked paths** — and every one of
-those 99 paths is inventoried in **exactly one** E1-T1…E1-T5 task table above (the
-git-ignored plan file is the only additional entry, called out explicitly as
-non-committed). Reviewers can reproduce this baseline with
-`git --no-pager diff --name-only` (the 8 tracked) and
-`git ls-files --others --exclude-standard` (the 91 untracked); the union equals the
-inventoried set with no untraced path.
+state that reviewers need lives here, not in the git-ignored plan file). At E1 time,
+the worktree was a **cumulative** E1 branch: the full change set was **99 paths** —
+**8 pre-existing files modified** (`.github/CODEOWNERS`, `.github/dependabot.yml`,
+`.github/workflows/release.yml`, `.github/workflows/test.yml`, `.gitignore`,
+`CONTRIBUTING.md`, `README.md`, `copilot-cli-plugin/CONTRIBUTING.md`) plus **91 new
+untracked paths** — and every one of those 99 paths is inventoried in **exactly one**
+E1-T1…E1-T5 task table above (the git-ignored plan file is the only additional entry,
+called out explicitly as non-committed). Reviewers can reproduce this baseline against
+the **E1 commit range** (e.g. `git --no-pager diff --name-only <pre-E1-base>..<E1-head>`
+for the 8 tracked files, and `git ls-files --others --exclude-standard` run **at E1
+head**, before those paths were committed, for the 91 untracked); the union equals the
+inventoried set with no untraced path. Running these commands against the current HEAD
+will not reproduce this snapshot, since all 99 paths are now committed history.
 
 **Cumulative E1 base vs. this corrective pass.** The 99-path set is the *whole* E1
 deliverable accumulated across the corrective passes, NOT the delta of any single pass.

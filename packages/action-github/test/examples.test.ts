@@ -60,6 +60,48 @@ test('every `uses:` action in every example is pinned to a full commit SHA (no m
   }
 });
 
+/**
+ * Shell-injection guard (reviewer P2 finding): a step-output value derived from the
+ * chaos-studio Action (e.g. `run-state`) can be an arbitrary, unknown service string in
+ * no-wait mode, so interpolating `${{ steps.*.outputs.* }}` directly into a `run:` Bash
+ * block is unsafe even inside double quotes. Every example must instead map such
+ * outputs through `env:` and reference them as shell variables (`$NAME`/`${NAME}`).
+ */
+test('example `run:` steps reference chaos-studio step outputs only via env vars, never by direct interpolation', () => {
+  const OUTPUT_INTERPOLATION_RE = /\$\{\{\s*steps\.[\w-]+\.outputs\.[\w-]+\s*\}\}/;
+  for (const file of exampleFiles()) {
+    const yaml = readFileSync(join(examplesDir, file), 'utf8');
+    const lines = yaml.split(/\r?\n/);
+    let inRun = false;
+    for (const line of lines) {
+      if (/^\s*run:\s*\|/.test(line) || /^\s*run:\s*>/.test(line)) {
+        inRun = true;
+        continue;
+      }
+      if (/^\s*run:\s*\S/.test(line)) {
+        // Single-line `run:` — check just this line.
+        assert.doesNotMatch(
+          line,
+          OUTPUT_INTERPOLATION_RE,
+          `${file}: step output interpolated directly into 'run:' — map through env: instead`,
+        );
+        continue;
+      }
+      if (inRun) {
+        if (/^\s*(name:|uses:|with:|env:|id:|if:)/.test(line) && !/^\s{4,}/.test(line)) {
+          inRun = false;
+          continue;
+        }
+        assert.doesNotMatch(
+          line,
+          OUTPUT_INTERPOLATION_RE,
+          `${file}: step output interpolated directly into 'run:' block — map through env: instead`,
+        );
+      }
+    }
+  }
+});
+
 test('every example pins microsoft/chaos-studio itself to a full commit SHA', () => {
   for (const file of exampleFiles()) {
     const chaos = usesRefs(readFileSync(join(examplesDir, file), 'utf8')).filter((r) =>

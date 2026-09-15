@@ -50,4 +50,7 @@ jobs:
           wait-for-completion: 'false'
 
       - name: Record the started run id (cancel it manually if needed)
-        run: echo "Started run ${{ steps.chaos.outputs.run-id }} (last-observed ${{ steps.chaos.outputs.run-state }})"
+        env:
+          RUN_ID: ${{ steps.chaos.outputs.run-id }}
+          RUN_STATE: ${{ steps.chaos.outputs.run-state }}
+        run: echo "Started run $RUN_ID (last-observed $RUN_STATE)"
