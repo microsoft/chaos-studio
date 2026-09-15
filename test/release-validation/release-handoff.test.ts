@@ -357,6 +357,15 @@ function markdownSection(doc: string, heading: string): string {
   return body.replace(/\s+/g, ' ');
 }
 
+/**
+ * The commit a publishing step must select: the one carrying the receipt. Both
+ * spellings the runbooks may reasonably use are accepted, so the assertions pin
+ * WHICH commit is selected rather than one particular phrasing.
+ */
+const RECEIPT_BEARING_COMMIT = /(?:release|receipt-bearing) commit/i;
+/** Its counterpart: the commit RV1-RV3 ran against, recorded inside the receipt. */
+const VALIDATED_COMMIT = /validated (?:core )?commit/i;
+
 test('the publishing steps select the receipt-bearing release commit, not the validated core commit', () => {
   const runbook = readText('docs/runbooks/release.md');
 
@@ -370,10 +379,10 @@ test('the publishing steps select the receipt-bearing release commit, not the va
   const github = markdownSection(runbook, '## 2. Release the GitHub Action');
   assert.match(
     github,
-    /release commit/i,
-    'the dispatch input is described as the release commit, not the validated core commit',
+    RECEIPT_BEARING_COMMIT,
+    'the dispatch input is described as the receipt-bearing commit, not the validated core commit',
   );
-  assert.match(github, /receipt/i, 'the dispatch step ties the release commit to the receipt');
+  assert.match(github, /receipt/i, 'the dispatch step ties that commit to the receipt');
   assert.doesNotMatch(
     github,
     /=\s*the (?:validated )?core commit/i,
@@ -383,10 +392,14 @@ test('the publishing steps select the receipt-bearing release commit, not the va
   const ado = markdownSection(runbook, '## 3. Release the Azure Pipelines extension');
   assert.doesNotMatch(
     ado,
-    /same core commit/i,
+    /same (?:validated )?core commit/i,
     'OneBranch must not be run at the validated core commit (its checkout lacks the receipt)',
   );
-  assert.match(ado, /release commit/i, 'OneBranch is run at the same release commit as the Action');
+  assert.match(
+    ado,
+    RECEIPT_BEARING_COMMIT,
+    'OneBranch is run at the same receipt-bearing commit as the Action',
+  );
   assert.match(ado, /receipt/i, 'the OneBranch step ties that commit to the receipt');
 
   // The gates the later commit is still held to must remain stated.
@@ -405,27 +418,42 @@ test('the extension rollback publishes from the commit that carries the new rece
   const ado = markdownSection(runbook, '## 2. Roll back the Azure Pipelines extension');
   assert.doesNotMatch(
     ado,
-    /at the new core commit/i,
+    /at the new (?:validated )?core commit/i,
     'rolling forward must not publish from the validated core commit (it lacks the receipt)',
   );
   assert.match(ado, /receipt/i, 'the roll-forward step names the receipt-bearing commit');
-  assert.match(ado, /release commit/i);
+  assert.match(ado, RECEIPT_BEARING_COMMIT);
 
   // The incident repoint moves the floating major tag onto a RELEASED commit —
   // the commit the last-good version tag resolves to — not onto the core commit
-  // that release's receipt happens to record.
-  const github = markdownSection(runbook, '## 1. Roll back the GitHub Action');
-  assert.match(github, /git tag -f/, 'the incident repoint is still documented');
+  // that release's receipt happens to record. Asserted on the COMMAND LINE
+  // itself (raw, uncollapsed) so surrounding prose cannot satisfy it.
+  const repoint = runbook.split('\n').find((line) => line.trim().startsWith('git tag -f'));
+  assert.ok(repoint, 'the incident repoint command is still documented');
   assert.doesNotMatch(
-    github,
-    /<last-good-core-commit>/,
+    repoint,
+    /core.commit/i,
     'the floating tag must not be repointed at a validated core commit',
   );
   assert.match(
-    github,
-    /last-good-release-commit/,
+    repoint,
+    /(?:release|receipt-bearing).commit/i,
     'the floating tag is repointed at the last-good release commit',
   );
+});
+
+test('the runbook index distinguishes the validated core commit from the release commit', () => {
+  // The "one commit, two marketplaces" principle is true of the VALIDATED commit;
+  // stating it without naming the release commit is what previously misled the
+  // operational steps.
+  const index = readText('docs/runbooks/README.md');
+  assert.match(index, VALIDATED_COMMIT, 'the index names the validated core commit');
+  assert.match(index, RECEIPT_BEARING_COMMIT, 'the index also names the release commit');
+
+  // The RV builds themselves ARE built from the validated commit — that is the
+  // one place the core commit is the right answer, and it must stay explicit.
+  const validation = readText('docs/runbooks/release-validation.md');
+  assert.match(validation, VALIDATED_COMMIT, 'RV builds are pinned to the validated core commit');
 });
 
 test('rollback and deprecation runbooks cover both platforms, including the un-deletable task', () => {
