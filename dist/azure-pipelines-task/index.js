@@ -13263,6 +13263,16 @@ function redactSecretFields(value) {
 function redactedJson(value) {
   return JSON.stringify(redactSecretFields(value));
 }
+function escapeRegExp(literal) {
+  return literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function keyValueRule(key) {
+  const escaped = escapeRegExp(key);
+  return {
+    pattern: new RegExp(`(${escaped}["']?\\s*[:=]\\s*["']?)[^;&,"'\\s}]+`, "gi"),
+    replacement: `$1${REDACTED}`
+  };
+}
 var RULES = [
   // `Bearer <token>` (Authorization header value or inline).
   { pattern: /(Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, replacement: `$1${REDACTED}` },
@@ -13274,7 +13284,16 @@ var RULES = [
   { pattern: /(SharedAccessKey["']?\s*[:=]\s*["']?)[^;&"'\s]+/gi, replacement: `$1${REDACTED}` },
   { pattern: /(AccountKey["']?\s*[:=]\s*["']?)[^;&"'\s]+/gi, replacement: `$1${REDACTED}` },
   // SAS signature parameter.
-  { pattern: /(\bsig["']?\s*[:=]\s*["']?)[^;&"'\s]+/gi, replacement: `$1${REDACTED}` }
+  { pattern: /(\bsig["']?\s*[:=]\s*["']?)[^;&"'\s]+/gi, replacement: `$1${REDACTED}` },
+  // R2: one key-value scrub rule per secret-shaped key name (password,
+  // clientSecret, accessToken, apiKey, etc.) so free-text ARM/exception
+  // diagnostics get the same protection structured objects already get via
+  // `redactSecretFields`. `authorization` and `bearerToken` are excluded here:
+  // they name a HEADER, not a `key=value` pair, and the value is a
+  // whitespace-containing `Bearer <token>` shape already fully scrubbed by the
+  // dedicated Bearer-prefix rule above (a naive `[^;&,"'\s}]+` value-stop would
+  // truncate at the first space and leave the token fragment exposed).
+  ...[...SECRET_KEY_NAMES].filter((k) => k !== "authorization" && k !== "bearertoken").map(keyValueRule)
 ];
 function redact(text) {
   let out = text;
@@ -13336,6 +13355,7 @@ var ArmHttpClient = class {
   cred;
   signal;
   scope;
+  onObservation;
   constructor(opts) {
     this.transport = opts.transport;
     this.clock = opts.clock;
@@ -13345,6 +13365,7 @@ var ArmHttpClient = class {
     this.rng = opts.rng ?? Math.random;
     this.backoff = opts.backoff ?? DEFAULT_BACKOFF;
     this.scope = opts.scope ?? ARM_SCOPE;
+    this.onObservation = opts.onObservation;
   }
   /**
    * GET a resource, retrying transient `429`/`5xx` within the attempt budget (D13).
@@ -13492,7 +13513,21 @@ var ArmHttpClient = class {
           requestId: this.lastCorrelation.requestId
         });
       }
-      return this.parse(res);
+      const parsed = this.parse(res);
+      if (this.onObservation !== void 0) {
+        this.onObservation({
+          method,
+          url,
+          status: parsed.status,
+          location: parsed.location,
+          retryAfterSeconds: parsed.retryAfterSeconds,
+          correlationId: parsed.correlationId,
+          requestId: parsed.requestId,
+          errorCode: parsed.errorCode,
+          errorMessage: parsed.errorMessage === void 0 ? void 0 : redact(parsed.errorMessage)
+        });
+      }
+      return parsed;
     } finally {
       ac.abort();
       this.signal.removeEventListener("abort", onMainAbort);
@@ -13560,6 +13595,9 @@ var ArmHttpClient = class {
 };
 function errText(err) {
   return err instanceof Error ? err.message : String(err);
+}
+function formatProtocolObservation(obs) {
+  return `RV-OBSERVATION ${JSON.stringify({ ...obs, errorMessage: obs.errorMessage === void 0 ? void 0 : redact(obs.errorMessage) })}`;
 }
 function bodyErrorCode(json) {
   const code = json?.error?.code;
@@ -13802,6 +13840,9 @@ async function bestEffortCancel(cleanupClient, runResourceId, cleanupDeadline, l
 
 // packages/core/src/orchestrator.ts
 var run = (io) => orchestrate(io, fetchTransport);
+function createObservingRun(onObservation) {
+  return (io) => orchestrate(io, fetchTransport, { onObservation });
+}
 async function orchestrate(io, transport, opts = {}) {
   const outputs = {};
   const emit = (name3, value) => {
@@ -13831,7 +13872,8 @@ async function orchestrate(io, transport, opts = {}) {
     cred: io.cred,
     signal: io.signal,
     rng: opts.rng,
-    backoff: opts.backoff
+    backoff: opts.backoff,
+    onObservation: opts.onObservation
   });
   const completion = Deadline.fromNow(io.clock, completionTimeoutSeconds);
   const emitCorrelation = () => {
@@ -13927,7 +13969,8 @@ async function handleForwardFailure(io, outputs, client, transport, opts, err, a
       cred: io.cred,
       signal: new AbortController().signal,
       rng: opts.rng,
-      backoff: opts.backoff
+      backoff: opts.backoff,
+      onObservation: opts.onObservation
     });
     const cleanupDeadline = Deadline.fromNow(io.clock, CLEANUP_TIMEOUT_SECONDS);
     const observed = await bestEffortCancel(cleanupClient, acceptance.runResourceId, cleanupDeadline, io.log);
@@ -14123,7 +14166,7 @@ async function runAzurePipelinesTask(deps) {
     clock: deps.clock ?? systemClock,
     signal: deps.signal
   };
-  const orchestrate2 = deps.orchestrate ?? run;
+  const orchestrate2 = deps.orchestrate ?? (deps.rvCapture ? createObservingRun((obs) => deps.host.info(formatProtocolObservation(obs))) : run);
   let result;
   try {
     result = await orchestrate2(io);
@@ -14227,7 +14270,7 @@ function requireVar(name3) {
   }
   return v;
 }
-function readArmServiceConnection() {
+function readArmServiceConnection(deps = {}) {
   const connectionId = tl.getInput("azureSubscription", true);
   if (connectionId === void 0 || connectionId === "") {
     throw new Error("required input 'azureSubscription' (ARM service connection) is not set");
@@ -14243,16 +14286,16 @@ function readArmServiceConnection() {
   return {
     tenantId,
     clientId,
-    getAssertion: () => fetchAzureDevOpsOidcToken(connectionId)
+    getAssertion: () => fetchAzureDevOpsOidcToken(connectionId, deps.request)
   };
 }
-async function fetchAzureDevOpsOidcToken(connectionId) {
+async function fetchAzureDevOpsOidcToken(connectionId, request) {
   const accessToken = readSystemAccessToken();
   const oidcRequestUri = tl.getVariable("System.OidcRequestUri");
   const url = oidcRequestUri !== void 0 && oidcRequestUri !== "" ? new URL(oidcRequestUri) : reconstructOidcUri();
   url.searchParams.set("serviceConnectionId", connectionId);
   url.searchParams.set("api-version", "7.1-preview.1");
-  return fetchOidcToken(url, accessToken);
+  return fetchOidcToken(url, accessToken, request === void 0 ? {} : { request });
 }
 function readSystemAccessToken() {
   const auth = tl.getEndpointAuthorization("SYSTEMVSSCONNECTION", false);
@@ -23533,7 +23576,7 @@ var ClientApplication = class {
 };
 
 // node_modules/@azure/msal-node/dist/network/LoopbackClient.mjs
-var import_http5 = __toESM(require("http"), 1);
+var import_http6 = __toESM(require("http"), 1);
 var LoopbackClient = class {
   constructor(preferredPort) {
     this.preferredPort = preferredPort;
@@ -23549,7 +23592,7 @@ var LoopbackClient = class {
       throw NodeAuthError.createLoopbackServerAlreadyExistsError();
     }
     return new Promise((resolve, reject) => {
-      this.server = import_http5.default.createServer((req, res) => {
+      this.server = import_http6.default.createServer((req, res) => {
         const method = req.method?.toUpperCase();
         if (method !== "GET" && method !== "POST") {
           res.writeHead(405, {
@@ -30434,7 +30477,7 @@ async function main() {
       process.exitCode = 1;
       return;
     }
-    await runAzurePipelinesTask({ host, cred, signal });
+    await runAzurePipelinesTask({ host, cred, signal, rvCapture: process.env.CHAOS_STUDIO_RV_CAPTURE === "1" });
   } finally {
     dispose();
   }

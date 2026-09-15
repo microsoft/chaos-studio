@@ -74,14 +74,19 @@ real evidence and is rejected, and so is skipping the in-flight observation enti
 From `observations.jsonl`, record, for each long-running call: the acceptance
 `status`, the trailing `location` segments, the advertised `retryAfterSeconds`, and
 — for calls actually driven to a terminal outcome (`validate`, the success run, and
-the cancel) — the terminal polled `status` and the terminal `properties.status`
-(read directly from the job/task's own step summary output, which already surfaces
-`run-state`/`validation-state`; `RV-OBSERVATION` lines give the wire-level status
-codes, the step outputs give the business-level terminal state). Also record the
-wire shape actually observed (status/start/end field names and both error channels,
-visible in the `RV-OBSERVATION` line's absence of an `errorMessage`/`errorCode` on
-success, and their presence with the expected shape on the deliberately-forced
-negative cases in RV2) and the `api-version` embedded in each `url`.
+the cancel) — the terminal polled `status` and the terminal `properties.status`.
+Every `RV-OBSERVATION` line for a terminal (200) GET already carries this directly:
+`businessState` is the observed `properties.status` value, and `statusField`/
+`startTimeField`/`endTimeField` are the field NAMES the deployed body actually
+exposed (`undefined` if the expected field is absent — e.g. the service still used
+`properties.state`), so the receipt's `terminalState` and `wire.statusField`/
+`startTimeField`/`endTimeField` come directly from these values, never typed in
+from what the contract expects. `errorChannelsPresent` lists every array-valued key
+directly under `properties` on that response, so `wire.validationErrorChannels`/
+`runErrorChannels` are populated from the UNION of `errorChannelsPresent` observed
+across that transcript's validate/execute/cancel calls, not asserted from the
+constants in `packages/core/src/contract.ts`. Also record the `api-version`
+embedded in each `url`.
 
 The receipt carries **one transcript per adapter** under `observations.transcripts`,
 each tagged with its `platform` (`github-action`, `azure-pipelines-task`). Each
@@ -113,19 +118,49 @@ fixtures encode.
    journey (the core's `validate-and-execute` mode short-circuits on the first
    failure and never reaches `execute`/`runCancel` on its own, so "re-run the
    journey" cannot exercise the later operations at all once an earlier one is
-   removed). For each operation in turn:
+   removed).
+
+   **Invocation mechanism.** The public adapters only ever drive the
+   orchestrated modes, so use the operator CLI `scripts/lib/rv2-invoke.mjs`
+   instead — it makes exactly ONE named provider-operation call through the
+   SAME `ArmHttpClient` (same URL builders, same acceptance/status handling,
+   same `RV-OBSERVATION` capture) both adapters use, without adding any new
+   public generic-ARM capability:
+
+   ```bash
+   az login   # or rely on the CI identity's federated session
+   node scripts/lib/rv2-invoke.mjs validate \
+     --subscription-id <sub> --resource-group <rg> --workspace-name <ws> \
+     --scenario-name <scn> --scenario-configuration-name <cfg>
+   node scripts/lib/rv2-invoke.mjs execute \
+     --subscription-id <sub> --resource-group <rg> --workspace-name <ws> \
+     --scenario-name <scn> --scenario-configuration-name <cfg>
+   node scripts/lib/rv2-invoke.mjs runRead \
+     --subscription-id <sub> --resource-group <rg> --workspace-name <ws> \
+     --scenario-name <scn> --scenario-configuration-name <cfg> --run-id <guid>
+   node scripts/lib/rv2-invoke.mjs runCancel \
+     --subscription-id <sub> --resource-group <rg> --workspace-name <ws> \
+     --scenario-name <scn> --scenario-configuration-name <cfg> --run-id <guid>
+   node scripts/lib/rv2-invoke.mjs validationRead \
+     --subscription-id <sub> --resource-group <rg> --workspace-name <ws> \
+     --scenario-name <scn> --scenario-configuration-name <cfg>
+   ```
+
+   Each invocation prints one `RV-OBSERVATION {...}` line for the call it made
+   plus a final `RV2-INVOKE-RESULT {...}` summary (`status`, `errorCode`,
+   `authorizationFailure`). For each operation in turn:
    a. Remove only that operation from the role (leave the other four intact).
-   b. With `CHAOS_STUDIO_RV_CAPTURE=1` set, individually invoke each of the 5
-      operations against PRE-PROVISIONED resources scoped for this case (a
-      configuration already `Succeeded` from validation for `validationRead`; a
-      run already accepted/in-flight from a prior `execute` for `runRead` and
-      `runCancel`; the configuration itself for `validate`; a fresh accepted run
-      for `execute`) — e.g. call `validate` once, `GET` the validations-latest
-      resource once, `execute` once, `GET` the run resource once, and `cancel`
-      that run once — each as its own independent call, not as one pipeline run.
-   c. From the resulting `RV-OBSERVATION` lines, confirm the removed operation's
-      call returned `403`/`AuthorizationFailed` and every one of the other four
-      calls returned its normal 2xx acceptance/read status.
+   b. Invoke each of the 5 operations exactly once against PRE-PROVISIONED
+      resources scoped for this case (a configuration already `Succeeded` from
+      validation for `validationRead`; a run already accepted/in-flight from a
+      prior `execute` invocation for `runRead` and `runCancel`; the
+      configuration itself for `validate`; a fresh accepted run for `execute`)
+      — each `rv2-invoke.mjs` call is its own independent process, never one
+      pipeline run.
+   c. From the resulting `RV2-INVOKE-RESULT` lines, confirm the removed
+      operation's call reports `authorizationFailure: true` (`403`/
+      `AuthorizationFailed`) and every one of the other four calls reports its
+      normal 2xx acceptance/read status.
    d. Restore the role to the full set before the next operation's case.
 4. Prove the operations the journey deliberately does not call
    (`Microsoft.Chaos/workspaces/read`,

@@ -150,6 +150,19 @@ export interface PollStep<T> {
  * client already parses for its own decisions ({@link ParsedResponse}), plus the
  * request method/URL/api-version so an operator's capture can attribute each
  * observation to the call that produced it.
+ *
+ * `businessState`/`startTime`/`endTime`/`statusField`/`startTimeField`/
+ * `endTimeField`/`errorChannelsPresent` (R2/E6 review) are a narrow, still
+ * fully redacted extension: they surface the SAME `properties.*` fields
+ * {@link readResourceStatus} already parses for the state machines (field
+ * NAMES from the source-proven contract constants, and only the business
+ * VALUES the client itself already trusts — `status`/`startTime`/`endTime`
+ * and which error-channel keys are present, never error array contents,
+ * which are separately redacted into `errorMessage`). This is what lets an
+ * operator populate a receipt's `wire.*` and terminal-state fields directly
+ * from the printed transcript instead of typing in the expected contract
+ * constants — a GET whose deployed body actually uses `properties.state`
+ * would show `statusField: undefined` here, not a rubber-stamped `"status"`.
  */
 export interface ProtocolObservation {
   method: 'GET' | 'POST';
@@ -162,6 +175,51 @@ export interface ProtocolObservation {
   errorCode: string | undefined;
   /** ARM `error.message` (plus nested `details[].message`), already redacted (R2). */
   errorMessage: string | undefined;
+  /** Observed `properties.status` business value, if the body has a `properties` object. */
+  businessState: string | undefined;
+  /** Observed `properties.startTime` business value, if present. */
+  startTime: string | undefined;
+  /** Observed `properties.endTime` business value, if present. */
+  endTime: string | undefined;
+  /** Which of `properties.status`/`startTime`/`endTime` are actually present, by field name. */
+  statusField: string | undefined;
+  startTimeField: string | undefined;
+  endTimeField: string | undefined;
+  /** Names of every array-valued key directly under `properties` (the error channels the body exposes). */
+  errorChannelsPresent: string[];
+}
+
+/** Read the generic wire-shape metadata a {@link ProtocolObservation} reports (R2/E6 review). */
+function readObservedWireShape(json: unknown): Pick<
+  ProtocolObservation,
+  'businessState' | 'startTime' | 'endTime' | 'statusField' | 'startTimeField' | 'endTimeField' | 'errorChannelsPresent'
+> {
+  const props = (json as { properties?: Record<string, unknown> } | null)?.properties;
+  if (props === undefined || props === null || typeof props !== 'object') {
+    return {
+      businessState: undefined,
+      startTime: undefined,
+      endTime: undefined,
+      statusField: undefined,
+      startTimeField: undefined,
+      endTimeField: undefined,
+      errorChannelsPresent: [],
+    };
+  }
+  const asString = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
+  const status = asString(props['status']);
+  const startTime = asString(props['startTime']);
+  const endTime = asString(props['endTime']);
+  const errorChannelsPresent = Object.keys(props).filter((k) => Array.isArray(props[k]));
+  return {
+    businessState: status,
+    startTime,
+    endTime,
+    statusField: status !== undefined ? 'status' : undefined,
+    startTimeField: startTime !== undefined ? 'startTime' : undefined,
+    endTimeField: endTime !== undefined ? 'endTime' : undefined,
+    errorChannelsPresent,
+  };
 }
 
 export interface ArmClientOptions {
@@ -428,6 +486,7 @@ export class ArmHttpClient {
           requestId: parsed.requestId,
           errorCode: parsed.errorCode,
           errorMessage: parsed.errorMessage === undefined ? undefined : redact(parsed.errorMessage),
+          ...readObservedWireShape(parsed.json),
         });
       }
       return parsed;

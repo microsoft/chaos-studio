@@ -140,12 +140,16 @@ jobs:
           path: copilot-cli-plugin/mcp/dist/
 
   publish-pypi:
-    # Depends on github-release so the PyPI upload is gated behind the fail-closed
-    # ENVIRONMENT-PROTECTION preflight there (which verifies BOTH the mcp-release and the
-    # pypi environments have required reviewers + prevent_self_review + can_admins_bypass=false
-    # + a default-branch-only policy). publish-pypi holds no PAT and cannot self-preflight,
-    # so this ordering is what makes an absent/unprotected `pypi` environment fail closed
-    # before any upload — GitHub's native gate on the `pypi` environment is defense in depth.
+    # Depends on github-release for the RELEASE_COMMIT/tag chain, but does NOT rely on
+    # github-release's environment-protection preflight for its own gating: a failed-job
+    # retry that re-runs ONLY publish-pypi (github-release already succeeded and is
+    # skipped) would otherwise reuse a stale pass from a prior attempt, and if the `pypi`
+    # environment's protections were removed or weakened in between, OIDC publication
+    # could proceed unguarded. So this job REVALIDATES the `pypi` environment's
+    # protections itself, on every attempt, immediately before publication — failing
+    # CLOSED (before any upload) if ACTION_RELEASE_TOKEN is unavailable or the required
+    # protections are not currently in place. GitHub's native environment gate below is
+    # defense in depth on top of this explicit, always-re-checked verification.
     needs: [build, github-release]
     if: ${{ github.ref_type == 'branch' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
     runs-on: ubuntu-latest
@@ -162,11 +166,64 @@ jobs:
     environment:
       name: pypi
       url: https://pypi.org/p/chaos-mcp
+    env:
+      REPO: ${{ github.repository }}
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: dist
           path: dist/
+
+      - name: Preflight — revalidate the pypi environment protections on THIS attempt
+        env:
+          GH_TOKEN: ${{ secrets.ACTION_RELEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Re-runs the same checks github-release performs for `pypi`, but here, in
+          # publish-pypi, so a job-retry (which skips the already-succeeded github-release
+          # job) cannot ride on a now-stale prior pass. Fail CLOSED if the token needed to
+          # verify is missing, or if the environment no longer has: at least one required
+          # reviewer with prevent_self_review=true, an explicit can_admins_bypass=false,
+          # and a deployment policy limited to EXACTLY one default-branch policy.
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "::error::ACTION_RELEASE_TOKEN is not available to publish-pypi; cannot revalidate the pypi environment protections. Refusing to publish."
+            exit 1
+          fi
+          if ! envjson="$(gh api "repos/${REPO}/environments/pypi" 2>/dev/null)"; then
+            echo "::error::The 'pypi' environment does not exist or is not readable by ACTION_RELEASE_TOKEN. Refusing to publish."
+            exit 1
+          fi
+          reviewerRule="$(printf '%s' "$envjson" | jq -c '.protection_rules[]? | select(.type=="required_reviewers")')"
+          if [[ -z "$reviewerRule" ]]; then
+            echo "::error::The 'pypi' environment has no required reviewers. Refusing to publish."
+            exit 1
+          fi
+          if [[ "$(printf '%s' "$reviewerRule" | jq -r '.prevent_self_review // false')" != "true" ]]; then
+            echo "::error::The 'pypi' environment must set prevent_self_review=true. Refusing to publish."
+            exit 1
+          fi
+          # jq's `//` treats a literal false as absent, so test presence AND equality.
+          if [[ "$(printf '%s' "$envjson" | jq -r 'has("can_admins_bypass") and (.can_admins_bypass == false)')" != "true" ]]; then
+            echo "::error::The 'pypi' environment must set can_admins_bypass=false. Refusing to publish."
+            exit 1
+          fi
+          if [[ "$(printf '%s' "$envjson" | jq -r '.deployment_branch_policy.custom_branch_policies // false')" != "true" ]]; then
+            echo "::error::The 'pypi' environment must restrict deployments to selected branches/tags. Refusing to publish."
+            exit 1
+          fi
+          polJson="$(gh api "repos/${REPO}/environments/pypi/deployment-branch-policies")"
+          total="$(printf '%s' "$polJson" | jq -r '.total_count')"
+          if [[ "$total" != "1" ]]; then
+            echo "::error::The 'pypi' environment must have EXACTLY one deployment policy, found ${total}. Refusing to publish."
+            exit 1
+          fi
+          ptype="$(printf '%s' "$polJson" | jq -r '.branch_policies[0].type // "null"')"
+          pname="$(printf '%s' "$polJson" | jq -r '.branch_policies[0].name // "null"')"
+          if [[ "$ptype" != "branch" ]]; then
+            echo "::error::The 'pypi' deployment policy must be a BRANCH policy, got type='${ptype}' name='${pname}'. Refusing to publish."
+            exit 1
+          fi
+          echo "pypi environment preflight (re-verified on this attempt) passed."
 
       - name: Reconcile against PyPI — verify existing digests, keep only missing dists
         id: reconcile

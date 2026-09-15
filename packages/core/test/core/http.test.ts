@@ -671,6 +671,13 @@ test('formatProtocolObservation emits a single greppable RV-OBSERVATION JSON lin
     requestId: 'req-1',
     errorCode: undefined,
     errorMessage: 'password=hunter2',
+    businessState: undefined,
+    startTime: undefined,
+    endTime: undefined,
+    statusField: undefined,
+    startTimeField: undefined,
+    endTimeField: undefined,
+    errorChannelsPresent: [],
   };
   const line = formatProtocolObservation(obs);
   assert.ok(line.startsWith('RV-OBSERVATION '));
@@ -710,4 +717,85 @@ test('across four independently-exercised operations, onObservation records all 
     'https://management.azure.com/execute',
     'https://management.azure.com/runs/x/cancel',
   ]);
+});
+
+test('onObservation reports the observed properties.status/startTime/endTime business VALUES and field NAMES, not asserted contract constants (R2 review)', async () => {
+  const t = new FakeTransport().on(
+    'GET',
+    '/runs/x',
+    response(200, {}, {
+      properties: {
+        status: 'Succeeded',
+        startTime: '2026-01-01T00:00:00Z',
+        endTime: '2026-01-01T00:05:00Z',
+        errors: [],
+        executionErrors: [],
+      },
+    }),
+  );
+  const observations: ProtocolObservation[] = [];
+  const observingClient = new ArmHttpClient({
+    transport: t,
+    clock: new FakeClock(),
+    log: new FakeLogger(),
+    cred: new FakeCredential(),
+    signal: new AbortController().signal,
+    rng: fixedRng(0.5),
+    onObservation: (obs) => observations.push(obs),
+  });
+  await observingClient.getOnce('https://management.azure.com/runs/x');
+
+  assert.equal(observations.length, 1);
+  const obs = observations[0]!;
+  assert.equal(obs.businessState, 'Succeeded');
+  assert.equal(obs.startTime, '2026-01-01T00:00:00Z');
+  assert.equal(obs.endTime, '2026-01-01T00:05:00Z');
+  assert.equal(obs.statusField, 'status');
+  assert.equal(obs.startTimeField, 'startTime');
+  assert.equal(obs.endTimeField, 'endTime');
+  assert.deepEqual([...obs.errorChannelsPresent].sort(), ['errors', 'executionErrors']);
+});
+
+test('onObservation reports absent wire-shape fields as undefined/empty when the deployed body uses a different shape (R2 review — a real drift is visible, not masked)', async () => {
+  // Simulates a service that regressed to the stale `state` field instead of `status`.
+  const t = new FakeTransport().on('GET', '/runs/x', response(200, {}, { properties: { state: 'Succeeded' } }));
+  const observations: ProtocolObservation[] = [];
+  const observingClient = new ArmHttpClient({
+    transport: t,
+    clock: new FakeClock(),
+    log: new FakeLogger(),
+    cred: new FakeCredential(),
+    signal: new AbortController().signal,
+    rng: fixedRng(0.5),
+    onObservation: (obs) => observations.push(obs),
+  });
+  await observingClient.getOnce('https://management.azure.com/runs/x');
+
+  const obs = observations[0]!;
+  assert.equal(obs.businessState, undefined);
+  assert.equal(obs.statusField, undefined);
+  assert.equal(obs.startTimeField, undefined);
+  assert.equal(obs.endTimeField, undefined);
+  assert.deepEqual(obs.errorChannelsPresent, []);
+});
+
+test('onObservation reports an empty wire-shape snapshot for a response with no properties object (e.g. an acceptance 202 with no body)', async () => {
+  const t = new FakeTransport().on('POST', '/execute', response(202, { Location: 'https://management.azure.com/runs/x' }));
+  const observations: ProtocolObservation[] = [];
+  const observingClient = new ArmHttpClient({
+    transport: t,
+    clock: new FakeClock(),
+    log: new FakeLogger(),
+    cred: new FakeCredential(),
+    signal: new AbortController().signal,
+    rng: fixedRng(0.5),
+    onObservation: (obs) => observations.push(obs),
+  });
+  await observingClient.post('https://management.azure.com/execute');
+
+  const obs = observations[0]!;
+  assert.equal(obs.businessState, undefined);
+  assert.equal(obs.startTime, undefined);
+  assert.equal(obs.endTime, undefined);
+  assert.deepEqual(obs.errorChannelsPresent, []);
 });
