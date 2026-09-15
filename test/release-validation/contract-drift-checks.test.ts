@@ -129,7 +129,23 @@ function suiteRoot(prefix: string, body: string): string {
   return root;
 }
 
-const SUITE_GLOB = { CONTRACT_DRIFT_SUITE_GLOB: 'contract/**/*.test.ts' };
+/**
+ * The scratch contract directory declares `shape.test.ts` as a SOURCE-PROTOCOL
+ * assertion, so only it may produce a mismatch verdict.
+ */
+const SUITE_GLOB = {
+  CONTRACT_DRIFT_CONTRACT_DIR: 'contract',
+  CONTRACT_DRIFT_PROTOCOL_TESTS: 'shape.test.ts',
+  CONTRACT_DRIFT_POLICY_TESTS: '',
+};
+
+/** A passing source-protocol assertion, so the protocol suite is never empty. */
+const GREEN_PROTOCOL_TEST = `import { test } from 'node:test';
+   import assert from 'node:assert/strict';
+   test('the validate envelope keeps its accepted status', () => {
+     assert.equal(202, 202);
+   });
+  `;
 
 test('contract-suite: a failing contract ASSERTION is a confirmed mismatch', () => {
   const root = suiteRoot(
@@ -200,9 +216,13 @@ test('contract-suite: an execution error that merely MENTIONS ERR_ASSERTION is N
 test('contract-suite: discovering no contract tests is NOT a mismatch', () => {
   const root = scratch('empty');
   mkdirSync(join(root, 'contract'), { recursive: true });
-  const result = runCheck('contract-suite', root, SUITE_GLOB);
+  const result = runCheck('contract-suite', root, {
+    CONTRACT_DRIFT_CONTRACT_DIR: 'contract',
+    CONTRACT_DRIFT_PROTOCOL_TESTS: '',
+    CONTRACT_DRIFT_POLICY_TESTS: '',
+  });
   assertExecutionError(result);
-  assert.match(result.stderr, /no contract tests/i, 'the empty suite is reported for what it is');
+  assert.match(result.stderr, /no .*contract tests/i, 'the empty suite is reported for what it is');
 });
 
 test('contract-suite: a green suite records no contract verdict at all', () => {
@@ -216,6 +236,236 @@ test('contract-suite: a green suite records no contract verdict at all', () => {
     `,
   );
   assertMatch(runCheck('contract-suite', root, SUITE_GLOB));
+});
+
+// ---------------------------------------------------------------------------
+// Only SOURCE-PROTOCOL assertions may produce a mismatch. The same directory
+// also holds repository-only assertions — the packaged task manifest, the
+// signing pipeline, the release rulesets — whose failure says nothing about the
+// service protocol. They are evaluated SEPARATELY and publish no contract
+// evidence.
+// ---------------------------------------------------------------------------
+
+/**
+ * A scratch contract directory holding one source-protocol test and one
+ * repository-policy test, each classified explicitly.
+ */
+function splitSuiteRoot(prefix: string, protocolBody: string, policyBody: string): string {
+  const root = scratch(prefix);
+  write(root, 'package.json', '{"type":"module"}\n');
+  write(root, 'contract/shape.test.ts', protocolBody);
+  write(root, 'contract/manifest.test.ts', policyBody);
+  return root;
+}
+
+const SPLIT_SUITE = {
+  CONTRACT_DRIFT_CONTRACT_DIR: 'contract',
+  CONTRACT_DRIFT_PROTOCOL_TESTS: 'shape.test.ts',
+  CONTRACT_DRIFT_POLICY_TESTS: 'manifest.test.ts',
+};
+
+/** A failing repository-policy assertion, e.g. `minimumAgentVersion` moved. */
+const FAILING_POLICY_TEST = `import { test } from 'node:test';
+   import assert from 'node:assert/strict';
+   test('the packaged task pins minimumAgentVersion', () => {
+     assert.equal('2.144.0', '2.206.1');
+   });
+  `;
+
+test('contract-suite: a failing REPOSITORY assertion is never a contract mismatch', () => {
+  // `manifest.test.ts` fails with a genuine ERR_ASSERTION, but it asserts the
+  // packaged task manifest — repository policy, not the service protocol. The
+  // contract suite must not even evaluate it, so the contract verdict stays
+  // MATCH and no service defect can be filed on it.
+  const root = splitSuiteRoot('policy-fail', GREEN_PROTOCOL_TEST, FAILING_POLICY_TEST);
+  assertMatch(runCheck('contract-suite', root, SPLIT_SUITE));
+});
+
+test('repository-suite: a failing repository assertion fails WITHOUT contract evidence', () => {
+  const root = splitSuiteRoot('policy-report', GREEN_PROTOCOL_TEST, FAILING_POLICY_TEST);
+  const result = runCheck('repository-suite', root, SPLIT_SUITE);
+  assertExecutionError(result);
+  assert.match(
+    result.stderr,
+    /minimumAgentVersion/,
+    'the repository regression is still reported, under its own label',
+  );
+});
+
+test('repository-suite: a green repository suite is a match', () => {
+  const root = splitSuiteRoot(
+    'policy-green',
+    GREEN_PROTOCOL_TEST,
+    `import { test } from 'node:test';
+     import assert from 'node:assert/strict';
+     test('the packaged task pins minimumAgentVersion', () => {
+       assert.equal('2.144.0', '2.144.0');
+     });
+    `,
+  );
+  assertMatch(runCheck('repository-suite', root, SPLIT_SUITE));
+});
+
+test('repository-suite: a genuine PROTOCOL mismatch is not laundered through it', () => {
+  // The mirror of the case above: the protocol test fails, the repository test
+  // passes. The mismatch must surface from `contract-suite` only.
+  const root = splitSuiteRoot(
+    'protocol-fail',
+    `import { test } from 'node:test';
+     import assert from 'node:assert/strict';
+     test('the validate envelope keeps its accepted status', () => {
+       assert.equal(200, 202);
+     });
+    `,
+    `import { test } from 'node:test';
+     test('the packaged task pins minimumAgentVersion', () => {});
+    `,
+  );
+  assertMismatch(runCheck('contract-suite', root, SPLIT_SUITE));
+  assertMatch(runCheck('repository-suite', root, SPLIT_SUITE));
+});
+
+test('classify: an UNCLASSIFIED contract test is an execution error, not silent coverage', () => {
+  // A newly added test file that nobody classified must never be assumed to be
+  // protocol evidence, and must never be silently skipped either.
+  const root = splitSuiteRoot('unclassified', GREEN_PROTOCOL_TEST, 'export {};\n');
+  write(root, 'contract/brand-new.test.ts', GREEN_PROTOCOL_TEST);
+  const result = runCheck('classify', root, SPLIT_SUITE);
+  assertExecutionError(result);
+  assert.match(result.stderr, /brand-new\.test\.ts/, 'classify names the unclassified file');
+});
+
+test('classify: an unclassified file does NOT suppress a real protocol verdict', () => {
+  // `classify` fails the job in its own right; the contract suite must still
+  // publish what the DECLARED source-protocol assertions observed, otherwise an
+  // unrelated new test file could downgrade real drift to a workflow failure.
+  const root = splitSuiteRoot(
+    'unclassified-mismatch',
+    `import { test } from 'node:test';
+     import assert from 'node:assert/strict';
+     test('the validate envelope keeps its accepted status', () => {
+       assert.equal(200, 202);
+     });
+    `,
+    'export {};\n',
+  );
+  write(root, 'contract/brand-new.test.ts', GREEN_PROTOCOL_TEST);
+  assertExecutionError(runCheck('classify', root, SPLIT_SUITE));
+  assertMismatch(runCheck('contract-suite', root, SPLIT_SUITE));
+});
+
+test('classify: a classification entry with no file on disk is an execution error', () => {
+  const root = splitSuiteRoot('stale', GREEN_PROTOCOL_TEST, 'export {};\n');
+  const result = runCheck('classify', root, {
+    ...SPLIT_SUITE,
+    CONTRACT_DRIFT_PROTOCOL_TESTS: 'shape.test.ts,deleted.test.ts',
+  });
+  assertExecutionError(result);
+  assert.match(result.stderr, /deleted\.test\.ts/);
+});
+
+test('classify: the shipped repository classifies every source-contract test', () => {
+  assertMatch(runCheck('classify'));
+});
+
+// ---------------------------------------------------------------------------
+// Per-ASSERTION exemptions: a source-protocol FILE can still carry assertions
+// that observe this repository (client naming conventions, the fixture
+// validator's own negative self-tests). They are no more protocol evidence than
+// a packaging assertion is.
+// ---------------------------------------------------------------------------
+
+const EXEMPT_ENV = (exemptions: Record<string, string[]>) => ({
+  ...SPLIT_SUITE,
+  CONTRACT_DRIFT_REPO_ONLY_ASSERTIONS: JSON.stringify(exemptions),
+});
+
+/** A protocol file mixing a wire assertion with a repository-only one. */
+const MIXED_PROTOCOL_TEST = (wire: string, convention: string) =>
+  `import { test } from 'node:test';
+   import assert from 'node:assert/strict';
+   test('the validate envelope keeps its accepted status', () => {
+     assert.equal(${wire}, 202);
+   });
+   test('canonical outputs are exactly the eight scalars (D11)', () => {
+     assert.equal(${convention}, 8);
+   });
+   test('negative: a fixture missing its description is rejected', () => {
+     assert.equal(${convention}, 8);
+   });
+  `;
+
+test('contract-suite: a repository-only assertion inside a protocol file is NOT a mismatch', () => {
+  const root = splitSuiteRoot(
+    'exempt-convention',
+    MIXED_PROTOCOL_TEST('202', '7'),
+    'export {};\n',
+  );
+  const result = runCheck(
+    'contract-suite',
+    root,
+    EXEMPT_ENV({
+      'shape.test.ts': [
+        'canonical outputs are exactly the eight scalars (D11)',
+        'prefix:negative: ',
+      ],
+    }),
+  );
+  assertExecutionError(result);
+  assert.match(result.stderr, /canonical outputs/, 'the repository regression is still reported');
+  assert.match(result.stderr, /negative: a fixture missing its description/);
+});
+
+test('contract-suite: a wire assertion in the same file still produces a mismatch', () => {
+  const root = splitSuiteRoot('exempt-wire', MIXED_PROTOCOL_TEST('200', '8'), 'export {};\n');
+  const result = runCheck(
+    'contract-suite',
+    root,
+    EXEMPT_ENV({
+      'shape.test.ts': [
+        'canonical outputs are exactly the eight scalars (D11)',
+        'prefix:negative: ',
+      ],
+    }),
+  );
+  assertMismatch(result);
+  assert.match(result.stderr, /the validate envelope keeps its accepted status/);
+});
+
+test('classify: an exemption that matches nothing in its file is an execution error', () => {
+  // A renamed or deleted test leaves a rule behind that would only ever widen.
+  const root = splitSuiteRoot('exempt-stale', MIXED_PROTOCOL_TEST('202', '8'), 'export {};\n');
+  const result = runCheck(
+    'classify',
+    root,
+    EXEMPT_ENV({ 'shape.test.ts': ['a test that no longer exists'] }),
+  );
+  assertExecutionError(result);
+  assert.match(result.stderr, /matches no test in that file/);
+});
+
+test('classify: an exemption that also matches ANOTHER protocol file is an execution error', () => {
+  // Failures are attributed by NAME, so an overlapping rule would exempt a
+  // genuine protocol assertion in a file that never claimed the exemption.
+  const root = splitSuiteRoot('exempt-ambiguous', MIXED_PROTOCOL_TEST('202', '8'), 'export {};\n');
+  write(root, 'contract/other.test.ts', MIXED_PROTOCOL_TEST('202', '8'));
+  const result = runCheck('classify', root, {
+    ...EXEMPT_ENV({ 'shape.test.ts': ['prefix:negative: '] }),
+    CONTRACT_DRIFT_PROTOCOL_TESTS: 'shape.test.ts,other.test.ts',
+  });
+  assertExecutionError(result);
+  assert.match(result.stderr, /also matches/);
+});
+
+test('classify: an exemption on a NON-protocol file is an execution error', () => {
+  const root = splitSuiteRoot('exempt-misplaced', GREEN_PROTOCOL_TEST, 'export {};\n');
+  const result = runCheck(
+    'classify',
+    root,
+    EXEMPT_ENV({ 'manifest.test.ts': ['prefix:negative: '] }),
+  );
+  assertExecutionError(result);
+  assert.match(result.stderr, /not a source-protocol test file/);
 });
 
 // ---------------------------------------------------------------------------
@@ -278,6 +528,7 @@ test('provenance: a missing generator is NOT a mismatch', () => {
 /** A scratch tree whose whole shipped surface agrees with the pinned version. */
 function apiVersionRoot(prefix: string, pinned: string = API_VERSION): string {
   const root = scratch(prefix);
+  write(root, 'package.json', '{"type":"module"}\n');
   write(root, 'packages/core/src/contract.ts', `export const API_VERSION = '${pinned}';\n`);
   write(root, 'packages/core/fixtures/call.json', `{"url":"?api-version=${API_VERSION}"}\n`);
   write(root, 'action.yml', `# api-version=${API_VERSION}\n`);
@@ -287,6 +538,53 @@ function apiVersionRoot(prefix: string, pinned: string = API_VERSION): string {
 
 test('api-version: an unpinned constant is a confirmed mismatch', () => {
   assertMismatch(runCheck('api-version', apiVersionRoot('api-moved', '2099-01-01-preview')));
+});
+
+// The pin is compared against the constant's ACTUAL EXPORTED VALUE, not against
+// a slice of source text: an equivalent declaration must not be reported as
+// drift, and source text that merely LOOKS right must not satisfy the check.
+
+test('api-version: an equivalent declaration of the same value is a match', () => {
+  for (const declaration of [
+    `export const API_VERSION = "${API_VERSION}";`,
+    `export const API_VERSION: string = '${API_VERSION}';`,
+    `const pinned = '${API_VERSION}';\nexport { pinned as API_VERSION };`,
+    `export const API_VERSION = \`${API_VERSION}\`;`,
+  ]) {
+    const root = apiVersionRoot('api-equivalent');
+    write(root, 'packages/core/src/contract.ts', `${declaration}\n`);
+    assertMatch(runCheck('api-version', root));
+  }
+});
+
+test('api-version: a COMMENTED expected declaration does not satisfy the check', () => {
+  const root = apiVersionRoot('api-comment');
+  write(
+    root,
+    'packages/core/src/contract.ts',
+    // The expected text is present verbatim — but only in a comment. The value
+    // actually exported has moved, which is exactly the D5 bump this must catch.
+    `// export const API_VERSION = '${API_VERSION}';\nexport const API_VERSION = '2099-01-01-preview';\n`,
+  );
+  const result = runCheck('api-version', root);
+  assertMismatch(result);
+  assert.match(result.stderr, /2099-01-01-preview/, 'the actual exported value is named');
+});
+
+test('api-version: a constants module that cannot be loaded is NOT a mismatch', () => {
+  const root = apiVersionRoot('api-broken');
+  write(root, 'packages/core/src/contract.ts', 'export const API_VERSION = (((;\n');
+  assertExecutionError(runCheck('api-version', root));
+});
+
+test('api-version: a missing or non-string export is NOT a mismatch', () => {
+  const noExport = apiVersionRoot('api-noexport');
+  write(noExport, 'packages/core/src/contract.ts', 'export const OTHER = 1;\n');
+  assertExecutionError(runCheck('api-version', noExport));
+
+  const notAString = apiVersionRoot('api-notstring');
+  write(notAString, 'packages/core/src/contract.ts', 'export const API_VERSION = 20260501;\n');
+  assertExecutionError(runCheck('api-version', notAString));
 });
 
 test('api-version: a literal that disagrees with the pin is a confirmed mismatch', () => {

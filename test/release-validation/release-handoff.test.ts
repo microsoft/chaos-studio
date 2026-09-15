@@ -370,7 +370,7 @@ test('the source-contract drift workflow runs on a schedule and fails closed', (
   const drift = workflow.slice(workflow.indexOf('\n  drift:'), workflow.indexOf('\n  report:'));
   // The contract checks are EVALUATED by the drift CLI (behavioural coverage lives in
   // contract-drift-checks.test.ts); the workflow only wires them up.
-  for (const check of ['provenance', 'contract-suite', 'api-version']) {
+  for (const check of ['classify', 'provenance', 'contract-suite', 'repository-suite', 'api-version']) {
     assert.ok(
       drift.includes(`node scripts/lib/contract-drift.mjs ${check}`),
       `the drift job runs the ${check} check`,
@@ -379,10 +379,49 @@ test('the source-contract drift workflow runs on a schedule and fails closed', (
   const checks = readText('scripts/lib/contract-drift.mjs');
   assert.ok(checks.includes('packages/core/fixtures/scripts/generate-provenance.mjs'));
   assert.match(checks, /'diff', '--exit-code'/);
-  assert.ok(checks.includes('packages/core/test/contract/**/*.test.ts'));
+  assert.ok(checks.includes('packages/core/test/contract'));
   assert.ok(checks.includes(API_VERSION), 'the pinned api-version is asserted across the repo');
   assert.ok(drift.includes('test/release-validation/**/*.test.ts'));
   assert.doesNotMatch(drift, /continue-on-error|\|\| true/);
+});
+
+test('only explicitly classified SOURCE-PROTOCOL assertions can produce a contract mismatch', () => {
+  // The contract test directory also holds repository-only assertions — the packaged
+  // task manifest, the signing pipeline, the release rulesets. A failure there is a
+  // repository regression, not evidence that the service protocol moved, so it must be
+  // evaluated by a check that cannot publish contract evidence. (The BEHAVIOUR is
+  // covered in contract-drift-checks.test.ts; this pins the shipped classification.)
+  const checks = readText('scripts/lib/contract-drift.mjs');
+  const protocol = checks.slice(
+    checks.indexOf('const SOURCE_PROTOCOL_TESTS'),
+    checks.indexOf('const REPOSITORY_POLICY_TESTS'),
+  );
+  const policy = checks.slice(
+    checks.indexOf('const REPOSITORY_POLICY_TESTS'),
+    checks.indexOf('const REPOSITORY_ONLY_ASSERTIONS'),
+  );
+  // The two files the review named explicitly: neither asserts the wire protocol.
+  for (const repositoryOnly of ['manifest.test.ts', 'ado-pipeline.test.ts']) {
+    assert.ok(policy.includes(repositoryOnly), `${repositoryOnly} is a repository-policy assertion`);
+    assert.ok(
+      !protocol.includes(repositoryOnly),
+      `${repositoryOnly} must never produce a source-contract mismatch`,
+    );
+  }
+  for (const protocolTest of ['validate.test.ts', 'run.test.ts', 'cancel.test.ts']) {
+    assert.ok(protocol.includes(protocolTest), `${protocolTest} is a source-protocol assertion`);
+  }
+
+  const workflow = readText('.github/workflows/contract-drift.yml');
+  const drift = workflow.slice(workflow.indexOf('\n  drift:'), workflow.indexOf('\n  report:'));
+  // The repository-policy step is its own step, and the mismatch verdict does not
+  // consult it: the CLI cannot emit one from it, and the workflow does not read one.
+  assert.ok(drift.includes('id: repository_suite'), 'the repository-policy suite is its own step');
+  const verdict = drift.slice(drift.indexOf('contractMismatch:'));
+  assert.ok(
+    !verdict.slice(0, verdict.indexOf('\n')).includes('repository_suite'),
+    'the contract verdict never rests on a repository-policy failure',
+  );
 });
 
 test('drift opens a service defect with least privilege and never changes client behavior', () => {

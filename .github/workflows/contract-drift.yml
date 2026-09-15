@@ -31,14 +31,20 @@
 #
 # The SERVICE-DEFECT claim is gated on an EXPLICIT contract verdict, never on "the job
 # failed". The three checks that can observe the source contract (provenance
-# re-derivation, the source-contract suite, the pinned `api-version` assertion) are
+# re-derivation, the SOURCE-PROTOCOL suite, the pinned `api-version` assertion) are
 # evaluated by `scripts/lib/contract-drift.mjs`, which separates a CHECKED MISMATCH
 # (exit 1, records `contract=mismatch`) from a check that could NOT BE EVALUATED
 # (exit 2, records nothing): a failed `git`, an unreadable file, a test file that will
 # not parse or import, an empty test discovery, or a test that dies before any contract
-# assertion runs. A dependency-install failure, a runner failure, an unevaluable check,
-# or a repository-side release-validation regression is reported honestly as a workflow
-# failure under its own label, so a service defect never rests on absent evidence.
+# assertion runs. Mismatch-producing evaluation is restricted to explicitly classified
+# source-protocol assertions: the packaging and release-policy assertions that share the
+# contract test directory (the task manifest's `minimumAgentVersion`, the signing
+# configuration, the release rulesets) run under a SEPARATE check that publishes no
+# contract evidence, and an unclassified new test file fails the `classify` check rather
+# than being assumed to be protocol evidence. A dependency-install failure, a runner
+# failure, an unevaluable check, or a repository-side regression is reported honestly as
+# a workflow failure under its own label, so a service defect never rests on absent
+# evidence.
 name: contract-drift
 
 on:
@@ -65,8 +71,8 @@ jobs:
     outputs:
       # An EXPLICIT contract verdict, not "the job failed". Only a check that can
       # actually OBSERVE the source contract sets `contract=mismatch`; dependency
-      # installation and the release-validation suite never do, so their failure
-      # cannot be reported as a protocol mismatch.
+      # installation, the repository-policy assertions and the release-validation
+      # suite never do, so their failure cannot be reported as a protocol mismatch.
       contractMismatch: ${{ steps.provenance.outputs.contract == 'mismatch' || steps.contract_suite.outputs.contract == 'mismatch' || steps.api_version.outputs.contract == 'mismatch' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -95,17 +101,40 @@ jobs:
         # claim would otherwise rest on absent evidence.
         run: node scripts/lib/contract-drift.mjs provenance
 
+      - name: Check every source-contract test is classified
+        id: classify
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        # A CONTRACT MISMATCH is a claim about the SERVICE, so only assertions that
+        # can observe the service protocol may produce one. The contract test
+        # directory also holds repository-only assertions (the packaged task
+        # manifest, the signing pipeline, the release rulesets, the C# extraction
+        # machinery), which are run separately and publish no contract evidence.
+        # An unclassified new test file is an execution error: it is neither
+        # assumed to be protocol evidence nor silently skipped.
+        run: node scripts/lib/contract-drift.mjs classify
+
       - name: Re-run the source-contract suite
         id: contract_suite
         # Each contract check runs INDEPENDENTLY of the others' outcome: one check
         # failing must not skip another and suppress the verdict it would have
         # published, which would downgrade real drift to a mere workflow failure.
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        # A mismatch here is recorded only when an IDENTIFIED contract assertion
-        # observed the shipped fixtures disagreeing with the reviewed source extracts.
-        # A broken import, an unparseable test file, an empty discovery, or a test that
-        # dies during setup is a drift-check failure, not a service defect.
+        # A mismatch here is recorded only when an IDENTIFIED SOURCE-PROTOCOL
+        # assertion observed the shipped fixtures disagreeing with the reviewed
+        # source extracts. A broken import, an unparseable test file, an empty
+        # discovery, or a test that dies during setup is a drift-check failure,
+        # not a service defect.
         run: node scripts/lib/contract-drift.mjs contract-suite
+
+      - name: Re-run the repository-policy assertions
+        id: repository_suite
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        # The packaging and release-policy assertions that share the contract test
+        # directory. They must stay green, but they observe THIS REPOSITORY: this
+        # check can only report "green" or "could not be evaluated", never a
+        # contract mismatch, so a `minimumAgentVersion` or signing-configuration
+        # regression can never be escalated as a service defect.
+        run: node scripts/lib/contract-drift.mjs repository-suite
 
       - name: Assert the pinned api-version has not moved anywhere in the repo
         id: api_version
