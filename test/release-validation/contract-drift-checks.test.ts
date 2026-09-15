@@ -457,6 +457,65 @@ test('classify: an exemption that also matches ANOTHER protocol file is an execu
   assert.match(result.stderr, /also matches/);
 });
 
+/**
+ * A second protocol file whose ONLY failing assertion happens to carry a name
+ * that another file claimed an exemption for. It declares no exemption itself.
+ */
+const COLLIDING_PROTOCOL_TEST = `import { test } from 'node:test';
+   import assert from 'node:assert/strict';
+   test('the cancel envelope keeps its accepted status', () => {
+     assert.equal(202, 202);
+   });
+   test('negative: the experiment resource id shape is rejected', () => {
+     assert.equal(200, 202);
+   });
+  `;
+
+test("contract-suite: one file's exemption never suppresses ANOTHER file's protocol failure", () => {
+  // The failure below lives in `other.test.ts`, which claimed no exemption at
+  // all; only `shape.test.ts` did. Attributing failures by NAME alone would let
+  // that unrelated rule swallow genuine drift and downgrade it to a mere
+  // workflow failure. `classify` rejects the overlapping rule, but it runs
+  // INDEPENDENTLY, so the suite must publish the mismatch regardless.
+  const root = splitSuiteRoot('exempt-cross-file', MIXED_PROTOCOL_TEST('202', '8'), 'export {};\n');
+  write(root, 'contract/other.test.ts', COLLIDING_PROTOCOL_TEST);
+  const env = {
+    ...EXEMPT_ENV({ 'shape.test.ts': ['prefix:negative: '] }),
+    CONTRACT_DRIFT_PROTOCOL_TESTS: 'shape.test.ts,other.test.ts',
+  };
+  assertExecutionError(runCheck('classify', root, env));
+  const result = runCheck('contract-suite', root, env);
+  assertMismatch(result);
+  assert.match(result.stderr, /the experiment resource id shape is rejected/);
+  assert.match(result.stderr, /other\.test\.ts/, 'the mismatch names the file it came from');
+});
+
+test('contract-suite: a file keeps its OWN exemption when several protocol files run', () => {
+  // The mirror of the case above: the exempt assertion fails in the file that
+  // declared it, and the other protocol file is green. That is a repository
+  // regression, so it is still reported — but never as contract evidence.
+  const root = splitSuiteRoot('exempt-own-file', MIXED_PROTOCOL_TEST('202', '7'), 'export {};\n');
+  write(
+    root,
+    'contract/other.test.ts',
+    `import { test } from 'node:test';
+     import assert from 'node:assert/strict';
+     test('the cancel envelope keeps its accepted status', () => {
+       assert.equal(202, 202);
+     });
+    `,
+  );
+  const result = runCheck('contract-suite', root, {
+    ...EXEMPT_ENV({
+      'shape.test.ts': ['canonical outputs are exactly the eight scalars (D11)', 'prefix:negative: '],
+    }),
+    CONTRACT_DRIFT_PROTOCOL_TESTS: 'shape.test.ts,other.test.ts',
+  });
+  assertExecutionError(result);
+  assert.match(result.stderr, /canonical outputs/, 'the repository regression is still reported');
+  assert.match(result.stderr, /shape\.test\.ts/);
+});
+
 test('classify: an exemption on a NON-protocol file is an execution error', () => {
   const root = splitSuiteRoot('exempt-misplaced', GREEN_PROTOCOL_TEST, 'export {};\n');
   const result = runCheck(

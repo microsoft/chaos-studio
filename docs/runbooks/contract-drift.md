@@ -101,10 +101,13 @@ validator's negative self-tests in `provenance.test.ts` (`negative: …`, which 
 validator a deliberately broken input and assert it is rejected). Those are listed per
 file in `REPOSITORY_ONLY_ASSERTIONS`: a failure confined to them is reported as a
 repository regression with **no** contract evidence, while any other failing assertion
-in the same file is still a mismatch. `classify` fails when a listed rule matches no
-test in its own file (it has rotted) or also matches a test in another protocol file
-(failures are attributed by name, so an overlapping rule would exempt a genuine
-protocol assertion).
+in the same file is still a mismatch. Because the runner reports failures by name
+alone, the suite evaluates **each source-protocol file separately** and applies only
+that file's rules, so an exemption can never suppress a genuine protocol failure that
+happens to be named the same way in another file. `classify` additionally fails when a
+listed rule matches no test in its own file (it has rotted) or also matches a test in
+another protocol file (the rule is then ambiguous about what it exempts, and its twin
+is left unclassified).
 
 Start from that issue. All contract checks run **independently** of one another
 (and ahead of the repository-side release-validation suite), so one failure never

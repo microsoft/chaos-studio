@@ -104,9 +104,11 @@ const REPOSITORY_POLICY_TESTS =
 // that observe THIS REPOSITORY rather than the service: client-side naming and
 // enum conventions, and the fixture-validator's own negative self-tests. A
 // failure in one of those is a repository regression, so an ERR_ASSERTION whose
-// test name is listed here does NOT on its own produce a mismatch. Entries are
-// exact test names, or a `prefix:` rule; `classify` fails when an entry matches
-// nothing in the file, so the list cannot rot into a silent blanket exemption.
+// test name is listed here does NOT on its own produce a mismatch. Rules apply
+// ONLY to the file that declares them — the suite runs each protocol file
+// separately for exactly that reason. Entries are exact test names, or a
+// `prefix:` rule; `classify` fails when an entry matches nothing in the file, so
+// the list cannot rot into a silent blanket exemption.
 const REPOSITORY_ONLY_ASSERTIONS =
   process.env.CONTRACT_DRIFT_REPO_ONLY_ASSERTIONS === undefined
     ? {
@@ -273,9 +275,10 @@ export function classifyContractTests(discovered, protocol, policy) {
  * `namesByFile` maps each protocol file to the test names it declares. A rule
  * that matches NOTHING in its own file has rotted (the test was renamed or
  * removed) and would silently widen over time; a rule that ALSO matches a test
- * in a DIFFERENT protocol file is ambiguous, because the test runner reports
- * failures by name alone — it would exempt a genuine protocol assertion. Both
- * are execution errors.
+ * in a DIFFERENT protocol file is ambiguous about what it actually exempts —
+ * the suite scopes it correctly, but a reader cannot tell which assertion was
+ * meant, and the twin in the other file is left silently unclassified. Both are
+ * execution errors.
  */
 export function auditRepositoryOnlyAssertions(exemptions, namesByFile) {
   const problems = [];
@@ -401,7 +404,7 @@ export function parseTapCounts(tap) {
 }
 
 /**
- * Classify a source-contract suite run.
+ * Classify the run of ONE source-protocol contract file.
  *
  * A failing `node:assert` assertion reports `code: 'ERR_ASSERTION'` in its own
  * TAP diagnostic: that is an assertion that RAN and observed the shipped
@@ -409,22 +412,23 @@ export function parseTapCounts(tap) {
  * thing allowed to yield a mismatch. A syntax error, an unresolvable import, a
  * suite that discovers nothing, or a test that throws while setting up all fail
  * BEFORE any contract assertion is evaluated, so they are execution errors.
+ *
+ * `rules` are the repository-only exemptions declared for THIS file, and only
+ * this file: the runner reports failures by NAME alone, so a rule belonging to a
+ * different protocol file must never be consulted here. The summary is phrased
+ * to read beneath the file it describes (see `aggregateContractVerdicts`).
  */
-export function classifyContractSuiteRun(result, exemptions = REPOSITORY_ONLY_ASSERTIONS) {
-  if (result.error) return error(`the contract suite could not be started (${describeExit(result)}).`);
-  if (result.signal) return error(`the contract suite was killed by signal ${result.signal}.`);
+export function classifyContractSuiteRun(result, rules = []) {
+  if (result.error) return error(`could not be started (${describeExit(result)}).`);
+  if (result.signal) return error(`was killed by signal ${result.signal}.`);
 
   const tap = `${result.stdout ?? ''}`;
   const counts = parseTapCounts(tap);
   if (counts === null) {
-    return error('the contract suite produced no TAP summary; it did not run to completion.', [
-      result.stderr || tap,
-    ]);
+    return error('produced no TAP summary; it did not run to completion.', [result.stderr || tap]);
   }
   if (counts.tests === 0) {
-    return error(
-      `no source-protocol contract tests ran in '${CONTRACT_DIR}'; the contract was not checked.`,
-    );
+    return error('declared no source-protocol contract tests that ran; the contract was not checked.');
   }
 
   const failures = parseTapFailures(tap);
@@ -432,31 +436,66 @@ export function classifyContractSuiteRun(result, exemptions = REPOSITORY_ONLY_AS
   // Classification is per FILE, but a source-protocol file can still carry
   // assertions that observe THIS REPOSITORY (client naming/enum conventions, the
   // fixture validator's own negative self-tests). They are attributed by test
-  // name and, on their own, are a repository regression rather than evidence
-  // that the service moved. `classify` keeps the exemption list honest.
-  const rules = Object.values(exemptions).flat();
+  // name WITHIN THIS FILE and, on their own, are a repository regression rather
+  // than evidence that the service moved. `classify` keeps the list honest.
   const exempt = (failure) => isRepositoryOnlyAssertion(rules, failure.name);
   const protocolFailures = assertionFailures.filter((failure) => !exempt(failure));
   const repositoryOnly = assertionFailures.filter(exempt);
   if (protocolFailures.length > 0) {
     return mismatch(
-      'the source-contract suite reported failing SOURCE-PROTOCOL assertions; the shipped fixtures no longer agree with the reviewed source extracts.',
+      'reported failing SOURCE-PROTOCOL assertions; the shipped fixtures no longer agree with the reviewed source extracts.',
       protocolFailures.map((failure) => `  - ${failure.name}`),
     );
   }
   if (repositoryOnly.length > 0) {
     return error(
-      'the source-contract suite failed ONLY on repository-only assertions (client conventions, or the fixture validator\'s own self-tests); that is a repository regression, not a source-contract mismatch.',
+      'failed ONLY on repository-only assertions (client conventions, or the fixture validator\'s own self-tests); that is a repository regression, not a source-contract mismatch.',
       repositoryOnly.map((failure) => `  - ${failure.name}`),
     );
   }
   if (result.status !== 0 || counts.fail > 0) {
     return error(
-      `the contract suite failed (${describeExit(result)}) WITHOUT any contract assertion reporting a disagreement; it could not be evaluated.`,
+      `failed (${describeExit(result)}) WITHOUT any contract assertion reporting a disagreement; it could not be evaluated.`,
       failures.map((failure) => `  - ${failure.name}`),
     );
   }
-  return match(`the source-contract suite is green (${counts.pass} passing tests).`);
+  return { ...match(`is green (${counts.pass} passing tests).`), passing: counts.pass };
+}
+
+/**
+ * Fold the per-FILE verdicts into the single verdict the check publishes.
+ *
+ * Each source-protocol file is evaluated on its OWN exemption rules. Flattening
+ * every file's rules into one list and matching by name would let `a.test.ts`'s
+ * exemption swallow a genuine protocol failure that happens to be named the same
+ * way in `b.test.ts`, silently downgrading real drift to a workflow failure.
+ * `classify` also rejects such an overlapping rule, but it runs INDEPENDENTLY,
+ * so the verdict here must not depend on it having passed.
+ *
+ * A mismatch anywhere outranks an error elsewhere: one file failing to run is no
+ * reason to withhold a disagreement another file positively identified.
+ */
+export function aggregateContractVerdicts(perFile) {
+  const detail = ({ file, verdict }) => [
+    `  - ${CONTRACT_DIR}/${file}: ${verdict.summary}`,
+    ...verdict.details,
+  ];
+  const mismatched = perFile.filter((entry) => entry.verdict.verdict === 'mismatch');
+  if (mismatched.length > 0) {
+    return mismatch(
+      'the source-contract suite reported failing SOURCE-PROTOCOL assertions; the shipped fixtures no longer agree with the reviewed source extracts.',
+      mismatched.flatMap(detail),
+    );
+  }
+  const errored = perFile.filter((entry) => entry.verdict.verdict === 'error');
+  if (errored.length > 0) {
+    return error(
+      'the source-contract suite could not be evaluated to a contract verdict.',
+      errored.flatMap(detail),
+    );
+  }
+  const passing = perFile.reduce((total, entry) => total + (entry.verdict.passing ?? 0), 0);
+  return match(`the source-contract suite is green (${passing} passing tests).`);
 }
 
 /**
@@ -512,12 +551,21 @@ function checkContractSuite() {
       `no source-protocol contract tests are declared for '${CONTRACT_DIR}'; the contract was not checked.`,
     );
   }
-  const result = runSuite(SOURCE_PROTOCOL_TESTS);
-  const verdict = classifyContractSuiteRun(result);
-  // Keep the raw report in the log whatever the verdict: the triage runbook
-  // needs it for both a confirmed mismatch and a broken runner.
-  if (verdict.verdict !== 'match') process.stdout.write(result.stdout ?? '');
-  return verdict;
+  // Each file is run and judged on its OWN exemptions, so a rule declared for one
+  // file can never exempt a failure reported by another (see the aggregator).
+  const perFile = [];
+  for (const file of SOURCE_PROTOCOL_TESTS) {
+    const rules = Object.hasOwn(REPOSITORY_ONLY_ASSERTIONS, file)
+      ? REPOSITORY_ONLY_ASSERTIONS[file]
+      : [];
+    const result = runSuite([file]);
+    const verdict = classifyContractSuiteRun(result, rules);
+    // Keep the raw report in the log whatever the verdict: the triage runbook
+    // needs it for both a confirmed mismatch and a broken runner.
+    if (verdict.verdict !== 'match') process.stdout.write(result.stdout ?? '');
+    perFile.push({ file, verdict });
+  }
+  return aggregateContractVerdicts(perFile);
 }
 
 function checkRepositorySuite() {
