@@ -339,12 +339,12 @@ test('a human issue quoting the complete legacy report in full is left alone', a
     ],
   });
   assert.equal(updatesOn(calls).length, 0, 'a human issue is never rewritten');
-  const posted = onlyCall(calls, 'createComment', 'only the recurrence comment');
-  assert.doesNotMatch(
-    String(posted.body),
-    /correction/i,
+  assert.equal(
+    commentsOn(calls).length,
+    0,
     'quoting the old report does not make it a report this workflow filed',
   );
+  onlyCall(calls, 'create', 'the episode is reported on a new issue of its own');
 });
 
 test('a bot issue quoting only the withdrawn verdict is not treated as a generated report', async () => {
@@ -367,8 +367,8 @@ test('a bot issue quoting only the withdrawn verdict is not treated as a generat
     ],
   });
   assert.equal(updatesOn(calls).length, 0);
-  const posted = onlyCall(calls, 'createComment', 'only the recurrence comment');
-  assert.doesNotMatch(String(posted.body), /correction/i);
+  assert.equal(commentsOn(calls).length, 0, 'a digest is not a report of this episode');
+  onlyCall(calls, 'create', 'the episode is reported on a new issue of its own');
 });
 
 test('text appended to the generated run-URL line counts as human content', async () => {
@@ -465,21 +465,97 @@ test('the workflow-failure report is never treated as a stale mismatch classific
   assert.doesNotMatch(String(posted.body), /correction/i);
 });
 
+/** A human-filed issue that happens to carry the report label. */
+const UNRELATED_ISSUE: Issue = {
+  number: 9,
+  title: 'Discussion: should drift reports be auto-closed?',
+  body: 'We should revisit the old "This is a service defect, not a client bug." wording.',
+  user: { type: 'User' },
+};
+
 test('an unrelated issue carrying the drift label is not rewritten', async () => {
   // A human-filed issue that merely discusses the old wording must not be
   // mistaken for a generated one.
+  const calls = await runReport({ mismatch: true, existing: [UNRELATED_ISSUE] });
+  assert.equal(updatesOn(calls).length, 0, 'a human issue is never rewritten');
+});
+
+// ---------------------------------------------------------------------------
+// Report SELECTION: carrying the label is not evidence of being a report.
+// Deduplication must key off a report this workflow actually generated, or the
+// episode goes unreported behind an unrelated issue that merely shares a label.
+// ---------------------------------------------------------------------------
+
+test('an unrelated labeled issue is not commented on and does not suppress the report', async () => {
+  const calls = await runReport({ mismatch: true, existing: [UNRELATED_ISSUE] });
+
+  assert.equal(
+    commentsOn(calls).length,
+    0,
+    'a human issue gets no recurrence comment — it is not a report of this episode',
+  );
+  const created = onlyCall(calls, 'create', 'the actual triage report is still opened');
+  assert.deepEqual(created.labels, ['contract-drift']);
+  assert.match(String(created.body), /triage/i);
+});
+
+test('an unrelated labeled issue listed first does not hide a real generated report', async () => {
+  // Selection must scan for provenance rather than take the first result, whose
+  // order the issues API does not guarantee to put a generated report at.
+  const fresh = await runReport({ mismatch: true });
+  const body = String(onlyCall(fresh, 'create', 'a fresh issue is opened').body);
+
+  const calls = await runReport({
+    mismatch: true,
+    existing: [UNRELATED_ISSUE, { number: 11, title: 'contract-drift: …', body, user: { type: 'Bot' } }],
+  });
+
+  assert.equal(calls.filter((call) => call.op === 'create').length, 0, 'the open report is reused');
+  const posted = onlyCall(calls, 'createComment', 'exactly one recurrence comment');
+  assert.equal(posted.issue_number, 11, 'the recurrence lands on the generated report');
+  assert.match(String(posted.body), /again/i);
+});
+
+test('an unrelated labeled issue listed first does not hide a legacy generated report', async () => {
+  const calls = await runReport({
+    mismatch: true,
+    existing: [UNRELATED_ISSUE, { number: 42, title: LEGACY_TITLE, body: LEGACY_BODY, user: { type: 'Bot' } }],
+  });
+
+  const updated = onlyCall(calls, 'update', 'the legacy report behind the unrelated issue is migrated');
+  assert.equal(updated.issue_number, 42);
+  assert.equal(calls.filter((call) => call.op === 'create').length, 0);
+  assert.ok(commentsOn(calls).every((call) => call.issue_number === 42));
+});
+
+test('a labeled issue opened by a bot but not shaped like a report is not treated as one', async () => {
+  // Bot authorship alone is not provenance: other automation files issues too.
   const calls = await runReport({
     mismatch: true,
     existing: [
       {
-        number: 9,
-        title: 'Discussion: should drift reports be auto-closed?',
-        body: 'We should revisit the old "This is a service defect, not a client bug." wording.',
-        user: { type: 'User' },
+        number: 12,
+        title: 'dependabot: bump actions/checkout',
+        body: 'Bumps `actions/checkout`. Mislabeled `contract-drift` by a triage rule.',
+        user: { type: 'Bot' },
       },
     ],
   });
-  assert.equal(updatesOn(calls).length, 0, 'a human issue is never rewritten');
+
+  assert.equal(commentsOn(calls).length, 0, 'unrelated automation gets no recurrence comment');
+  assert.equal(updatesOn(calls).length, 0);
+  onlyCall(calls, 'create', 'the actual triage report is still opened');
+});
+
+test('an unrelated labeled issue does not suppress the workflow-failure report', async () => {
+  const calls = await runReport({
+    mismatch: false,
+    existing: [{ ...UNRELATED_ISSUE, title: 'Why did the drift workflow fail last week?' }],
+  });
+
+  assert.equal(commentsOn(calls).length, 0);
+  const created = onlyCall(calls, 'create', 'the workflow-failure report is still opened');
+  assert.deepEqual(created.labels, ['contract-drift-workflow-failure']);
 });
 
 // ---------------------------------------------------------------------------

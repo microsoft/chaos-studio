@@ -224,6 +224,31 @@ jobs:
               '',
               'Triage steps are in `docs/runbooks/contract-drift.md`.',
             ].join('\n');
+
+            // The STRUCTURE each report has been emitted with, used to recognize an
+            // open issue this workflow generated before it began stamping the marker.
+            // Narrow on purpose: a report is identified by its opening finding, its
+            // machine-written run link and its closing pointer together — never by the
+            // withdrawn verdict alone, which a human issue may legitimately quote or
+            // discuss. Authorship is checked separately; together they mean a human
+            // issue cannot be taken for a report even if it quotes one in full.
+            // Anchored at the start of a line so quoted or indented text
+            // ("> Failing run: …") does not count, but not at the end: a human may
+            // annotate a generated line, and doing so must not strip the issue of its
+            // provenance.
+            const LEGACY_MISMATCH_EVIDENCE = [
+              /^The scheduled `contract-drift` workflow CONFIRMED a source-contract mismatch:/m,
+              /^Failing run: \S+/m,
+              /^\*\*This is a service defect, not a client bug\.\*\* Per the release policy/m,
+              /^Triage steps are in `docs\/runbooks\/contract-drift\.md`\./m,
+            ];
+            // The workflow-failure wording is unchanged between generations, so this
+            // recognizes the current report as well as any predating the marker.
+            const LEGACY_FAILURE_EVIDENCE = [
+              /^The scheduled `contract-drift` workflow failed, but it did NOT confirm a source-contract mismatch\./m,
+              /^Failing run: \S+/m,
+            ];
+
             // Only the run URL differs between two issues written by that generation.
             // The line must be EXACTLY the generated one — text appended to it is human
             // content, so it is left in place and the body no longer compares equal.
@@ -267,6 +292,7 @@ jobs:
                     CLASSIFICATION_MARKER,
                   ].join('\n'),
                   recurrence: `The scheduled drift check found the contract mismatch again: ${runUrl}`,
+                  legacyEvidence: LEGACY_MISMATCH_EVIDENCE,
                   // How to deal with an open issue written by an earlier generation of
                   // this workflow, whose body declared the mismatch a confirmed service
                   // defect. Only this report has one: the workflow-failure wording is
@@ -274,24 +300,6 @@ jobs:
                   correction: {
                     legacyTitle: LEGACY_MISMATCH_TITLE,
                     legacyBody: LEGACY_MISMATCH_BODY,
-                    // Narrow on purpose. A generated report is identified by the
-                    // STRUCTURE the previous generation emitted — its opening
-                    // finding, its machine-written run link, the withdrawn verdict
-                    // and its runbook pointer — not by the withdrawn verdict alone,
-                    // which a human issue may legitimately quote or discuss.
-                    // Authorship is checked separately; together they mean a human
-                    // issue cannot be reclassified even if it quotes the old report
-                    // in full.
-                    // Anchored at the start of a line so quoted or indented text
-                    // ("> Failing run: …") does not count, but not at the end:
-                    // a human may annotate a generated line, and doing so must not
-                    // strip the issue of its provenance.
-                    legacyEvidence: [
-                      /^The scheduled `contract-drift` workflow CONFIRMED a source-contract mismatch:/m,
-                      /^Failing run: \S+/m,
-                      /^\*\*This is a service defect, not a client bug\.\*\* Per the release policy/m,
-                      /^Triage steps are in `docs\/runbooks\/contract-drift\.md`\./m,
-                    ],
                     notice: [
                       '**Correction — this report was filed with a classification that has since been withdrawn.**',
                       '',
@@ -340,6 +348,7 @@ jobs:
                     CLASSIFICATION_MARKER,
                   ].join('\n'),
                   recurrence: `The scheduled drift check failed again without confirming contract drift: ${runUrl}`,
+                  legacyEvidence: LEGACY_FAILURE_EVIDENCE,
                 };
 
             const { owner, repo } = context.repo;
@@ -351,26 +360,37 @@ jobs:
               per_page: 100,
             });
 
-            // One durable issue per episode: comment on the open one rather than
-            // opening a new issue on every scheduled run.
-            if (existing.data.length > 0) {
-              const issue = existing.data[0];
+            // One durable issue per episode: comment on the open REPORT rather than
+            // opening a new issue on every scheduled run. Carrying the label is not
+            // evidence of being one — labels are applied by humans and triage rules
+            // too — so a report is selected by positive provenance: this workflow
+            // authored it, and it carries either the current marker or the whole
+            // structure of a recognized earlier generation. Anything else keeps its
+            // label and is left entirely alone: no recurrence comment (it is not a
+            // report of this episode) and, crucially, no suppression of the report
+            // this run owes. Scanned rather than taken from the head of the list,
+            // because the issues API does not guarantee a report is listed first.
+            const isGeneratedReport = (candidate) => {
+              const authoredByWorkflow = Boolean(candidate.user) && candidate.user.type === 'Bot';
+              if (!authoredByWorkflow) return false;
+              const text = String(candidate.body == null ? '' : candidate.body);
+              if (text.includes(CLASSIFICATION_MARKER)) return true;
+              return report.legacyEvidence.every((pattern) => pattern.test(text));
+            };
+
+            const issue = existing.data.find(isGeneratedReport);
+            if (issue) {
               const correction = report.correction;
 
               // An issue is STALE when it still carries a classification this workflow
-              // no longer publishes. That demands positive evidence it was GENERATED by
-              // the previous generation, not merely that it contains the withdrawn
-              // wording: this workflow authored it, it carries no current marker, and
-              // the whole structure of the old report is present. Quoting the old
-              // verdict — even the entire old body — in a human-filed issue therefore
-              // never attracts a correction, because a human is not this workflow.
-              const authoredByWorkflow = Boolean(issue.user) && issue.user.type === 'Bot';
+              // no longer publishes. Selection has already established it was GENERATED
+              // by a recognized generation — this workflow authored it and the whole
+              // structure of the old report is present — so what remains to check is
+              // that it predates the current classification. Quoting the old verdict —
+              // even the entire old body — in a human-filed issue therefore never
+              // attracts a correction, because such an issue is never selected at all.
               const legacyBodyText = String(issue.body == null ? '' : issue.body);
-              const stale =
-                Boolean(correction) &&
-                authoredByWorkflow &&
-                !legacyBodyText.includes(CLASSIFICATION_MARKER) &&
-                correction.legacyEvidence.every((pattern) => pattern.test(legacyBodyText));
+              const stale = Boolean(correction) && !legacyBodyText.includes(CLASSIFICATION_MARKER);
 
               if (stale) {
                 // Pristine = still exactly what the previous generation wrote. Nothing
