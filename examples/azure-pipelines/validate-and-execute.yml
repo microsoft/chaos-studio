@@ -14,16 +14,23 @@ trigger: none
 pool:
   vmImage: ubuntu-latest
 
-steps:
-  - task: AzureChaosStudioScenario@1
+jobs:
+  - job: RunScenario
     displayName: Validate and execute the scenario
-    inputs:
-      azureSubscription: chaos-studio-wif   # ARM service connection (workload identity)
-      subscriptionId: $(chaosSubscriptionId)
-      resourceGroup: rg-chaos
-      workspaceName: ws-demo
-      scenarioName: scn-demo
-      scenarioConfigurationName: cfg-demo
-      mode: validate-and-execute
-      # Waits for a terminal run state and cancels the run on timeout/cancellation.
-      waitForCompletion: true
+    # Reserve the default 2700s completionTimeoutSeconds PLUS the fixed 300s
+    # cleanup budget the task uses on timeout/cancellation, plus overhead — a
+    # tighter job timeout can kill the job mid-cleanup and leave the run going.
+    timeoutInMinutes: 55
+    steps:
+      - task: AzureChaosStudioScenario@1
+        displayName: Validate and execute the scenario
+        inputs:
+          azureSubscription: chaos-studio-wif   # ARM service connection (workload identity)
+          subscriptionId: $(chaosSubscriptionId)
+          resourceGroup: rg-chaos
+          workspaceName: ws-demo
+          scenarioName: scn-demo
+          scenarioConfigurationName: cfg-demo
+          mode: validate-and-execute
+          # Waits for a terminal run state and cancels the run on timeout/cancellation.
+          waitForCompletion: true

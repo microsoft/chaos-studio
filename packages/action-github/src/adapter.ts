@@ -22,6 +22,7 @@ import type {
 } from '../../core/src/contract.ts';
 import { run as coreRun } from '../../core/src/orchestrator.ts';
 import { CoreError } from '../../core/src/ids.ts';
+import { redact } from '../../core/src/redaction.ts';
 
 /**
  * The minimal GitHub-platform surface the adapter needs. A runtime-erased type
@@ -205,13 +206,15 @@ export async function runGithubAction(deps: RunGithubActionDeps): Promise<Orches
     result = await orchestrate(io);
   } catch (err) {
     // The core is total (returns a result for every failure); a throw here is
-    // unexpected. Fail the step rather than let the Action crash.
-    const message = err instanceof Error ? err.message : String(err);
+    // unexpected. Fail the step rather than let the Action crash. The message
+    // is redacted before it becomes a scalar step output/log (FR12, VF16): an
+    // unexpected adapter fault could carry a raw credential/config value.
+    const message = redact(err instanceof Error ? err.message : String(err));
     deps.host.setFailed(message || DEFAULT_FAILURE_MESSAGE);
     return { success: false, outputs: {}, failureReason: message || DEFAULT_FAILURE_MESSAGE };
   }
   if (!result.success) {
-    deps.host.setFailed(result.failureReason ?? DEFAULT_FAILURE_MESSAGE);
+    deps.host.setFailed(redact(result.failureReason ?? DEFAULT_FAILURE_MESSAGE));
   }
   return result;
 }

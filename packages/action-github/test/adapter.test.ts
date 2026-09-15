@@ -184,6 +184,25 @@ test('runGithubAction: an UNEXPECTED throw from the orchestrator fails the step 
   assert.deepEqual(host.failures, ['kaboom']);
 });
 
+// R3: an unexpected adapter-fault message that happens to carry secret-shaped
+// text (e.g. a leaked Authorization header from a misbehaving dependency) must
+// be redacted before it becomes the step's scalar failure output/log.
+test('runGithubAction: an UNEXPECTED throw carrying secret-shaped text is redacted before it becomes the step failure', async () => {
+  const host = new FakeActionsHost();
+  const result = await runGithubAction({
+    host,
+    cred: new FakeTokenCredentialProvider(),
+    signal: new AbortController().signal,
+    orchestrate: async () => {
+      throw new Error('unexpected failure Authorization: Bearer abc123secrettoken 500');
+    },
+  });
+  assert.equal(result.success, false);
+  assert.ok(!host.failures[0]!.includes('secrettoken'));
+  assert.ok(host.failures[0]!.includes('<redacted>'));
+  assert.ok(!result.failureReason!.includes('secrettoken'));
+});
+
 test('runGithubAction: the injected signal and default systemClock are wired into the RunContext', async () => {
   const host = new FakeActionsHost();
   const controller = new AbortController();

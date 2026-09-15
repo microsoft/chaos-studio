@@ -134,6 +134,10 @@ export type RunState = (typeof RUN_STATES)[number];
 export const RUN_TERMINAL_SUCCESS = ['Succeeded'] as const satisfies readonly RunState[];
 /** `Failed` and `Canceled` are terminal failures for execution-mode runs (VF7). */
 export const RUN_TERMINAL_FAILURE = ['Failed', 'Canceled'] as const satisfies readonly RunState[];
+/** Every non-terminal run state (VF7) — a run genuinely "in flight" is in one of these. */
+export const RUN_NONTERMINAL_STATES = RUN_STATES.filter(
+  (s) => !(RUN_TERMINAL_SUCCESS as readonly string[]).includes(s) && !(RUN_TERMINAL_FAILURE as readonly string[]).includes(s),
+) as readonly RunState[];
 
 // ---------------------------------------------------------------------------
 // Wire-shape corrections (DX2). The current generated models use

@@ -28,6 +28,7 @@ import type {
 import { INPUT_NAMES } from '../../core/src/contract.ts';
 import { run as coreRun } from '../../core/src/orchestrator.ts';
 import { CoreError } from '../../core/src/ids.ts';
+import { redact } from '../../core/src/redaction.ts';
 
 /**
  * The minimal Azure Pipelines surface the adapter needs. A runtime-erased type
@@ -250,15 +251,17 @@ export async function runAzurePipelinesTask(deps: RunTaskDeps): Promise<Orchestr
     result = await orchestrate(io);
   } catch (err) {
     // The core is total (returns a result for every failure); a throw here is
-    // unexpected. Fail the task rather than let it crash.
-    const message = err instanceof Error ? err.message : String(err);
+    // unexpected. Fail the task rather than let it crash. The message is
+    // redacted before it becomes a scalar task result/log (FR12, VF16): an
+    // unexpected adapter fault could carry a raw credential/config value.
+    const message = redact(err instanceof Error ? err.message : String(err));
     deps.host.setResult(false, message || DEFAULT_FAILURE_MESSAGE);
     return { success: false, outputs: {}, failureReason: message || DEFAULT_FAILURE_MESSAGE };
   }
   if (result.success) {
     deps.host.setResult(true, SUCCESS_MESSAGE);
   } else {
-    deps.host.setResult(false, result.failureReason ?? DEFAULT_FAILURE_MESSAGE);
+    deps.host.setResult(false, redact(result.failureReason ?? DEFAULT_FAILURE_MESSAGE));
   }
   return result;
 }

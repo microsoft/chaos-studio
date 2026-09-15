@@ -21,6 +21,10 @@ permissions:
 jobs:
   chaos:
     runs-on: ubuntu-latest
+    # Reserve the default 2700s completion-timeout-seconds PLUS the fixed 300s
+    # cleanup budget the step uses on timeout/cancellation, plus overhead — a
+    # tighter job timeout can kill the job mid-cleanup and leave the run going.
+    timeout-minutes: 55
     steps:
       # WIF login — client-id/tenant-id/subscription-id are IDENTIFIERS, not secrets.
       - name: Azure login (workload identity)

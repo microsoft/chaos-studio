@@ -40,34 +40,41 @@ printf '%s' "<workspace-resource-id>" | sha256sum
 ## RV1 — target-region protocol smoke
 
 Run `validate`, then `execute` (the **success run**), poll it to `Succeeded`, then
-separately `execute` a **second, independent run** (the **cancellation run**) and
-`cancel` that one while it is in flight — against the workspace from **each**
+separately `execute` a **second, independent run** (the **cancellation run**),
+observe it **in flight** (a `200` GET reporting a non-terminal `properties.status`,
+e.g. `Running`), and only THEN `cancel` it — against the workspace from **each**
 private build, with request logging on. A terminal-run cancellation is a no-op
-(RV3), so the success run and the cancellation run MUST be two different runs;
-recording one run's `Succeeded` observation and then its own (no-op) cancel
-attempt as `Canceled` is not real evidence and is rejected.
+(RV3), so the cancellation run must never be driven to (or recorded at) any
+terminal state before the cancel: recording one run's `Succeeded` observation and
+then its own (no-op) cancel attempt as `Canceled` is not real evidence and is
+rejected, and so is skipping the in-flight observation entirely.
 
 Record, for each long-running call: the acceptance status, the trailing
-`Location` segments, the advertised `Retry-After`, the terminal polled status,
-and the terminal `properties.status`. Also record the wire shape actually
-observed (status/start/end field names and both error channels) and the
-`api-version` the requests carried.
+`Location` segments, the advertised `Retry-After`, and — for calls actually driven
+to a terminal outcome (`validate`, the success run, and the cancel) — the
+terminal polled status and the terminal `properties.status`. Also record the wire
+shape actually observed (status/start/end field names and both error channels)
+and the `api-version` the requests carried.
 
 The receipt carries **one transcript per adapter** under `observations.transcripts`,
 each tagged with its `platform` (`github-action`, `azure-pipelines-task`). Each
 transcript contains a `successRun` (the run driven to `Succeeded`) and a
-`cancellationRun` (a separate run whose own `execute` is driven to `Canceled` via
-`cancel`). Both platforms are required, and across all four runs recorded (two
-adapters × success + cancellation) every run ID must be distinct — each private
-build has to drive its own runs, and the success/cancellation pair within one
-adapter must never collapse to the same run. Re-recording a single run under two
-platform labels, or reusing the success run as the cancellation run, is rejected.
+`cancellationRun` — a separate run whose `execute` acceptance is recorded WITHOUT
+any terminal claim, an `inFlight` observation proving it was caught genuinely
+non-terminal, and a `cancel` driven to `Canceled`. Both platforms are required,
+and across all four runs recorded (two adapters × success + cancellation) every
+run ID must be distinct — each private build has to drive its own runs, and the
+success/cancellation pair within one adapter must never collapse to the same run.
+Re-recording a single run under two platform labels, or reusing the success run
+as the cancellation run, is rejected.
 
 Passes when *every* transcript's observed protocol equals the pinned contract: a `202`
 acceptance with the expected `Location` suffix and `Retry-After`, a terminal `200`, a
-terminal state in the contract's success set, GUID run IDs that each execute `Location`
-and `runs/{runId}` suffix address, a cancel `Location` addressing the cancellation run's
-own run ID, and the exact field/error-channel names the fixtures encode.
+terminal state in the contract's success set, an in-flight `200` GET reporting a
+non-terminal state for the cancellation run, GUID run IDs that each execute
+`Location` and `runs/{runId}` suffix address, a cancel `Location` addressing the
+cancellation run's own run ID, and the exact field/error-channel names the
+fixtures encode.
 
 ## RV2 — workload identity and least privilege
 

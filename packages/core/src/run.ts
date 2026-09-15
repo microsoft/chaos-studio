@@ -13,11 +13,12 @@ import { CoreError, parseRunLocation, type ScenarioCoordinates } from './ids.ts'
 import {
   ArmHttpClient,
   Deadline,
+  raiseForAcceptance,
   raiseForActionStatus,
   readResourceStatus,
   type ResourceStatus,
 } from './http.ts';
-import { redact } from './redaction.ts';
+import { redact, redactedJson } from './redaction.ts';
 
 /** The business error channel for run resources (DX2). */
 const RUN_BUSINESS_CHANNEL = 'executionErrors';
@@ -57,7 +58,7 @@ export async function acceptExecute(
   deadline?: Deadline,
 ): Promise<ExecuteAcceptance> {
   const res = await client.post(url, undefined, deadline);
-  raiseForActionStatus(res, 'execute');
+  raiseForAcceptance(res, 'execute');
   let parsed: { runResourceId: string; runId: string };
   try {
     parsed = parseRunLocation(res.location, coords);
@@ -134,8 +135,8 @@ export async function pollRun(
   if (outcome.disposition === 'failure') {
     log.warning(
       redact(
-        `run terminal ${outcome.status}; errors=${JSON.stringify(outcome.errors)} ` +
-          `executionErrors=${JSON.stringify(outcome.businessErrors)}`,
+        `run terminal ${outcome.status}; errors=${redactedJson(outcome.errors)} ` +
+          `executionErrors=${redactedJson(outcome.businessErrors)}`,
       ),
     );
   }

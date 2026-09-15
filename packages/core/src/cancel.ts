@@ -14,7 +14,7 @@
 
 import type { ILogger } from './contract.ts';
 import { cancelActionUrl, resolveCancelPollUrl } from './ids.ts';
-import { ArmHttpClient, Deadline, raiseForActionStatus } from './http.ts';
+import { ArmHttpClient, Deadline, raiseForAcceptance } from './http.ts';
 import { pollRun, type RunOutcome } from './run.ts';
 import { redact } from './redaction.ts';
 
@@ -31,7 +31,7 @@ export async function bestEffortCancel(
 ): Promise<RunOutcome | undefined> {
   try {
     const accept = await cleanupClient.post(cancelActionUrl(runResourceId), undefined, cleanupDeadline);
-    raiseForActionStatus(accept, 'cancel');
+    raiseForAcceptance(accept, 'cancel');
     // The cancel 202 Location MUST be the SAME run we cancelled — a foreign or
     // wrong-shaped/unpinned Location fails closed rather than reporting another
     // run's state (D14). Absent ⇒ the canonical known-run URL.

@@ -50,6 +50,45 @@ az rest --method post \
 
 Prefer waiting unless you deliberately want fire-and-forget.
 
+## Job timeout budget: reserve time for cleanup beyond `completion-timeout-seconds`
+
+`completion-timeout-seconds` (default `2700`) bounds only how long the
+integration **waits for the run to complete**. On a completion timeout, or when
+the pipeline job itself is cancelled, best-effort cleanup runs `cancel` and polls
+for the run to reach `Canceled` — and that cleanup has its **own fixed budget of
+300 seconds**, separate from and **in addition to** `completion-timeout-seconds`.
+The job/step timeout you configure on the platform must therefore be at least
+`completion-timeout-seconds + 300` seconds (plus normal job overhead: checkout,
+setup, etc.) — otherwise the platform kills the job mid-cleanup, before the run
+is actually cancelled, and the chaos run is left going exactly as in the no-wait
+case above.
+
+Platforms can only cancel a running job/step, not extend its own timeout, so
+this reservation must be set explicitly:
+
+- **GitHub Actions:** set the JOB's `timeout-minutes` to comfortably exceed
+  `completion-timeout-seconds + 300` (converted to minutes), e.g. for the
+  default 2700s completion timeout, a job timeout of at least 55 minutes:
+
+  ```yaml
+  jobs:
+    run-scenario:
+      timeout-minutes: 55 # completion-timeout-seconds (2700s=45m) + 300s cleanup + overhead
+  ```
+
+- **Azure Pipelines:** set the JOB's `timeoutInMinutes` the same way:
+
+  ```yaml
+  jobs:
+    - job: RunScenario
+      timeoutInMinutes: 55 # completionTimeoutSeconds (2700s=45m) + 300s cleanup + overhead
+  ```
+
+If you lower `completion-timeout-seconds`/`completionTimeoutSeconds`, lower the
+job timeout proportionally but always keep the 300-second cleanup margin. A job
+timeout set at or below `completion-timeout-seconds` will routinely kill the job
+before cleanup can run.
+
 ## Least privilege — the runner role
 
 The integration invokes exactly **five** `Microsoft.Chaos` control-plane
@@ -133,8 +172,23 @@ The `subscription-id`, `resource-group`, `workspace-name`, `scenario-name`, and
 
 ## Concurrency guidance
 
-A scenario configuration has one active run at a time. To avoid overlapping runs
-of the same configuration:
+A scenario configuration has one active run at a time, and it also has exactly
+one `validations/latest` resource. ARM does not version or lock that resource:
+each `validate` call **overwrites** `validations/latest`, including its
+`executionPlanJson`, with no eTag/If-Match/idempotency key to detect the
+overwrite. In `validate-and-execute` mode this is safe because validate and
+execute run back-to-back in the same step. In `execute-only` mode (running a
+plan a prior stage validated) this is a real hazard: if **any** other run —
+another pipeline, a manual `az rest` call, a retry — calls `validate` on the
+same configuration between your validation stage and your execute stage, it
+silently replaces `validations/latest` and the `executionPlanJson` your
+`execute-only` step will run, with no error surfaced to either stage. Concurrency
+guidance below therefore isn't only about avoiding two overlapping *runs* of the
+same configuration; it's about avoiding an intervening *validate* call that
+supersedes the plan an already-completed validation stage is relying on.
+
+To avoid overlapping runs of the same configuration, and to prevent a stray
+`validate` call from replacing the plan between validate and execute stages:
 
 - **GitHub Actions:** put the job in a
   [`concurrency`](https://docs.github.com/actions/using-jobs/using-concurrency)

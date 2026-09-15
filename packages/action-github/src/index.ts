@@ -11,6 +11,7 @@ import { pathToFileURL } from 'node:url';
 import { runGithubAction } from './adapter.ts';
 import { githubActionsHost } from './host.ts';
 import { azureCliCredentialProvider } from './auth.ts';
+import { redact } from '../../core/src/redaction.ts';
 
 /**
  * Bridge GitHub job cancellation to an {@link AbortSignal}. GitHub Actions
@@ -50,7 +51,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   // runGithubAction maps failures to core.setFailed (nonzero exit); a rejection
   // here is an unexpected adapter fault — fail the step rather than crash silently.
   void main().catch((err: unknown) => {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = redact(err instanceof Error ? err.message : String(err));
     // Lazy import avoids loading @actions/core in the pure test paths.
     void import('@actions/core').then((core) => core.setFailed(message));
   });

@@ -41,7 +41,7 @@
               "terminalStatus": 0,
               "terminalState": "<observed properties.status>"
             },
-            "$comment_runs": "successRun and cancellationRun.execute MUST be TWO SEPARATE runs: cancelling an already-terminal (Succeeded) run is a no-op (RV3), so the same run can never be observed both Succeeded and, independently, Canceled.",
+            "$comment_runs": "successRun and cancellationRun MUST be TWO SEPARATE runs: a terminal-run cancel is a no-op (RV3), so the cancellation run must be caught genuinely IN FLIGHT (a non-terminal GET) and never driven to any terminal state before the cancel.",
             "successRun": {
               "acceptedStatus": 0,
               "locationSuffix": "<trailing Location segments>",
@@ -56,10 +56,12 @@
                 "acceptedStatus": 0,
                 "locationSuffix": "<trailing Location segments>",
                 "retryAfterSeconds": 0,
-                "terminalStatus": 0,
-                "terminalState": "<observed properties.status before cancel>",
                 "runId": "<a DIFFERENT run GUID from successRun>",
                 "runResourceIdSuffix": "<runs/{runId}>"
+              },
+              "inFlight": {
+                "status": 0,
+                "state": "<observed properties.status while the run was still non-terminal, e.g. Running>"
               },
               "cancel": {
                 "acceptedStatus": 0,
@@ -100,10 +102,12 @@
                 "acceptedStatus": 0,
                 "locationSuffix": "<trailing Location segments>",
                 "retryAfterSeconds": 0,
-                "terminalStatus": 0,
-                "terminalState": "<observed properties.status before cancel>",
                 "runId": "<a DIFFERENT run GUID from successRun>",
                 "runResourceIdSuffix": "<runs/{runId}>"
+              },
+              "inFlight": {
+                "status": 0,
+                "state": "<observed properties.status while the run was still non-terminal, e.g. Running>"
               },
               "cancel": {
                 "acceptedStatus": 0,

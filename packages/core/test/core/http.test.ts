@@ -11,6 +11,7 @@ import {
   bodyErrorMessage,
   headerValue,
   parseRetryAfter,
+  raiseForAcceptance,
   raiseForActionStatus,
   type ParsedResponse,
 } from '../../src/http.ts';
@@ -417,6 +418,68 @@ test('raiseForActionStatus preserves armErrorCode AND armErrorMessage (incl. nes
       e.correlationId === 'corr-1' &&
       e.requestId === 'req-1',
   );
+});
+
+// R4: initiating-action acceptance (validate/execute/cancel) must be EXACTLY
+// 202 — an off-contract 200/201 (even one carrying an otherwise-valid
+// Location) is not a legitimate acceptance under the pinned LRO protocol.
+function acceptanceResponse(status: number): ParsedResponse {
+  return {
+    status,
+    headers: {},
+    json: undefined,
+    location: '/subscriptions/s/resourceGroups/rg/providers/Microsoft.Chaos/.../runs/22222222-2222-2222-2222-222222222222',
+    retryAfterSeconds: 10,
+    correlationId: 'corr-2',
+    requestId: 'req-2',
+    errorCode: undefined,
+    errorMessage: undefined,
+  };
+}
+
+test('raiseForAcceptance accepts EXACTLY 202 and rejects every other status, including an off-contract 200/201 with a valid Location', () => {
+  assert.doesNotThrow(() => raiseForAcceptance(acceptanceResponse(202), 'execute'));
+
+  for (const status of [200, 201, 204]) {
+    assert.throws(
+      () => raiseForAcceptance(acceptanceResponse(status), 'execute'),
+      (e: unknown) => e instanceof CoreError && e.category === 'transport' && e.message.includes('202'),
+      `status ${status} with an otherwise-valid Location must still be rejected`,
+    );
+  }
+});
+
+test('raiseForAcceptance maps 401/403 to auth and everything else (including other 2xx) to transport, preserving ARM/correlation context', () => {
+  const authRes: ParsedResponse = { ...acceptanceResponse(403), errorCode: 'Forbidden', errorMessage: 'not allowed' };
+  assert.throws(
+    () => raiseForAcceptance(authRes, 'cancel'),
+    (e: unknown) =>
+      e instanceof CoreError &&
+      e.category === 'auth' &&
+      e.armErrorCode === 'Forbidden' &&
+      e.armErrorMessage === 'not allowed' &&
+      e.correlationId === 'corr-2' &&
+      e.requestId === 'req-2',
+  );
+
+  const transportRes = acceptanceResponse(200);
+  assert.throws(
+    () => raiseForAcceptance(transportRes, 'validate'),
+    (e: unknown) => e instanceof CoreError && e.category === 'transport',
+  );
+});
+
+test('raiseForAcceptance never re-POSTs: it only classifies the single response already received', () => {
+  // The function takes no transport/retry dependency at all — a call is a pure
+  // classification of the given response (D14's no-POST-retry policy is upheld
+  // structurally, not just by convention).
+  let calls = 0;
+  const classify = (): void => {
+    calls++;
+    raiseForAcceptance(acceptanceResponse(200), 'execute');
+  };
+  assert.throws(classify);
+  assert.equal(calls, 1);
 });
 
 test('poll propagates the deadline into GET retries so a transient overrun times out (completion + cleanup) (FR8/FR10)', async () => {

@@ -14,11 +14,11 @@ import { CoreError, parseValidationLocation, type ScenarioCoordinates } from './
 import {
   ArmHttpClient,
   Deadline,
-  raiseForActionStatus,
+  raiseForAcceptance,
   readResourceStatus,
   type ResourceStatus,
 } from './http.ts';
-import { redact } from './redaction.ts';
+import { redact, redactedJson } from './redaction.ts';
 
 /** The business error channel for validation resources (DX2). */
 const VALIDATION_BUSINESS_CHANNEL = 'validationErrors';
@@ -58,7 +58,7 @@ export async function acceptValidate(
   // Response-time expiry: a slow validate acceptance that crossed the budget is a
   // timeout regardless of its body (there is no run identity to preserve here).
   client.assertWithinDeadline(deadline);
-  raiseForActionStatus(res, 'validate');
+  raiseForAcceptance(res, 'validate');
   let location: string;
   try {
     location = parseValidationLocation(res.location, coords);
@@ -124,8 +124,8 @@ export async function pollValidation(
   if (outcome.disposition === 'failure') {
     log.warning(
       redact(
-        `validation terminal ${outcome.status}; errors=${JSON.stringify(outcome.errors)} ` +
-          `validationErrors=${JSON.stringify(outcome.businessErrors)}`,
+        `validation terminal ${outcome.status}; errors=${redactedJson(outcome.errors)} ` +
+          `validationErrors=${redactedJson(outcome.businessErrors)}`,
       ),
     );
   }

@@ -93,8 +93,10 @@ function transcript(
         runId: cancelRunId,
         runResourceIdSuffix: `runs/${cancelRunId}`,
         retryAfterSeconds: 10,
-        terminalStatus: 200,
-        terminalState: 'Succeeded',
+      },
+      inFlight: {
+        status: 200,
+        state: 'Running',
       },
       cancel: {
         acceptedStatus: 202,
@@ -309,6 +311,45 @@ test('RV1 fails when a terminal state is outside the source-proven terminal sets
   const badCancel = rv1();
   badCancel.transcripts[0]!.cancellationRun.cancel.terminalState = 'Succeeded';
   assert.equal(evaluateRv1(badCancel).pass, false);
+});
+
+// R1: the cancellation run must be caught genuinely IN FLIGHT (a non-terminal
+// GET) before it is canceled — never driven to a terminal state first, since
+// a terminal-run cancellation is a no-op (RV3) and the same run can never be
+// observed BOTH Succeeded and, separately, Canceled.
+test('RV1 passes a realistic in-flight-to-Canceled cancellation transcript (202 accepted, Running observed, then Canceled)', () => {
+  const obs = rv1();
+  for (const t of obs.transcripts) {
+    assert.equal(t.cancellationRun.inFlight.status, 200);
+    assert.equal(t.cancellationRun.inFlight.state, 'Running');
+  }
+  assert.equal(evaluateRv1(obs).pass, true);
+});
+
+test('RV1 rejects a cancellation run whose in-flight observation reports a terminal state (impossible transcript)', () => {
+  for (const terminalState of ['Succeeded', 'Failed', 'Canceled']) {
+    const obs = rv1();
+    obs.transcripts[0]!.cancellationRun.inFlight.state = terminalState;
+    const result = evaluateRv1(obs);
+    assert.equal(result.pass, false);
+    assert.ok(result.failures.some((f) => f.includes('in-flight') && f.includes('non-terminal')));
+  }
+});
+
+test('RV1 rejects a cancellation run whose in-flight observation was not a 200 GET', () => {
+  const obs = rv1();
+  obs.transcripts[0]!.cancellationRun.inFlight.status = 202;
+  const result = evaluateRv1(obs);
+  assert.equal(result.pass, false);
+  assert.ok(result.failures.some((f) => f.includes('in-flight') && f.includes('200')));
+});
+
+test('RV1 rejects a cancellation execute acceptance that is not a bare 202/Location/Retry-After (no terminal fields to fabricate)', () => {
+  const obs = rv1();
+  obs.transcripts[0]!.cancellationRun.execute.acceptedStatus = 200;
+  const result = evaluateRv1(obs);
+  assert.equal(result.pass, false);
+  assert.ok(result.failures.some((f) => f.includes('cancellation execute')));
 });
 
 test('RV1 fails when the deployed wire shape drifts from the generated models (status/time/error channels)', () => {

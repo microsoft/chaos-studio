@@ -542,14 +542,38 @@ export function readResourceStatus(json: unknown, businessChannel: string): Reso
 }
 
 /**
- * Fail an action (validate/execute/cancel) whose acceptance is not 2xx. `401`/
+ * Fail a GET (poll / best-effort observation) whose response is not 2xx. `401`/
  * `403` map to `auth`; everything else to `transport`, preserving the ARM error
- * code and correlation context (FR12).
+ * code and correlation context (FR12). GET handling stays separate from POST
+ * acceptance ({@link raiseForAcceptance}): a GET's contract is "any 2xx is
+ * readable, terminality is decided by `properties.status`", not "exactly 202".
  */
 export function raiseForActionStatus(res: ParsedResponse, action: string): void {
   if (res.status >= 200 && res.status < 300) return;
   const category = res.status === 401 || res.status === 403 ? 'auth' : 'transport';
   throw new CoreError(category, `${action} failed with status ${res.status}`, {
+    armErrorCode: res.errorCode,
+    armErrorMessage: res.errorMessage,
+    correlationId: res.correlationId,
+    requestId: res.requestId,
+  });
+}
+
+/**
+ * Fail an initiating action POST (`validate`/`execute`/`cancel`) whose
+ * acceptance is not EXACTLY 202 (R4). The pinned LRO protocol is
+ * 202-accepted → poll to terminal; an off-contract `200`/`201` (even one
+ * carrying an otherwise-valid `Location`) is not a legitimate acceptance and
+ * must fail closed rather than proceed as if it were. `401`/`403` map to
+ * `auth`; everything else (including a wrong-but-still-2xx status) to
+ * `transport`, preserving the ARM error code and correlation context (FR12).
+ * The no-POST-retry policy (D14) is preserved: this only classifies the
+ * single response already received, it never re-POSTs.
+ */
+export function raiseForAcceptance(res: ParsedResponse, action: string): void {
+  if (res.status === 202) return;
+  const category = res.status === 401 || res.status === 403 ? 'auth' : 'transport';
+  throw new CoreError(category, `${action} failed: expected a 202 acceptance, observed status ${res.status}`, {
     armErrorCode: res.errorCode,
     armErrorMessage: res.errorMessage,
     correlationId: res.correlationId,

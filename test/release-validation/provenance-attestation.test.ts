@@ -86,3 +86,59 @@ test('attestation subject is the artifact downloaded+digest-verified in the same
     'artifact digest must be verified before generating the provenance attestation for it'
   );
 });
+
+// R2: the standard build-provenance statement records the DISPATCH RUN's own
+// source SHA as its resolved Git material — correct for workflow identity, but
+// when `main` has advanced past `$RELEASE_COMMIT` (an ancestor release, or a
+// retry of an existing tag), that statement alone no longer identifies the
+// commit that supplied the released bytes. A second, additional attestation on
+// the SAME verified artifact digest must bind the verified RELEASE_COMMIT, so
+// ancestor releases and retries are covered without changing the immutable tag
+// target or fabricating the workflow's own provenance statement.
+test('a second attestation binds the verified RELEASE_COMMIT to the same packaged artifact digest', () => {
+  const publish = publishJobSlice(readWorkflow());
+
+  assert.match(
+    publish,
+    /uses:\s*actions\/attest@/,
+    'expected a second actions/attest step binding the release commit to the artifact'
+  );
+
+  const releaseCommitAttestMatch = publish.match(
+    /uses:\s*actions\/attest@[^\n]*\n(?:.*\n)*?\s*predicate:\s*\|\n([\s\S]*?releaseCommit[\s\S]*?)(?:\n\n|\n\s*- name:)/
+  );
+  assert.ok(releaseCommitAttestMatch, 'expected the second attestation predicate to carry the releaseCommit');
+  assert.match(
+    releaseCommitAttestMatch![1]!,
+    /RELEASE_COMMIT/,
+    'the release-commit attestation predicate must reference the verified $RELEASE_COMMIT env, not an unverified input'
+  );
+
+  // Both attestations must target the exact same artifact path (same digest).
+  const attestSteps = [...publish.matchAll(/uses:\s*actions\/attest(?:-build-provenance)?@[^\n]*\n((?:\s{8,}.+\n)+)/g)];
+  assert.equal(attestSteps.length, 2, 'expected exactly two attestation steps in the publish job');
+  for (const step of attestSteps) {
+    assert.match(
+      step[1]!,
+      /subject-path:\s*pkg\/action-bundle\.tar\.gz/,
+      'every attestation must bind to the same verified artifact digest (pkg/action-bundle.tar.gz)'
+    );
+  }
+});
+
+test('the release-commit attestation appears AFTER RELEASE_COMMIT was verified as reviewed default-branch history', () => {
+  const text = readWorkflow();
+  const enforceIndex = text.search(/Enforce the release commit is reviewed default-branch history/);
+  assert.ok(enforceIndex >= 0, 'expected the release-commit ancestry enforcement step');
+  const publish = publishJobSlice(text);
+  const releaseCommitAttestIndex = publish.search(/Generate a second attestation binding the artifact digest to the verified release commit/);
+  assert.ok(releaseCommitAttestIndex >= 0, 'expected the release-commit attestation step');
+  // The enforcement step is in the validate job (earlier in the file); the attestation
+  // step is in the publish job (a distinct, later slice) — both must exist and the
+  // publish job's env must carry RELEASE_COMMIT from validate's verified output.
+  assert.match(
+    text,
+    /RELEASE_COMMIT:\s*\$\{\{\s*needs\.validate\.outputs\.releaseCommit\s*\}\}/,
+    'the publish job must source RELEASE_COMMIT from the validate job\'s verified output, not raw input'
+  );
+});

@@ -87,8 +87,10 @@ function rv1Transcript(
         runId: cancelRunId,
         runResourceIdSuffix: `runs/${cancelRunId}`,
         retryAfterSeconds: 10,
-        terminalStatus: 200,
-        terminalState: 'Succeeded',
+      },
+      inFlight: {
+        status: 200,
+        state: 'Running',
       },
       cancel: {
         acceptedStatus: 202,

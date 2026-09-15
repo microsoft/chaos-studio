@@ -28,6 +28,7 @@ import {
   GUID_PATTERN,
   PROVIDER_OPERATIONS,
   RUN_ERROR_CHANNELS,
+  RUN_NONTERMINAL_STATES,
   RUN_TERMINAL_SUCCESS,
   START_TIME_FIELD,
   STATUS_FIELD,
@@ -85,14 +86,38 @@ export interface LroObservation {
 export type ExecuteObservation = LroObservation & { runId: string; runResourceIdSuffix: string };
 
 /**
- * A cancellation requires its OWN run: terminal-run cancellation is a no-op
- * (RV3), so cancelling the same run already observed Succeeded in
- * `successRun` cannot happen for real. The operator instead executes a
- * SECOND run and cancels it while in flight.
+ * Just the acceptance half of an execute call: the 202 and the run identity it
+ * produced. Deliberately has NO terminal fields — the cancellation run must
+ * never be driven to a terminal state before it is canceled (a terminal run's
+ * cancellation is a no-op, RV3), so there is no legitimate "terminal" to record
+ * for it prior to the cancel.
+ */
+export type ExecuteAcceptance = Omit<LroObservation, 'terminalStatus' | 'terminalState'> & {
+  runId: string;
+  runResourceIdSuffix: string;
+};
+
+/** A single non-terminal GET observed on the run WHILE it was still in flight. */
+export interface InFlightObservation {
+  /** HTTP status of the poll GET (200, per the LRO contract). */
+  status: number;
+  /** The non-terminal `properties.status` observed (e.g. `Running`). */
+  state: string;
+}
+
+/**
+ * A cancellation requires its OWN run, and that run must be caught genuinely
+ * IN FLIGHT — not driven to any terminal state first: a terminal-run
+ * cancellation is a no-op (RV3), so a run already observed `Succeeded` (or any
+ * other terminal state) can never subsequently become `Canceled` for real. The
+ * legitimate transcript is: execute accepted (202) → an in-flight GET observes
+ * a non-terminal state → cancel accepted (202) → polled to `Canceled`.
  */
 export interface Rv1CancellationRun {
-  /** The execute call that started the run subsequently canceled. */
-  execute: ExecuteObservation;
+  /** The execute call that started the run subsequently canceled (acceptance only — no terminal state). */
+  execute: ExecuteAcceptance;
+  /** A GET observed while the run was still non-terminal, before the cancel was requested. */
+  inFlight: InFlightObservation;
   cancel: LroObservation;
 }
 
@@ -263,25 +288,54 @@ function checkLro(
   expectedLocationSuffix: string | undefined,
   terminalStates: readonly string[],
 ): void {
-  if (lro.acceptedStatus !== 202) {
-    failures.push(`${label}: expected a 202 acceptance, observed ${lro.acceptedStatus}`);
-  }
-  if (expectedLocationSuffix !== undefined && lro.locationSuffix !== expectedLocationSuffix) {
-    failures.push(
-      `${label}: expected Location suffix '${expectedLocationSuffix}', observed '${lro.locationSuffix}'`,
-    );
-  }
-  if (lro.retryAfterSeconds !== DEFAULT_RETRY_AFTER_SECONDS) {
-    failures.push(
-      `${label}: expected Retry-After ${DEFAULT_RETRY_AFTER_SECONDS}, observed ${lro.retryAfterSeconds}`,
-    );
-  }
+  checkAcceptance(failures, label, lro, expectedLocationSuffix);
   if (lro.terminalStatus !== 200) {
     failures.push(`${label}: expected a terminal 200 GET, observed ${lro.terminalStatus}`);
   }
   if (!terminalStates.includes(lro.terminalState)) {
     failures.push(
       `${label}: terminal state '${lro.terminalState}' is not one of ${terminalStates.join(', ')}`,
+    );
+  }
+}
+
+/** Checks only the acceptance half of an LRO (202/Location/Retry-After) — no terminal claim. */
+function checkAcceptance(
+  failures: string[],
+  label: string,
+  acceptance: Pick<LroObservation, 'acceptedStatus' | 'locationSuffix' | 'retryAfterSeconds'>,
+  expectedLocationSuffix: string | undefined,
+): void {
+  if (acceptance.acceptedStatus !== 202) {
+    failures.push(`${label}: expected a 202 acceptance, observed ${acceptance.acceptedStatus}`);
+  }
+  if (expectedLocationSuffix !== undefined && acceptance.locationSuffix !== expectedLocationSuffix) {
+    failures.push(
+      `${label}: expected Location suffix '${expectedLocationSuffix}', observed '${acceptance.locationSuffix}'`,
+    );
+  }
+  if (acceptance.retryAfterSeconds !== DEFAULT_RETRY_AFTER_SECONDS) {
+    failures.push(
+      `${label}: expected Retry-After ${DEFAULT_RETRY_AFTER_SECONDS}, observed ${acceptance.retryAfterSeconds}`,
+    );
+  }
+}
+
+/**
+ * The in-flight GET proves the cancellation run was genuinely caught mid-run —
+ * a 200 with a NON-terminal `properties.status` (RUN_NONTERMINAL_STATES).
+ * Requiring a terminal (e.g. `Succeeded`) state here would be the exact
+ * impossible transcript this check exists to reject (R1): a terminal-run
+ * cancellation is a no-op (RV3), so a run already terminal cannot later be
+ * observed `Canceled`.
+ */
+function checkInFlight(failures: string[], label: string, obs: InFlightObservation): void {
+  if (obs.status !== 200) {
+    failures.push(`${label}: expected a 200 GET while in flight, observed ${obs.status}`);
+  }
+  if (!(RUN_NONTERMINAL_STATES as readonly string[]).includes(obs.state)) {
+    failures.push(
+      `${label}: expected a non-terminal state while in flight, observed '${obs.state}' (a run already terminal can never be canceled — RV3)`,
     );
   }
 }
@@ -335,7 +389,8 @@ function checkTranscript(failures: string[], t: Rv1Transcript): void {
 
   checkLro(failures, `${t.platform} validate`, t.validate, 'validations/latest', VALIDATION_TERMINAL_SUCCESS);
   checkLro(failures, `${t.platform} success execute`, t.successRun, undefined, RUN_TERMINAL_SUCCESS);
-  checkLro(failures, `${t.platform} cancellation execute`, t.cancellationRun.execute, undefined, RUN_TERMINAL_SUCCESS);
+  checkAcceptance(failures, `${t.platform} cancellation execute`, t.cancellationRun.execute, undefined);
+  checkInFlight(failures, `${t.platform} cancellation in-flight observation`, t.cancellationRun.inFlight);
   checkLro(failures, `${t.platform} cancel`, t.cancellationRun.cancel, undefined, ['Canceled']);
 
   // The run ID is the final `/runs/{runId}` segment of the execute Location and

@@ -1188,9 +1188,30 @@ jobs:
           # NFR6/D18/E5-T3: binds a Sigstore-signed SLSA provenance statement to
           # the EXACT bytes just verified (the same sha256-checked
           # action-bundle.tar.gz downloaded from the release above) and to this
-          # workflow run's source commit/ref — not the release commit input,
-          # which is untrusted user text. `subject-path` hashes the file itself,
-          # so the attestation subject digest is independent of `$RELEASE_COMMIT`.
+          # workflow run's source commit/ref — this is the genuine WORKFLOW
+          # identity (the dispatch run's own source SHA), not the released
+          # commit's identity. `subject-path` hashes the file itself, so the
+          # attestation subject digest is independent of `$RELEASE_COMMIT`.
+
+      - name: Generate a second attestation binding the artifact digest to the verified release commit
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: pkg/action-bundle.tar.gz
+          predicate-type: https://chaos-studio.dev/attestations/release-commit/v1
+          # R2 fix: the standard build-provenance statement above records the
+          # DISPATCH RUN's own source SHA as its resolved Git material — correct
+          # for workflow identity, but when `main` has advanced past
+          # `$RELEASE_COMMIT` (an ancestor release, or a retry of an existing
+          # tag) that statement no longer identifies the commit that actually
+          # supplied the released bytes. This SECOND, additional attestation on
+          # the SAME verified artifact digest records the RELEASE_COMMIT
+          # resolved and verified as reviewed default-branch history earlier in
+          # this job — giving a signed statement that always names the exact
+          # commit whose tree produced the published archive, for ancestor
+          # releases and retries alike, without touching the immutable tag
+          # target.
+          predicate: |
+            {"releaseCommit":"${{ env.RELEASE_COMMIT }}","tag":"${{ env.TAG }}"}
 
       - name: Advance the floating major tag (bare, lease-then-revalidate)
         env:

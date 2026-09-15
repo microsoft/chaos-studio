@@ -13,6 +13,7 @@ import { pathToFileURL } from 'node:url';
 import { runAzurePipelinesTask } from './adapter.ts';
 import { azurePipelinesTaskHost, readArmServiceConnection } from './host.ts';
 import { armServiceConnectionCredentialProvider } from './auth.ts';
+import { redact } from '../../core/src/redaction.ts';
 
 /**
  * Bridge Azure Pipelines task cancellation to an {@link AbortSignal}. The agent
@@ -45,7 +46,7 @@ export async function main(): Promise<void> {
     try {
       cred = armServiceConnectionCredentialProvider(readArmServiceConnection());
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = redact(err instanceof Error ? err.message : String(err));
       host.setResult(false, message || 'Azure Chaos Studio task failed.');
       return;
     }
@@ -60,7 +61,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   // runAzurePipelinesTask maps failures to tl.setResult(Failed); a rejection here
   // is an unexpected adapter fault — fail the task rather than crash silently.
   void main().catch((err: unknown) => {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = redact(err instanceof Error ? err.message : String(err));
     // Lazy import avoids loading the task library in the pure test paths.
     void import('azure-pipelines-task-lib/task.js').then((tl) =>
       tl.setResult(tl.TaskResult.Failed, message, true),

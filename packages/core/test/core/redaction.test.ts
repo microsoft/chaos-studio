@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { redact } from '../../src/redaction.ts';
+import { redact, redactSecretFields, redactedJson } from '../../src/redaction.ts';
 
 test('redact scrubs a Bearer token but keeps surrounding text', () => {
   const out = redact('Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.payloadpart.signaturepart done');
@@ -61,4 +61,60 @@ test('redact scrubs JSON-quoted and colon-delimited secret shapes (business-erro
 test('redact leaves non-secret text unchanged', () => {
   const plain = 'GET .../runs/22222222-2222-2222-2222-222222222222 -> 202 Retry-After: 10';
   assert.equal(redact(plain), plain);
+});
+
+// R3: recursive secret-key redaction covers ordinary password/clientSecret/
+// accessToken fields at ANY nesting depth, not just bearer/JWT/connection-string
+// text shapes.
+test('redactSecretFields scrubs password/clientSecret/accessToken at any nesting depth', () => {
+  const parsed = {
+    properties: {
+      status: 'Failed',
+      errors: [
+        {
+          code: 'AuthenticationFailed',
+          message: 'bad creds',
+          details: {
+            password: 'topsecretpw',
+            nested: {
+              clientSecret: 'topsecretcs',
+              accessToken: 'topsecretat',
+              refreshToken: 'topsecretrt',
+              keepMe: 'plain value',
+            },
+          },
+        },
+      ],
+    },
+  };
+  const redacted = redactSecretFields(parsed) as typeof parsed;
+  const details = redacted.properties.errors[0]!.details as Record<string, unknown>;
+  assert.equal(details.password, '<redacted>');
+  const nested = details.nested as Record<string, unknown>;
+  assert.equal(nested.clientSecret, '<redacted>');
+  assert.equal(nested.accessToken, '<redacted>');
+  assert.equal(nested.refreshToken, '<redacted>');
+  assert.equal(nested.keepMe, 'plain value');
+  assert.equal(redacted.properties.errors[0]!.code, 'AuthenticationFailed');
+});
+
+test('redactSecretFields walks arrays of objects and leaves primitives untouched', () => {
+  const parsed = [
+    { accessToken: 'a-secret', ok: 1 },
+    { nested: [{ password: 'b-secret' }, 'plain-string', 42] },
+  ];
+  const redacted = redactSecretFields(parsed) as typeof parsed;
+  assert.equal((redacted[0] as Record<string, unknown>).accessToken, '<redacted>');
+  assert.equal((redacted[0] as Record<string, unknown>).ok, 1);
+  const nestedArr = (redacted[1] as Record<string, unknown>).nested as unknown[];
+  assert.equal((nestedArr[0] as Record<string, unknown>).password, '<redacted>');
+  assert.equal(nestedArr[1], 'plain-string');
+  assert.equal(nestedArr[2], 42);
+});
+
+test('redactedJson stringifies with secret fields pre-scrubbed', () => {
+  const out = redactedJson({ password: 'x', ok: 'y' });
+  assert.ok(!out.includes('"x"'));
+  assert.ok(out.includes('"password":"<redacted>"'));
+  assert.ok(out.includes('"ok":"y"'));
 });
