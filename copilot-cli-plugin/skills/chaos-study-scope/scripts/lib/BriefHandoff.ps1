@@ -240,6 +240,44 @@ function Import-ChaosBriefHandoff {
         if ($table.Count -gt 0) { $out['MechanismProbe'] = $table }
     }
 
+    # The customer's stop rule. Without this the interview's abort answer died
+    # at the seam and scope fell back to a generated sentence, so the run
+    # printed an abort panel nobody had agreed to - the operator was watching
+    # for a condition this suite invented, not the one they stated.
+    #
+    # Carried as a table, not a string, for two reasons. `source` is what lets
+    # scope refuse to arm on a candidate template while accepting a real answer.
+    # And the measurable part - signal, condition, correlation - is what the run
+    # phase evaluates between polls to cancel the run itself, so it has to cross
+    # the seam intact. The statement is never reworded or parsed into a
+    # threshold; structure only ever comes from structure.
+    $abort = Get-ChaosBriefValue -InputObject $handoff -Name 'abortCriteria'
+    if ($null -ne $abort -and -not $Bound.ContainsKey('AbortCriteria')) {
+        $statement = [string](Get-ChaosBriefValue -InputObject $abort -Name 'statement')
+        $table = @{}
+        foreach ($field in @('signal', 'query', 'aggregate', 'condition', 'resourceCorrelation')) {
+            $value = [string](Get-ChaosBriefValue -InputObject $abort -Name $field)
+            if (-not [string]::IsNullOrWhiteSpace($value)) { $table[$field] = $value }
+        }
+        if ([string]::IsNullOrWhiteSpace($statement) -and $table.Count -eq 0) {
+            # A brief that carries the key but neither words nor structure is
+            # worth saying out loud: scope will block arming, and the operator
+            # should know the gap came from the design conversation, not scope.
+            Write-ChaosStudyNote -Message 'The brief carries no abort criteria. Scope cannot arm a run without a stop rule the customer stated.' -Level 'warn'
+        }
+        else {
+            if (-not [string]::IsNullOrWhiteSpace($statement)) { $table['statement'] = $statement }
+            $source = [string](Get-ChaosBriefValue -InputObject $abort -Name 'source')
+            $enforcement = [string](Get-ChaosBriefValue -InputObject $abort -Name 'enforcement')
+            # An older brief predates `source`. It is not "customer" by default -
+            # that would launder a template into an agreement - so it is carried
+            # as unknown and scope treats unknown as not stated.
+            $table['source'] = $(if ([string]::IsNullOrWhiteSpace($source)) { 'unknown' } else { $source })
+            if (-not [string]::IsNullOrWhiteSpace($enforcement)) { $table['enforcement'] = $enforcement }
+            $out['AbortCriteria'] = $table
+        }
+    }
+
     # Exposure inputs. An unmeasured input stays absent rather than becoming
     # zero, because zero is a measurement and absent is not.
     $exposure = Get-ChaosBriefValue -InputObject $handoff -Name 'exposure'

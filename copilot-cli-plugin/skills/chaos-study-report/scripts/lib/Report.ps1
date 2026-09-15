@@ -19,8 +19,68 @@
 
 Set-StrictMode -Version Latest
 
+# Report data is read back from artifacts written by earlier phases, and an older
+# or partially-written artifact legitimately lacks fields a newer phase adds.
+# Reading those directly would fault the render under StrictMode and lose a report
+# that is otherwise complete, so absence reads as absence. Dictionaries are handled
+# explicitly because an [ordered] hashtable's PSObject surface exposes type members
+# rather than its keys, which would make every key lookup miss.
+function Get-ChaosReportField {
+    param([object]$Object, [string]$Name)
+    if ($null -eq $Object) { return $null }
+    if ($Object -is [System.Collections.IDictionary]) {
+        if (-not $Object.Contains($Name)) { return $null }
+        return $Object[$Name]
+    }
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property) { return $null }
+    return $property.Value
+}
+
 function Get-ChaosReportTemplatePath {
     return (Join-Path $PSScriptRoot '..' '..' 'templates' 'study-report.html.tmpl')
+}
+
+function Get-ChaosFindingValue {
+    <#
+    .SYNOPSIS
+        Read one key from a findings object whatever shape it arrives in.
+
+    .DESCRIPTION
+        Build-StudyFindings returns an [ordered] dictionary. Asking an
+        OrderedDictionary for `.PSObject.Properties.Name -contains 'studyVerdict'`
+        is always false - the PSObject surface of a dictionary exposes its TYPE
+        members (Count, Keys, Values), not its keys - so every guard written that
+        way silently fell through to its default and the report header printed
+        "Not evaluated" beside a verdict that had in fact been computed. Worse,
+        a key literally named `Values` WOULD match, so the bug is not even
+        uniformly wrong.
+
+        The extraction itself is Get-ChaosMember from the shared library, so the
+        report reads a findings key exactly the way every other part of the
+        suite reads a field. This wrapper exists only to name the intent at the
+        call site; it deliberately owns no second copy of the rule. Callers
+        distinguish "absent" from "present but null" with Test-ChaosFindingKey.
+    #>
+    param(
+        [AllowNull()][object]$Findings,
+        [Parameter(Mandatory)][string]$Name
+    )
+    return (Get-ChaosMember -InputObject $Findings -Name $Name)
+}
+
+function Test-ChaosFindingKey {
+    <#
+    .SYNOPSIS
+        True when a findings key exists, regardless of container shape.
+    #>
+    param(
+        [AllowNull()][object]$Findings,
+        [Parameter(Mandatory)][string]$Name
+    )
+    if ($null -eq $Findings) { return $false }
+    if ($Findings -is [System.Collections.IDictionary]) { return [bool]$Findings.Contains($Name) }
+    return [bool]$Findings.PSObject.Properties[$Name]
 }
 
 function ConvertTo-ChaosReportValue {
@@ -172,9 +232,9 @@ function New-ChaosStudyReportHtml {
     # The headline is the study verdict, because that is the one a reader acts
     # on. The predicate verdict is stated immediately beside it so the headline
     # can never be mistaken for a statement about the declared objective.
-    $studyVerdict = if ($Findings.PSObject.Properties.Name -contains 'studyVerdict') { [string]$Findings.studyVerdict } else { [string]$Findings.verdict }
-    $predicateVerdict = if ($Findings.PSObject.Properties.Name -contains 'predicateVerdict') { [string]$Findings.predicateVerdict } else { 'Not evaluated' }
-    $verdictRationale = if ($Findings.PSObject.Properties.Name -contains 'verdictRationale') { [string]$Findings.verdictRationale } else { '' }
+    $studyVerdict = if (Test-ChaosFindingKey -Findings $Findings -Name 'studyVerdict') { [string](Get-ChaosFindingValue -Findings $Findings -Name 'studyVerdict') } else { [string](Get-ChaosFindingValue -Findings $Findings -Name 'verdict') }
+    $predicateVerdict = if (Test-ChaosFindingKey -Findings $Findings -Name 'predicateVerdict') { [string](Get-ChaosFindingValue -Findings $Findings -Name 'predicateVerdict') } else { 'Not evaluated' }
+    $verdictRationale = if (Test-ChaosFindingKey -Findings $Findings -Name 'verdictRationale') { [string](Get-ChaosFindingValue -Findings $Findings -Name 'verdictRationale') } else { '' }
     $visual = Get-ChaosVerdictVisual -Verdict $studyVerdict
     $systemUnderStudy = [string]$Plan.workspace.name
 
@@ -189,13 +249,31 @@ function New-ChaosStudyReportHtml {
     # an empty cell in the delivered report; say plainly that it is unknown.
     $scopedCountText = if ($null -eq $Plan.scope.projectedResourceCount) { 'not resolved (discovery skipped)' } else { [string]$Plan.scope.projectedResourceCount }
 
+    # Two different counts, and only one of them is the blast radius. Discovery
+    # counts what the workspace holds; the effective plan counts what the service
+    # will act on. A report that prints "14 of 14" for a run that touched one
+    # scale set tells the reader the wrong story about what was tested.
+    $effectiveLegs = $null
+    $planEffective = Get-ChaosReportField -Object $Plan -Name 'declaredVsEffective'
+    if ($null -ne $planEffective) {
+        $legsNode = Get-ChaosReportField -Object $planEffective -Name 'legs'
+        if ($null -ne $legsNode) { $effectiveLegs = Get-ChaosReportField -Object $legsNode -Name 'executable' }
+    }
+    $targetCountText = if ($null -eq $effectiveLegs) {
+        "not resolved (discovery saw $scopedCountText)"
+    }
+    else {
+        $noun = if ([int]$effectiveLegs -eq 1) { 'target' } else { 'targets' }
+        "$effectiveLegs $noun (discovery saw $scopedCountText)"
+    }
+
     # The configured window and the window in which the action was actually
     # live are different facts, and a reader who conflates them will credit the
     # system with surviving minutes of a fault that lasted an instant. Both are
     # stated, and an unknown action window says so.
     $observationWindowText = "$($Plan.windows.injectMinutes) minutes (configured)"
     $actionWindowText = 'unknown - the service reported no action times'
-    $actionWindow = if ($Findings.PSObject.Properties.Name -contains 'actionWindow') { $Findings.actionWindow } else { $null }
+    $actionWindow = Get-ChaosFindingValue -Findings $Findings -Name 'actionWindow'
     if ($null -ne $actionWindow -and $actionWindow.startUtc) {
         $actionWindowText = "$($actionWindow.startUtc) to $(if ($actionWindow.endUtc) { $actionWindow.endUtc } else { 'unknown' })"
         if ($actionWindow.timing -ne 'exact') { $actionWindowText += " ($($actionWindow.timing))" }
@@ -206,7 +284,7 @@ function New-ChaosStudyReportHtml {
 
     $headerFacts = @(
         New-ChaosReportRow -Label 'Workspace' -Value $systemUnderStudy
-        New-ChaosReportRow -Label 'Scoped resources' -Value $scopedCountText
+        New-ChaosReportRow -Label 'Targets acted on' -Value $targetCountText
         New-ChaosReportRow -Label 'Action' -Value ([string]$Plan.action.displayName)
         New-ChaosReportRow -Label 'Steady state' -Value ([string]$Plan.question.steadyState.raw)
         New-ChaosReportRow -Label 'Predicate verdict' -Value $predicateVerdict
@@ -268,6 +346,44 @@ $(if ($verdictRationale) { "<p>$(ConvertTo-ChaosHtmlText -Text $verdictRationale
         $blastRows += "  <tr><td class=`"mono`">$side</td><td><code>$(ConvertTo-ChaosHtmlText -Text (ConvertTo-ChaosCanonicalJson -InputObject $value))</code></td></tr>"
     }
 
+    # Old plans carry only the derived string list. New ones carry the structured
+    # record too, and the difference matters to a reader: a stop rule the
+    # customer stated is an agreement, a derived default is this suite guessing.
+    $abortProvenance = $null
+    $safetyNode = Get-ChaosReportField -Object $Plan -Name 'safety'
+    $abortRecord = if ($null -ne $safetyNode) { Get-ChaosReportField -Object $safetyNode -Name 'abortCriteria' } else { $null }
+    if ($null -ne $abortRecord) {
+        $abortStatedFlag = Get-ChaosReportField -Object $abortRecord -Name 'stated'
+        $abortStatementText = Get-ChaosReportField -Object $abortRecord -Name 'statement'
+        $abortSourceText = Get-ChaosReportField -Object $abortRecord -Name 'source'
+        $abortMonitoredFlag = Get-ChaosReportField -Object $abortRecord -Name 'monitored'
+        $abortWatchText = Get-ChaosReportField -Object $abortRecord -Name 'watch'
+        $abortEvaluableFlag = Get-ChaosReportField -Object $abortRecord -Name 'evaluable'
+        $abortSignalText = Get-ChaosReportField -Object $abortRecord -Name 'signal'
+        $abortConditionText = Get-ChaosReportField -Object $abortRecord -Name 'conditionText'
+        if ($abortStatedFlag -and $abortStatementText) {
+            $abortProvenance = "<p>Stated by the customer during the design interview: <em>$(ConvertTo-ChaosHtmlText -Text ([string]$abortStatementText))</em></p>"
+        }
+        elseif ($abortStatementText) {
+            $abortProvenance = "<p class=`"warn`">No customer-stated abort criterion. The nearest thing on record came from the $(ConvertTo-ChaosHtmlText -Text ([string]$abortSourceText)) template: <em>$(ConvertTo-ChaosHtmlText -Text ([string]$abortStatementText))</em>. Everything below is a default this suite derived.</p>"
+        }
+        else {
+            $abortProvenance = '<p class="warn">No customer-stated abort criterion was recorded. Everything below is a default this suite derived.</p>'
+        }
+        # A structured criterion is measured and enforced by the run skill: it
+        # polls the signal and cancels the run on breach. Say which of those two
+        # worlds this study was in, because "monitored" meant nothing before.
+        $abortProvenance += if ($abortEvaluableFlag -and $abortSignalText) {
+            "<p>Measured automatically during injection: <code>$(ConvertTo-ChaosHtmlText -Text ([string]$abortSignalText))</code> $(ConvertTo-ChaosHtmlText -Text ([string]$abortConditionText)). The run skill polled that signal and would have cancelled the scenario run on breach. Anything else on the list was watched by the operator - Chaos Studio itself has no abort hook.</p>"
+        }
+        elseif ($abortMonitoredFlag -and $abortWatchText) {
+            "<p>Machine-watched during injection: <code>$(ConvertTo-ChaosHtmlText -Text ([string]$abortWatchText))</code>. Everything else was watched by the operator - Chaos Studio has no abort hook.</p>"
+        }
+        else {
+            '<p class="warn">Nothing on this list was evaluated automatically. The operator watched the run and would have cancelled it by hand.</p>'
+        }
+    }
+
     $tested = @"
 <dl class="kv">
 $(New-ChaosReportRow -Label 'Workspace' -Value ([string]$Plan.workspace.id))
@@ -290,32 +406,67 @@ $($parameterRows -join "`n")
 $(if (@($actionParameterRows).Count -gt 0) { "<h3>Action parameters</h3>`n<p>Validated against the action's own schema, not the scenario's.</p>`n<table><thead><tr><th>Parameter</th><th>Value</th></tr></thead><tbody>`n$($actionParameterRows -join "`n")`n</tbody></table>" } else { '' })
 $(if (@($blastRows).Count -gt 0) { "<h3>Blast radius</h3>`n<table><thead><tr><th>Constraint</th><th>Value</th></tr></thead><tbody>`n$($blastRows -join "`n")`n</tbody></table>" } else { '' })
 <h3>Abort conditions</h3>
+$(if ($abortProvenance) { $abortProvenance } else { '' })
 $(New-ChaosReportList -Items $Plan.safety.abortConditions)
 "@
 
-    $actionRows = foreach ($entry in @($RunRecord.scenarioRun.observation.actions)) {
+    # The service observation is optional: a run that was accepted but never
+    # identified (RJ-1), a cancelled run, or a poll that failed all leave
+    # `observation` null. Under StrictMode reaching through a null for `.actions`
+    # throws "property 'actions' cannot be found", which killed the whole report
+    # AFTER the fault had already been injected - the one moment a reader most
+    # needs the evidence. Resolve it once, defensively, and render the absence.
+    $observation = $null
+    if ($null -ne $RunRecord -and $null -ne $RunRecord.scenarioRun -and $RunRecord.scenarioRun.PSObject.Properties['observation']) {
+        $observation = $RunRecord.scenarioRun.observation
+    }
+    $observationAvailable = ($null -ne $observation)
+
+    $actionRows = foreach ($entry in @($(if ($observationAvailable) { $observation.actions } else { @() }))) {
         if ($null -eq $entry) { continue }
         $touched = if ($null -ne $entry.resources) { @($entry.resources).Count } else { 'not reported' }
         "  <tr><td class=`"mono`">$(ConvertTo-ChaosHtmlText -Text ([string]$entry.actionUrn))</td><td>$(ConvertTo-ChaosHtmlText -Text ([string]$entry.state))</td><td>$(ConvertTo-ChaosHtmlText -Text ([string]$touched))</td></tr>"
     }
 
-    $errorRows = foreach ($entry in @($RunRecord.scenarioRun.observation.errors)) {
+    $errorRows = foreach ($entry in @($(if ($observationAvailable) { $observation.errors } else { @() }))) {
         if ($null -eq $entry) { continue }
         "  <tr><td class=`"mono`">$(ConvertTo-ChaosHtmlText -Text ([string]$entry.code))</td><td>$(ConvertTo-ChaosHtmlText -Text ([string]$entry.message))</td></tr>"
     }
 
+    $resourcesTouched = if ($observationAvailable) { $observation.resourcesTouched } else { $null }
+    $observationNote = if ($observationAvailable) {
+        ''
+    } else {
+        "<p class=`"warn`">The service never returned an execution record for this run, so this " +
+        "section reports what the study asked for, not what the platform did. Absence of " +
+        "reported actions or errors below is missing evidence, not evidence of a clean run.</p>"
+    }
+
+    # An accepted-but-unidentified run (RJ-1) has no run id. Printing an empty
+    # cell would read as "no run", which is the opposite of the truth.
+    $runIdText = [string]$RunRecord.scenarioRun.runId
+    if ([string]::IsNullOrWhiteSpace($runIdText)) {
+        $accepted = $false
+        if ($null -ne $RunRecord.scenarioRun -and $RunRecord.scenarioRun.PSObject.Properties['accepted']) {
+            $accepted = [bool]$RunRecord.scenarioRun.accepted
+        }
+        $runIdText = if ($accepted) { 'accepted by the service but never identified - see residue' } else { $null }
+    }
+    $predicate = if ($null -ne $Findings) { Get-ChaosFindingValue -Findings $Findings -Name 'predicate' } else { $null }
+
     $happened = @"
 <dl class="kv">
-$(New-ChaosReportRow -Label 'Scenario run' -Value ([string]$RunRecord.scenarioRun.runId))
+$(New-ChaosReportRow -Label 'Scenario run' -Value $runIdText)
 $(New-ChaosReportRow -Label 'Outcome' -Value ([string]$RunRecord.scenarioRun.outcome))
 $(New-ChaosReportRow -Label 'Configuration' -Value ([string]$RunRecord.configuration.name))
 $(New-ChaosReportRow -Label 'Validation' -Value ([string]$RunRecord.configuration.validationStatus))
-$(New-ChaosReportRow -Label 'Resources touched' -Value $RunRecord.scenarioRun.observation.resourcesTouched)
-$(New-ChaosReportRow -Label 'Mechanism proven' -Value $Findings.mechanismProven)
-$(New-ChaosReportRow -Label 'Mechanism evidence' -Value ([string]$Findings.mechanismDetail))
-$(New-ChaosReportRow -Label 'Predicate during' -Value $Findings.predicate.during)
-$(New-ChaosReportRow -Label 'Predicate after' -Value $Findings.predicate.post)
+$(New-ChaosReportRow -Label 'Resources touched' -Value $resourcesTouched)
+$(New-ChaosReportRow -Label 'Mechanism proven' -Value (Get-ChaosFindingValue -Findings $Findings -Name 'mechanismProven'))
+$(New-ChaosReportRow -Label 'Mechanism evidence' -Value ([string](Get-ChaosFindingValue -Findings $Findings -Name 'mechanismDetail')))
+$(New-ChaosReportRow -Label 'Predicate during' -Value $(if ($null -ne $predicate) { $predicate.during } else { $null }))
+$(New-ChaosReportRow -Label 'Predicate after' -Value $(if ($null -ne $predicate) { $predicate.post } else { $null }))
 </dl>
+$observationNote
 $(if (@($actionRows).Count -gt 0) { "<h3>Actions the service reported</h3>`n<table><thead><tr><th>Action URN</th><th>State</th><th>Resources</th></tr></thead><tbody>`n$($actionRows -join "`n")`n</tbody></table>" } else { '' })
 $(if (@($errorRows).Count -gt 0) { "<h3>Execution errors</h3>`n<table><thead><tr><th>Kind</th><th>Detail</th></tr></thead><tbody>`n$($errorRows -join "`n")`n</tbody></table>" } else { '' })
 <h3>Signals</h3>
@@ -343,11 +494,19 @@ $(New-ChaosSignalTable -Evidence $Evidence)
     # outcome of its removal and the exact command that removes what is left.
     # A reader who has to clean up after a failed study should not have to
     # reconstruct these from resource ids.
-    $residue = if ($Findings.PSObject.Properties.Name -contains 'residue') { $Findings.residue } else { $null }
+    $residue = Get-ChaosFindingValue -Findings $Findings -Name 'residue'
     $residueRows = if ($null -ne $residue -and $residue.PSObject.Properties.Name -contains 'entries') {
         foreach ($entry in @($residue.entries)) {
             if ($null -eq $entry) { continue }
+            $removalError = if ($null -eq $entry.PSObject.Properties['removalError']) { $null } else { [string]$entry.removalError }
+            # A delete that raised and an object that is nevertheless gone are
+            # both true often enough that the ledger records them separately.
+            # Saying only 'verified-absent' would hide a service error worth
+            # reporting; saying only the error would contradict the observation.
             $detail = if (-not [string]::IsNullOrWhiteSpace([string]$entry.error)) { [string]$entry.error }
+            elseif ([string]$entry.status -eq 'verified-absent' -and -not [string]::IsNullOrWhiteSpace($removalError)) {
+                "The delete reported an error - $removalError - but a read-back then confirmed the object is gone."
+            }
             elseif (-not [string]::IsNullOrWhiteSpace([string]$entry.command)) { [string]$entry.command }
             else { 'no removal command recorded' }
             # 'verified-absent' is the only status that means gone; see
@@ -364,17 +523,6 @@ $(New-ChaosSignalTable -Evidence $Evidence)
     elseif ([int]$residue.total -eq 0) { 'nothing was created' }
     elseif ([int]$residue.unresolved -eq 0) { "$($residue.resolved) of $($residue.total) verified absent" }
     else { "$($residue.unresolved) of $($residue.total) NOT verified absent - see the table below" }
-
-    # Appendix data is read back from artifacts written by earlier phases, and an
-    # older or partially-written artifact legitimately lacks fields a newer phase
-    # adds. Reading those directly would fault the render under StrictMode and
-    # lose a report that is otherwise complete, so absence reads as absence.
-    function Get-ChaosReportField {
-        param([object]$Object, [string]$Name)
-        if ($null -eq $Object) { return $null }
-        if ($Object.PSObject.Properties.Name -notcontains $Name) { return $null }
-        return $Object.$Name
-    }
 
     # Adapter provenance. Which seam actually carried each Azure call, and for
     # the external seam the request/result hashes a reviewer can re-derive. A

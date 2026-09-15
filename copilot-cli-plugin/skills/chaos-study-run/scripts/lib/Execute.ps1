@@ -1304,10 +1304,278 @@ function Resolve-ChaosRunConfiguration {
 
 # -- Scenario run ----------------------------------------------------------
 
+function Get-ChaosStudyRunScopeArguments {
+    <#
+    .SYNOPSIS
+        The identity arguments every run-lifecycle call shares, including the
+        subscription.
+
+    .DESCRIPTION
+        The configuration calls already pin the subscription (see
+        Get-ChaosConfigurationScopingArgument). The run calls did not, so
+        polling and - more seriously - cancelling were addressed to whatever
+        subscription `az` happened to have selected. `run cancel` is the abort
+        path for a live fault, so resolving it against ambient context is the
+        one place where a wrong default is most expensive.
+
+        Emitting the subscription only when the plan carries one keeps this
+        backward compatible with plans written before the field existed.
+    #>
+    param([Parameter(Mandatory)][object]$Plan)
+
+    $arguments = @{
+        resourceGroup = $Plan.workspace.resourceGroup
+        workspaceName = $Plan.workspace.name
+        scenarioName  = $Plan.scenario.name
+    }
+    if (@($Plan.workspace.PSObject.Properties.Name) -contains 'subscriptionId') {
+        $subscriptionId = [string]$Plan.workspace.subscriptionId
+        if (-not [string]::IsNullOrWhiteSpace($subscriptionId)) {
+            $arguments['subscriptionId'] = $subscriptionId
+        }
+    }
+    return $arguments
+}
+
+function ConvertTo-ChaosScenarioRunSummary {
+    <#
+    .SYNOPSIS
+        Reduce one run object from `scenario run list` to the fields used to
+        identify it, without inventing any of them.
+
+    .DESCRIPTION
+        A field that cannot be read stays $null. That matters for the
+        configuration name: an unreadable name must not be treated as "not my
+        run" (which would drop the real run) nor as "my run" (which would adopt
+        someone else's). The caller keeps unknown-configuration runs as weaker
+        candidates and refuses to choose when that is all it has.
+    #>
+    param([Parameter(Mandatory)][AllowNull()][object]$Run)
+
+    if ($null -eq $Run) { return $null }
+
+    $names = @($Run.PSObject.Properties.Name)
+    $id = if ($names -contains 'id') { [string]$Run.id } else { $null }
+    $name = if ($names -contains 'name') { [string]$Run.name } else { $null }
+    if ([string]::IsNullOrWhiteSpace($name) -and -not [string]::IsNullOrWhiteSpace($id) -and $id -match '/runs/([^/?]+)') {
+        $name = $Matches[1]
+    }
+
+    $properties = if ($names -contains 'properties') { $Run.properties } else { $null }
+    $propertyNames = if ($null -ne $properties) { @($properties.PSObject.Properties.Name) } else { @() }
+
+    $configurationName = $null
+    foreach ($candidate in @('configurationName', 'configName', 'experimentConfigurationName')) {
+        if ($names -contains $candidate -and -not [string]::IsNullOrWhiteSpace([string]$Run.$candidate)) {
+            $configurationName = [string]$Run.$candidate
+            break
+        }
+        if ($propertyNames -contains $candidate -and -not [string]::IsNullOrWhiteSpace([string]$properties.$candidate)) {
+            $configurationName = [string]$properties.$candidate
+            break
+        }
+    }
+
+    $createdAt = $null
+    foreach ($candidate in @('createdDateUtc', 'createdAt', 'startedAt', 'startDateTime', 'statusUpdatedAt')) {
+        if ($names -contains $candidate -and -not [string]::IsNullOrWhiteSpace([string]$Run.$candidate)) {
+            $createdAt = [string]$Run.$candidate
+            break
+        }
+        if ($propertyNames -contains $candidate -and -not [string]::IsNullOrWhiteSpace([string]$properties.$candidate)) {
+            $createdAt = [string]$properties.$candidate
+            break
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($name) -and [string]::IsNullOrWhiteSpace($id)) { return $null }
+
+    return [pscustomobject]@{
+        id                = $id
+        name              = $name
+        configurationName = $configurationName
+        createdAtUtc      = $createdAt
+    }
+}
+
+function Get-ChaosScenarioRunInventory {
+    <#
+    .SYNOPSIS
+        Enumerate the scenario's runs, reporting readability separately from
+        emptiness.
+
+    .DESCRIPTION
+        `available = $false` means the list could not be read. `available =
+        $true` with an empty set means the service reported no runs. Those are
+        different facts and the caller acts differently on each, so they are
+        never collapsed into one empty array.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][object]$Plan,
+        [AllowNull()][AllowEmptyString()][string]$Adapter,
+        [AllowNull()][AllowEmptyString()][string]$StudyPath
+    )
+
+    $raw = $null
+    try {
+        $raw = Invoke-ChaosStudyOperation -Kind 'run.list' -Arguments (Get-ChaosStudyRunScopeArguments -Plan $Plan) `
+            -ExpectedSchema 'any.v1' -Adapter (Get-ChaosExecutionAdapter -Plan $Plan -Adapter $Adapter) `
+            -StudyPath $StudyPath -OperationHint 'scenario run list'
+    } catch {
+        return [pscustomobject]@{ available = $false; runs = @(); error = $_.Exception.Message }
+    }
+
+    if ($null -eq $raw) {
+        return [pscustomobject]@{ available = $false; runs = @(); error = 'scenario run list returned no readable result' }
+    }
+
+    $items = $null
+    if ($raw -is [System.Collections.IEnumerable] -and -not ($raw -is [string])) {
+        $items = ConvertTo-ChaosList $raw
+    } elseif (@($raw.PSObject.Properties.Name) -contains 'value') {
+        $items = ConvertTo-ChaosList $raw.value
+    } else {
+        $items = ConvertTo-ChaosList $raw
+    }
+
+    $runs = [System.Collections.Generic.List[object]]::new()
+    foreach ($item in $items) {
+        $summary = ConvertTo-ChaosScenarioRunSummary -Run $item
+        if ($null -ne $summary) { $runs.Add($summary) | Out-Null }
+    }
+
+    return [pscustomobject]@{ available = $true; runs = $runs.ToArray(); error = $null }
+}
+
+function Resolve-ChaosStartedScenarioRun {
+    <#
+    .SYNOPSIS
+        Identify the run a just-accepted start created, or report honestly that
+        it could not be identified.
+
+    .DESCRIPTION
+        This never picks "the latest run", and never picks a run merely because
+        it was the only candidate. Two studies can be running against one
+        scenario - against one *configuration*, even - so adopting a run on
+        circumstantial grounds would attach polling, abort monitoring,
+        cancellation and the absence probe to somebody else's fault.
+
+        Enumeration is inherently weak evidence, because a run list is eventually
+        consistent: if another caller starts a run on the same configuration in
+        the same seconds, the list can surface THEIR run before ours. Set
+        difference plus an exact configuration match plus a candidate count of
+        one still describes that case exactly. So a count of one is not, on its
+        own, permission to claim the run.
+
+        Enumeration may therefore only bind when the configuration is
+        demonstrably exclusive to this execution - the study created it under its
+        own study-scoped name during this run (ConfigurationExclusive) and the
+        pre-start enumeration showed no run on it. A shared or pre-existing
+        configuration can never be bound this way, however clean the picture
+        looks.
+
+        Positive service correlation - the start response carrying the run
+        identity - is the only strong evidence, and it is resolved by the caller
+        before this function is ever reached.
+
+        Anything less is accepted-untracked. That is deliberately the unhelpful
+        answer: the run is live either way, so the caller must keep the
+        configuration, warn, and refuse to claim the fault ended.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowNull()][object]$Before,
+        [Parameter(Mandatory)][AllowNull()][object]$After,
+        [Parameter(Mandatory)][string]$ConfigurationName,
+        # True only when this execution created the configuration under its own
+        # study-scoped name. Defaults to false so that a caller which cannot
+        # establish exclusivity gets the safe answer rather than the useful one.
+        [bool]$ConfigurationExclusive = $false
+    )
+
+    $empty = {
+        param($Reason, $Candidates)
+        return @{ runId = $null; tracked = $false; resolution = 'unidentified'; reason = $Reason; candidates = (ConvertTo-ChaosList $Candidates) }
+    }
+
+    if ($null -eq $After -or -not $After.available) {
+        return (& $empty 'enumeration-unavailable' @())
+    }
+
+    $afterRuns = ConvertTo-ChaosList $After.runs
+
+    # Prefer the set difference. A run that already existed before the start is
+    # by definition not the run this start created.
+    $candidates = $afterRuns
+    $baselineUsable = ($null -ne $Before -and $Before.available)
+    if ($baselineUsable) {
+        $known = @{}
+        foreach ($run in (ConvertTo-ChaosList $Before.runs)) {
+            $key = if (-not [string]::IsNullOrWhiteSpace($run.name)) { $run.name } else { $run.id }
+            if (-not [string]::IsNullOrWhiteSpace($key)) { $known[$key] = $true }
+        }
+        $candidates = @($afterRuns | Where-Object {
+                $key = if (-not [string]::IsNullOrWhiteSpace($_.name)) { $_.name } else { $_.id }
+                -not $known.ContainsKey($key)
+            })
+    }
+
+    # Without a baseline there is no set difference, and without a set difference
+    # a run bearing this configuration name is just as likely to be an earlier
+    # study's run on the same configuration as it is to be the one this start
+    # created. Being the only candidate is not evidence of anything. Since the
+    # id is used to poll and to CANCEL, a plausible guess is worse than no id.
+    if (-not $baselineUsable) {
+        return (& $empty 'enumeration-unavailable' $afterRuns)
+    }
+
+    if ($candidates.Count -eq 0) {
+        return (& $empty 'no-new-run-observed' @())
+    }
+
+    # Binding needs the configuration name as well as the set difference. A new
+    # run whose configuration the service did not report, or reported as some
+    # other configuration, cannot be proven to be ours: another caller starting
+    # a run on this scenario in the same seconds produces exactly that picture.
+    # Adopting it would aim polling, abort monitoring and cancel at somebody
+    # else's fault.
+    $configMatched = @($candidates | Where-Object { $_.configurationName -eq $ConfigurationName })
+
+    if ($configMatched.Count -gt 1) {
+        # Two new runs on our own configuration. Exact config match is not proof
+        # against a concurrent start on that same configuration.
+        return (& $empty 'ambiguous' $configMatched)
+    }
+    if ($configMatched.Count -eq 0) {
+        return (& $empty 'ambiguous' $candidates)
+    }
+
+    # Exactly one new run bearing our configuration name. That is still not
+    # ownership: run lists are eventually consistent, so a concurrent caller's
+    # run can appear while ours has not yet surfaced, producing this same
+    # picture. The only thing that narrows it is exclusivity of the
+    # configuration itself.
+    if (-not $ConfigurationExclusive) {
+        return (& $empty 'configuration-not-exclusive' $configMatched)
+    }
+
+    # Exclusivity is claimed, so verify it rather than trusting it. A run already
+    # sitting on this configuration before the start means the configuration is
+    # being used by someone else, which disproves the claim outright.
+    $priorOnConfiguration = @((ConvertTo-ChaosList $Before.runs) | Where-Object { $_.configurationName -eq $ConfigurationName })
+    if ($priorOnConfiguration.Count -gt 0) {
+        return (& $empty 'configuration-not-exclusive' $configMatched)
+    }
+
+    return @{ runId = [string]$configMatched[0].name; tracked = $true; resolution = 'enumerated'; reason = $null; candidates = $configMatched }
+}
+
 function Start-ChaosStudyScenarioRun {
     <#
     .SYNOPSIS
-        Execute a validated configuration and return the run id.
+        Execute a validated configuration and identify the run it created,
+        without ever reporting an accepted start as "never started".
 
     .DESCRIPTION
         The validation result is a required argument, and it is asserted here as
@@ -1317,48 +1585,91 @@ function Start-ChaosStudyScenarioRun {
         caller. A future caller that reorders the sequence, or forgets the gate
         entirely, still cannot execute an unvalidated configuration.
 
-        The run id is read from the response, falling back to the resource id,
-        because everything afterwards - polling, cancelling, evidence
-        correlation - is keyed on it, and a run that started but cannot be
-        identified is a run that cannot be stopped.
+        `--no-wait` is documented to return the run id parsed from the Location
+        header, and it has been observed to exit 0 with an empty body for a run
+        the service genuinely created. Previously that empty body failed the
+        'run.v1' schema and threw AFTER the fault was live, which the caller
+        then handled as a run that never started - it deleted the configuration
+        underneath an injecting fault and slept through the outage.
+
+        So the start is now accepted on its own terms and identification is a
+        separate, best-effort step: use the id the response carries; otherwise
+        diff the scenario's runs across the start. When identification fails the
+        result is accepted-untracked, never an exception and never a guess. A
+        run that cannot be identified is still a run that is happening.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][object]$Plan,
         [Parameter(Mandatory)][string]$ConfigurationName,
         [Parameter(Mandatory)][AllowNull()][object]$Validation,
+        # True only when this execution created the configuration rather than
+        # reusing one that already existed. Enumeration-based identification is
+        # refused without it, because a shared configuration cannot distinguish
+        # this study's run from a concurrent caller's.
+        [bool]$ConfigurationExclusive = $false,
         [AllowNull()][AllowEmptyString()][string]$Adapter,
         [AllowNull()][AllowEmptyString()][string]$StudyPath
     )
 
     Assert-ChaosConfigurationValidated -Validation $Validation -ConfigurationName $ConfigurationName | Out-Null
 
-    $started = Invoke-ChaosStudyOperation -Kind 'run.start' -Arguments @{
-        resourceGroup = $Plan.workspace.resourceGroup
-        workspaceName = $Plan.workspace.name
-        scenarioName  = $Plan.scenario.name
-        configName    = $ConfigurationName
-    } -ExpectedSchema 'run.v1' -Adapter (Get-ChaosExecutionAdapter -Plan $Plan -Adapter $Adapter) `
+    # Baseline BEFORE the start, so the run this start creates can be told from
+    # the runs that were already there. Read failures are tolerated; they only
+    # weaken identification, and identification never gates the start.
+    $before = Get-ChaosScenarioRunInventory -Plan $Plan -Adapter $Adapter -StudyPath $StudyPath
+    $startedAtUtc = Get-ChaosUtcNow
+
+    $arguments = Get-ChaosStudyRunScopeArguments -Plan $Plan
+    $arguments['configName'] = $ConfigurationName
+    $started = Invoke-ChaosStudyOperation -Kind 'run.start' -Arguments $arguments `
+        -ExpectedSchema 'runStart.v1' -Adapter (Get-ChaosExecutionAdapter -Plan $Plan -Adapter $Adapter) `
         -StudyPath $StudyPath -OperationHint 'scenario run start'
 
-    if ($null -eq $started) {
-        throw "Chaos Studio did not return a scenario run for configuration '$ConfigurationName'."
-    }
-
     $runId = $null
-    if ($started.PSObject.Properties.Name -contains 'name' -and $started.name) {
-        $runId = [string]$started.name
-    } elseif ($started.PSObject.Properties.Name -contains 'id' -and $started.id -match '/runs/([^/?]+)') {
-        $runId = $Matches[1]
+    $resolution = $null
+    if ($null -ne $started) {
+        $startedNames = @($started.PSObject.Properties.Name)
+        if ($startedNames -contains 'name' -and -not [string]::IsNullOrWhiteSpace([string]$started.name)) {
+            $runId = [string]$started.name
+            $resolution = 'response'
+        } elseif ($startedNames -contains 'id' -and [string]$started.id -match '/runs/([^/?]+)') {
+            $runId = $Matches[1]
+            $resolution = 'response-id'
+        }
     }
 
+    $after = $null
+    $identified = $null
     if ([string]::IsNullOrWhiteSpace($runId)) {
-        throw 'A scenario run was started but Chaos Studio returned no run id, so it cannot be tracked or cancelled. Cancel it from the portal.'
+        $after = Get-ChaosScenarioRunInventory -Plan $Plan -Adapter $Adapter -StudyPath $StudyPath
+        $identified = Resolve-ChaosStartedScenarioRun -Before $before -After $after -ConfigurationName $ConfigurationName -ConfigurationExclusive $ConfigurationExclusive
+        $runId = $identified.runId
+        $resolution = $identified.resolution
+    }
+
+    $tracked = -not [string]::IsNullOrWhiteSpace($runId)
+    $reason = if ($tracked) { $null } elseif ($null -ne $identified) { $identified.reason } else { 'enumeration-unavailable' }
+    $candidates = if ($null -ne $identified) { ConvertTo-ChaosList $identified.candidates } else { @() }
+
+    if (-not $tracked) {
+        Write-ChaosStudyNote -Level 'warn' -Message "Chaos Studio accepted the run for configuration '$ConfigurationName' but it could not be identified ($reason). The fault is running and cannot be polled or cancelled from here - cancel it from the portal. The configuration will be kept so the run is not orphaned."
     }
 
     return [pscustomobject]@{
-        runId    = $runId
-        response = $started
+        runId        = $runId
+        tracked      = $tracked
+        resolution   = $resolution
+        reason       = $reason
+        candidates   = $candidates
+        response     = $started
+        startedAtUtc = $startedAtUtc
+        enumeration  = [pscustomobject]@{
+            beforeAvailable = [bool]($null -ne $before -and $before.available)
+            beforeCount     = if ($null -ne $before -and $before.available) { @($before.runs).Count } else { $null }
+            afterAvailable  = [bool]($null -ne $after -and $after.available)
+            afterCount      = if ($null -ne $after -and $after.available) { @($after.runs).Count } else { $null }
+        }
     }
 }
 
@@ -1384,12 +1695,10 @@ function Get-ChaosStudyScenarioRun {
     )
 
     $kind = if ($Strict) { 'run.showStrict' } else { 'run.show' }
-    return Invoke-ChaosStudyOperation -Kind $kind -Arguments @{
-        runId         = $RunId
-        resourceGroup = $Plan.workspace.resourceGroup
-        workspaceName = $Plan.workspace.name
-        scenarioName  = $Plan.scenario.name
-    } -ExpectedSchema 'any.v1' -Adapter (Get-ChaosExecutionAdapter -Plan $Plan -Adapter $Adapter) `
+    $arguments = Get-ChaosStudyRunScopeArguments -Plan $Plan
+    $arguments['runId'] = $RunId
+    return Invoke-ChaosStudyOperation -Kind $kind -Arguments $arguments `
+        -ExpectedSchema 'any.v1' -Adapter (Get-ChaosExecutionAdapter -Plan $Plan -Adapter $Adapter) `
         -StudyPath $StudyPath -OperationHint 'scenario run show'
 }
 
@@ -1420,12 +1729,10 @@ function Stop-ChaosStudyScenarioRun {
     )
 
     try {
-        return Invoke-ChaosStudyOperation -Kind 'run.cancel' -Arguments @{
-            runId         = $RunId
-            resourceGroup = $Plan.workspace.resourceGroup
-            workspaceName = $Plan.workspace.name
-            scenarioName  = $Plan.scenario.name
-        } -ExpectedSchema 'any.v1' -Adapter (Get-ChaosExecutionAdapter -Plan $Plan -Adapter $Adapter) `
+        $arguments = Get-ChaosStudyRunScopeArguments -Plan $Plan
+        $arguments['runId'] = $RunId
+        return Invoke-ChaosStudyOperation -Kind 'run.cancel' -Arguments $arguments `
+            -ExpectedSchema 'any.v1' -Adapter (Get-ChaosExecutionAdapter -Plan $Plan -Adapter $Adapter) `
             -StudyPath $StudyPath -OperationHint 'scenario run cancel'
     } catch {
         $text = [string]$_.Exception.Message

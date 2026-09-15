@@ -113,6 +113,33 @@ function Get-ChaosOperationCliArgs {
     return @($Verb) + @($Composed)
 }
 
+function Get-ChaosOperationSubscriptionCliArgs {
+    <#
+    .SYNOPSIS
+        The `--subscription` flag for a call that carries a subscription id,
+        and nothing at all when it does not.
+
+    .DESCRIPTION
+        The configuration calls already pin the subscription, because the
+        configuration is the resource that gets created and deleted. The run
+        lifecycle was left to ambient context, which is not the safer default:
+        `run show` polls while a fault is injecting and `run cancel` is the
+        abort path, so an ambient subscription means an abort can be addressed
+        to whatever subscription `az` happened to have selected. The
+        subscription is part of the identity of the run, not context.
+
+        Emitting nothing when no id was supplied keeps this backward
+        compatible: a caller that does not know its subscription produces
+        exactly the command line it produced before, rather than an `az`
+        invocation with an empty flag value.
+    #>
+    param([AllowNull()][hashtable]$Arguments)
+
+    $subscriptionId = Get-ChaosOperationArg -Arguments $Arguments -Name 'subscriptionId' -Default $null
+    if ([string]::IsNullOrWhiteSpace([string]$subscriptionId)) { return , @() }
+    return , @('--subscription', [string]$subscriptionId)
+}
+
 # -- Kind -> adapter-implementation registry --------------
 # Each entry maps a kind to:
 #   localAz  - a scriptblock (param $Arguments,$Body) that is the SOLE call
@@ -310,25 +337,49 @@ function Get-ChaosOperationRegistry {
                 # only handle for polling, abort conditions and cancellation -
                 # does not exist while the fault is actually injecting. A study
                 # that cannot be cancelled mid-fault is not a bounded study.
-                Invoke-ChaosStudyAzChaos -ChaosArgs (Get-ChaosOperationCliArgs -Arguments $Arguments -Verb @('scenario', 'run', 'start') -Composed @(
+                #
+                # The CLI documents that --no-wait returns the run id parsed from
+                # the Location header, but it has been observed to exit 0 with an
+                # empty body while the run was genuinely created. The start is
+                # therefore accepted as-is here; identifying the run is the
+                # caller's job (see Start-ChaosStudyScenarioRun), because an
+                # empty body must never be read as "no run started".
+                Invoke-ChaosStudyAzChaos -ChaosArgs (Get-ChaosOperationCliArgs -Arguments $Arguments -Verb @('scenario', 'run', 'start') -Composed (@(
                     '-g', (Get-ChaosOperationArg -Arguments $Arguments -Name 'resourceGroup'),
                     '--workspace-name', (Get-ChaosOperationArg -Arguments $Arguments -Name 'workspaceName'),
                     '--scenario-name', (Get-ChaosOperationArg -Arguments $Arguments -Name 'scenarioName'),
                     '--config-name', (Get-ChaosOperationArg -Arguments $Arguments -Name 'configName'),
                     '--no-wait'
-                ))
+                ) + (Get-ChaosOperationSubscriptionCliArgs -Arguments $Arguments)))
             }
             external = @{ tool = 'az-chaos'; methodHint = 'scenario run start (--no-wait)' }
+        }
+        'run.list' = @{
+            localAz  = {
+                param($Arguments, $Body)
+                # -AllowFailure on purpose. This enumeration only ever runs to
+                # identify a run whose start was ALREADY accepted, so a read
+                # failure must degrade to "the run could not be identified" and
+                # never to "no run started". The caller distinguishes the two;
+                # collapsing them here would be the same false-negative that made
+                # an accepted run look like a run that never began.
+                Invoke-ChaosStudyAzChaos -AllowFailure -ChaosArgs (Get-ChaosOperationCliArgs -Arguments $Arguments -Verb @('scenario', 'run', 'list') -Composed (@(
+                    '-g', (Get-ChaosOperationArg -Arguments $Arguments -Name 'resourceGroup'),
+                    '--workspace-name', (Get-ChaosOperationArg -Arguments $Arguments -Name 'workspaceName'),
+                    '--scenario-name', (Get-ChaosOperationArg -Arguments $Arguments -Name 'scenarioName')
+                ) + (Get-ChaosOperationSubscriptionCliArgs -Arguments $Arguments)))
+            }
+            external = @{ tool = 'az-chaos'; methodHint = 'scenario run list' }
         }
         'run.show' = @{
             localAz  = {
                 param($Arguments, $Body)
-                Invoke-ChaosStudyAzChaos -AllowFailure -ChaosArgs (Get-ChaosOperationCliArgs -Arguments $Arguments -Verb @('scenario', 'run', 'show') -Composed @(
+                Invoke-ChaosStudyAzChaos -AllowFailure -ChaosArgs (Get-ChaosOperationCliArgs -Arguments $Arguments -Verb @('scenario', 'run', 'show') -Composed (@(
                     '-n', (Get-ChaosOperationArg -Arguments $Arguments -Name 'runId'),
                     '-g', (Get-ChaosOperationArg -Arguments $Arguments -Name 'resourceGroup'),
                     '--workspace-name', (Get-ChaosOperationArg -Arguments $Arguments -Name 'workspaceName'),
                     '--scenario-name', (Get-ChaosOperationArg -Arguments $Arguments -Name 'scenarioName')
-                ))
+                ) + (Get-ChaosOperationSubscriptionCliArgs -Arguments $Arguments)))
             }
             external = @{ tool = 'az-chaos'; methodHint = 'scenario run show' }
         }
@@ -341,12 +392,12 @@ function Get-ChaosOperationRegistry {
                 # absence probe needs the error text to tell an observed absence
                 # from an unreadable answer. Polling uses 'run.show', which is
                 # deliberately tolerant of a transient read failure.
-                Invoke-ChaosStudyAzChaos -ChaosArgs (Get-ChaosOperationCliArgs -Arguments $Arguments -Verb @('scenario', 'run', 'show') -Composed @(
+                Invoke-ChaosStudyAzChaos -ChaosArgs (Get-ChaosOperationCliArgs -Arguments $Arguments -Verb @('scenario', 'run', 'show') -Composed (@(
                     '-n', (Get-ChaosOperationArg -Arguments $Arguments -Name 'runId'),
                     '-g', (Get-ChaosOperationArg -Arguments $Arguments -Name 'resourceGroup'),
                     '--workspace-name', (Get-ChaosOperationArg -Arguments $Arguments -Name 'workspaceName'),
                     '--scenario-name', (Get-ChaosOperationArg -Arguments $Arguments -Name 'scenarioName')
-                ))
+                ) + (Get-ChaosOperationSubscriptionCliArgs -Arguments $Arguments)))
             }
             external = @{ tool = 'az-chaos'; methodHint = 'scenario run show' }
         }
@@ -357,12 +408,12 @@ function Get-ChaosOperationRegistry {
                 # aborts an injected fault; a cancel the service rejected must
                 # never look like one it accepted, or the operator would believe
                 # the blast radius had been closed when it had not.
-                Invoke-ChaosStudyAzChaos -ChaosArgs (Get-ChaosOperationCliArgs -Arguments $Arguments -Verb @('scenario', 'run', 'cancel') -Composed @(
+                Invoke-ChaosStudyAzChaos -ChaosArgs (Get-ChaosOperationCliArgs -Arguments $Arguments -Verb @('scenario', 'run', 'cancel') -Composed (@(
                     '-n', (Get-ChaosOperationArg -Arguments $Arguments -Name 'runId'),
                     '-g', (Get-ChaosOperationArg -Arguments $Arguments -Name 'resourceGroup'),
                     '--workspace-name', (Get-ChaosOperationArg -Arguments $Arguments -Name 'workspaceName'),
                     '--scenario-name', (Get-ChaosOperationArg -Arguments $Arguments -Name 'scenarioName')
-                ))
+                ) + (Get-ChaosOperationSubscriptionCliArgs -Arguments $Arguments)))
             }
             external = @{ tool = 'az-chaos'; methodHint = 'scenario run cancel' }
         }

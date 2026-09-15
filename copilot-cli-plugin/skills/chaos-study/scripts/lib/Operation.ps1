@@ -67,6 +67,22 @@ $ChaosOperationResultSchemas = @{
     'run.v1'              = @(
         @{ name = 'name'; type = 'string'; required = $true }
     )
+    # The accepted-but-unidentified start. `az chaos scenario run start
+    # --no-wait` documents that it returns the run id parsed from the Location
+    # header, but it has been observed to exit 0 with an empty body for a run
+    # the service genuinely created. 'run.v1' rejects that body, and the
+    # rejection surfaced as a throw AFTER the fault was already injecting -
+    # which read as "never started" and let cleanup delete the configuration
+    # underneath a live fault.
+    #
+    # So 'name' is optional here and required nowhere else: this schema says
+    # "the start was accepted; the id may or may not be in the body", and
+    # Start-ChaosStudyScenarioRun is responsible for identifying the run. When
+    # the body DOES carry a name it is still type-checked, so this is strictly
+    # more permissive about absence and no more permissive about garbage.
+    'runStart.v1'         = @(
+        @{ name = 'name'; type = 'string'; required = $false }
+    )
     'runStatus.v1'        = @(
         @{ name = 'status'; type = 'string'; required = $false }
     )

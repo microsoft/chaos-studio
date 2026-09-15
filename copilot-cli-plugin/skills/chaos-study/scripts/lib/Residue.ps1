@@ -357,6 +357,15 @@ function Set-ChaosResidueCleanup {
           skipped                 deliberately not attempted
           unattempted             never tried
 
+        -RemovalError is persisted apart from -ErrorText because the two answer
+        different questions. A delete can raise and still have deleted: the live
+        case that forced this split returned "BadRequest: Nullable object must
+        have a value" for a configuration the Activity Log confirms was removed.
+        Folding that raise into the single `error` field either erases the read-
+        back's finding or erases the raise; keeping both means the ledger can say
+        "the delete errored, and the object is nevertheless gone" without either
+        half being inferred from the other.
+
         Returns $false when there is no such entry, rather than inventing one:
         recording cleanup for an object that was never recorded as created
         would misstate what the study touched.
@@ -367,6 +376,7 @@ function Set-ChaosResidueCleanup {
         [Parameter(Mandatory)][string]$Id,
         [Parameter(Mandatory)][ValidateSet('verified-absent', 'accepted-unverified', 'still-present', 'verification-unavailable', 'failed', 'skipped', 'unattempted')][string]$Status,
         [AllowNull()][AllowEmptyString()][string]$ErrorText = $null,
+        [AllowNull()][AllowEmptyString()][string]$RemovalError = $null,
         [AllowNull()][AllowEmptyString()][string]$Command = $null,
         [AllowNull()][AllowEmptyCollection()][object[]]$Attempts = $null
     )
@@ -391,6 +401,10 @@ function Set-ChaosResidueCleanup {
             status      = $Status
             removed     = (Test-ChaosResidueRemoved -Status $Status)
             error       = if ([string]::IsNullOrWhiteSpace($ErrorText)) { $null } else { $ErrorText }
+            # Kept apart from `error` on purpose: a removal that raised and an
+            # object that is nevertheless gone are both facts, and neither may
+            # be inferred from the other.
+            removalError = if ([string]::IsNullOrWhiteSpace($RemovalError)) { $null } else { $RemovalError }
             command     = $removalCommand
             # Null, not an empty array: nobody looked is not the same as looked
             # and saw nothing.
@@ -414,13 +428,21 @@ function Test-ChaosResidueNotFoundError {
     .DESCRIPTION
         A delete that fails with "not found" is not a failed cleanup - it is a
         cleanup that had nothing left to do, usually because a previous attempt
-        (or the service itself) already removed the object. Recording that as
-        'failed' leaves unresolved residue for something that does not exist and
-        prints an exact removal command that will fail the same way forever.
+        (or the service itself) already removed the object.
 
-        This only decides whether the read-back is worth performing. The status
-        still comes from what the verifier actually observes, so a misleading
-        error can never by itself produce 'verified-absent'.
+        This is used only to word an unresolved entry's error text. It is
+        deliberately NOT a gate on whether the read-back runs, and it never
+        moves a status. An earlier version used it to decide whether probing was
+        worth the call, which meant an unrecognised error skipped the probe
+        entirely - and the error that actually occurs in the field,
+        "BadRequest: Nullable object must have a value", is unrecognised while
+        the delete underneath it succeeds. That combination recorded 'failed'
+        for objects that were already gone and left the operator chasing
+        residue that did not exist.
+
+        Matching text is also the weakest possible evidence of absence: it is
+        the service's prose, not an observation. Only the verifier may produce
+        'verified-absent'.
     #>
     param([AllowNull()][AllowEmptyString()][string]$Text)
 
@@ -460,6 +482,13 @@ function Invoke-ChaosResidueRemoval {
         writes 'verified-absent'; everything else keeps the entry unresolved
         and therefore keeps L14 and the exact removal command in the report.
 
+        The read-back runs after every removal, including one that raised. A
+        delete can error and still have deleted - the field case is "BadRequest:
+        Nullable object must have a value" against a configuration the Activity
+        Log shows gone - so the raise and the object's state are recorded as two
+        separate facts and neither is inferred from the other. A raise that the
+        probe cannot clear still reads 'failed'; only an observation clears it.
+
         Without a verifier the best available status is 'accepted-unverified'.
         That is deliberately not a success: a caller that cannot check has not
         earned the right to print "removed".
@@ -492,6 +521,7 @@ function Invoke-ChaosResidueRemoval {
 
     $status = 'accepted-unverified'
     $errorText = $null
+    $removalErrorText = $null
     $attempts = $null
     $attemptLog = [System.Collections.Generic.List[object]]::new()
     $removalLog = [System.Collections.Generic.List[object]]::new()
@@ -512,6 +542,7 @@ function Invoke-ChaosResidueRemoval {
             $errorText = $_.Exception.Message
             $removalError = $errorText
         }
+        $removalErrorText = $removalError
 
         $removalLog.Add([ordered]@{
                 attempt     = $r
@@ -521,14 +552,19 @@ function Invoke-ChaosResidueRemoval {
                 reissued    = ($r -gt 1)
             }) | Out-Null
 
-        # A removal that raised is normally terminal - polling for absence would
-        # at best confirm what the error said, and at worst turn a real failure
-        # into a softer-looking status. The exception is "not found": that error
-        # means the object is already gone, and refusing to look would leave
-        # unresolved residue (and an exact removal command) for something that
-        # does not exist. The verifier still decides the status.
+        # The read-back runs after EVERY removal, accepted or raised. Whether a
+        # delete raised and whether the object is gone are independent facts:
+        # the live failure this rule exists for returned "BadRequest: Nullable
+        # object must have a value" for a configuration that the Activity Log
+        # shows was deleted. Gating the probe on a recognised error message made
+        # the ledger's answer depend on the service's prose instead of on an
+        # observation, and any unfamiliar error - the only kind worth probing -
+        # was exactly the kind that skipped the probe.
+        #
+        # Probing costs one read. Not probing costs an operator a hunt for
+        # residue that is not there, or worse, a quiet belief that something
+        # still-present was cleaned up.
         if ($null -eq $VerifyAbsent) { break }
-        if ($status -eq 'failed' -and -not (Test-ChaosResidueNotFoundError -Text $removalError)) { break }
 
         # Evidence accumulates across removal passes: a later pass that finally
         # sees the object gone must not erase the earlier pass that saw it
@@ -552,11 +588,12 @@ function Invoke-ChaosResidueRemoval {
             else { [bool]$observed }
 
             $attemptLog.Add([ordered]@{
-                    attempt     = $i
-                    removalPass = $r
-                    observedAt  = Get-ChaosUtcNow
-                    absent      = $absent
-                    error       = $attemptError
+                    attempt      = $i
+                    removalPass  = $r
+                    observedAt   = Get-ChaosUtcNow
+                    absent       = $absent
+                    error        = $attemptError
+                    afterFailure = ($null -ne $removalError)
                 }) | Out-Null
 
             if ($absent -eq $true) {
@@ -578,8 +615,28 @@ function Invoke-ChaosResidueRemoval {
             }
         }
 
-        if ($status -ne 'verified-absent') {
-            if ($null -ne $unavailableReason) {
+        if ($status -eq 'verified-absent') {
+            # The delete raised and the object is gone anyway. Both facts are
+            # kept: `removalError` carries the raise, `error` stays null because
+            # there is nothing left unresolved for an operator to act on.
+            $errorText = $null
+        } else {
+            $verifiedNothing = ($null -ne $unavailableReason)
+            if ($null -ne $removalError) {
+                # A removal that raised is not rescued by an inconclusive probe,
+                # and an inconclusive probe is not evidence of anything. 'failed'
+                # stands, with the probe's finding recorded beside it.
+                $status = 'failed'
+                $suffix = if ($verifiedNothing) {
+                    "A read-back was attempted after the failure and could not confirm the object's state: $unavailableReason"
+                } else {
+                    "A read-back after the failure found the object still present."
+                }
+                $hint = if (Test-ChaosResidueNotFoundError -Text $removalError) {
+                    ' The error text says the object was not found, but that is the service''s wording rather than an observation, so it cannot stand in for a confirmed absence.'
+                } else { '' }
+                $errorText = "$removalError $suffix$hint"
+            } elseif ($verifiedNothing) {
                 $status = 'verification-unavailable'
                 if ([string]::IsNullOrWhiteSpace($errorText)) {
                     $errorText = "Removal was accepted but absence could not be confirmed: $unavailableReason"
@@ -605,7 +662,7 @@ function Invoke-ChaosResidueRemoval {
 
     $recorded = $false
     try {
-        $recorded = Set-ChaosResidueCleanup -StudyPath $StudyPath -Kind $Kind -Id $Id -Status $status -ErrorText $errorText -Command $Command -Attempts $attempts
+        $recorded = Set-ChaosResidueCleanup -StudyPath $StudyPath -Kind $Kind -Id $Id -Status $status -ErrorText $errorText -RemovalError $removalErrorText -Command $Command -Attempts $attempts
     } catch {
         $recorded = $false
     }
@@ -616,6 +673,7 @@ function Invoke-ChaosResidueRemoval {
         status         = $status
         removed        = (Test-ChaosResidueRemoved -Status $status)
         error          = $errorText
+        removalError   = $removalErrorText
         attempts       = $attempts
         removalAttempts = @($removalLog)
         recorded       = [bool]$recorded
@@ -676,6 +734,10 @@ function Get-ChaosResidueSummary {
                     attemptedAt = if ($null -eq $cleanup) { $null } else { $cleanup.attemptedAt }
                     attempts    = if ($null -eq $cleanup -or $null -eq $cleanup.PSObject.Properties['attempts']) { $null } else { $cleanup.attempts }
                     error       = if ($null -eq $cleanup) { $null } else { $cleanup.error }
+                    # Carried separately from `error` so a reader can see that a
+                    # delete raised even when the read-back then proved the
+                    # object gone. Neither fact implies the other.
+                    removalError = if ($null -eq $cleanup -or $null -eq $cleanup.PSObject.Properties['removalError']) { $null } else { $cleanup.removalError }
                     command     = if ($null -ne $cleanup -and -not [string]::IsNullOrWhiteSpace([string]$cleanup.command)) { [string]$cleanup.command } else { Get-ChaosResidueRemovalCommand -Entry $_ }
                 }
             })

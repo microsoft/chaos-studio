@@ -392,7 +392,7 @@ function Select-ChaosSignalByName {
         [AllowNull()][AllowEmptyCollection()][string[]]$Sources = @()
     )
 
-    $candidates = @(@($Signals) | Where-Object { $null -ne $_ -and $null -ne $_.values })
+    $candidates = @(@($Signals) | Where-Object { $null -ne $_ -and $null -ne (Get-ChaosMember -InputObject $_ -Name 'values') })
     if ($candidates.Count -eq 0 -or [string]::IsNullOrWhiteSpace($SignalName)) { return $null }
 
     # 1. The name is a column the result actually carries.
@@ -405,7 +405,7 @@ function Select-ChaosSignalByName {
 
     # 2. The result's own id names the signal (a metric series).
     foreach ($signal in $candidates) {
-        $source = [string]$signal.source
+        $source = [string](Get-ChaosMember -InputObject $signal -Name 'source')
         if ($source -ceq $SignalName -or $source -ceq "metrics:$SignalName") { return $signal }
         if ($source -ieq $SignalName -or $source -ieq "metrics:$SignalName") { return $signal }
     }
@@ -418,7 +418,7 @@ function Select-ChaosSignalByName {
         if ($test.matched -ne $true) { continue }
         $id = [string]$test.identity.id
         foreach ($signal in $candidates) {
-            if ([string]$signal.source -ieq $id) { return $signal }
+            if ([string](Get-ChaosMember -InputObject $signal -Name 'source') -ieq $id) { return $signal }
         }
     }
 

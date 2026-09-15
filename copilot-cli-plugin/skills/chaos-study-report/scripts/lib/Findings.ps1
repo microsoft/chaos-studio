@@ -37,6 +37,12 @@ $script:ChaosFindingsLegacyVersions = @('findings.v1')
 # scoping and then reports its own objective unreadable.
 . (Join-Path $PSScriptRoot '..' '..' '..' 'chaos-study' 'scripts' 'lib' 'SignalIdentity.ps1')
 
+# ConvertFrom-ChaosProbeCondition / Test-ChaosProbeCondition live in the shared
+# library because the run skill's abort monitor evaluates against the same
+# threshold grammar. One definition, so a condition cannot mean one thing while
+# the fault is live and another in the report.
+. (Join-Path $PSScriptRoot '..' '..' '..' 'chaos-study' 'scripts' 'lib' 'AbortCriteria.ps1')
+
 function Get-ChaosFindingsContractVersion {
     <#
     .SYNOPSIS
@@ -201,99 +207,6 @@ function Get-ChaosImpactDelta {
     return [pscustomobject]@{
         moved  = $false
         detail = 'No measured signal changed between the baseline and injection windows.'
-    }
-}
-
-function ConvertFrom-ChaosProbeCondition {
-    <#
-    .SYNOPSIS
-        Parse a mechanism probe's `condition` into something evaluable.
-
-    .DESCRIPTION
-        The condition is the falsifiable half of the probe: `>= 80`, `cpu >= 80`,
-        `< 10 ms`. Without it, "the number moved" is all that can be said - and a
-        CPU that drifted 1.59 to 2.06 under ordinary load moved, which is exactly
-        how a study once declared a fault landed when the agent had failed to
-        install. So the operator and the threshold are parsed here, and anything
-        that cannot be parsed is reported as unparseable rather than being
-        quietly reduced to a direction check.
-
-    .OUTPUTS
-        { raw; operator; threshold; unit; parsed; reason }
-        parsed:$false always carries a reason the operator can act on.
-    #>
-    param([AllowNull()][AllowEmptyString()][string]$Condition)
-
-    if ([string]::IsNullOrWhiteSpace($Condition)) {
-        return [pscustomobject]@{
-            raw = $Condition; operator = $null; threshold = $null; unit = $null
-            parsed = $false
-            reason = 'the probe carries no condition, so there is no threshold the mechanism can be held to'
-        }
-    }
-
-    $raw = $Condition.Trim()
-    # `<signal> <op> <number> [unit]` or just `<op> <number> [unit]`.
-    $match = [regex]::Match($raw, '(>=|<=|==|!=|=>|=<|>|<)\s*(-?[0-9]+(?:\.[0-9]+)?)\s*([A-Za-z%/]*)')
-    if (-not $match.Success) {
-        return [pscustomobject]@{
-            raw = $raw; operator = $null; threshold = $null; unit = $null
-            parsed = $false
-            reason = "no comparison operator and numeric threshold could be read from '$raw'"
-        }
-    }
-
-    $operator = switch ($match.Groups[1].Value) {
-        '=>' { '>=' }
-        '=<' { '<=' }
-        default { $match.Groups[1].Value }
-    }
-    $threshold = 0.0
-    if (-not [double]::TryParse($match.Groups[2].Value, [ref]$threshold)) {
-        return [pscustomobject]@{
-            raw = $raw; operator = $operator; threshold = $null; unit = $null
-            parsed = $false
-            reason = "the threshold in '$raw' is not a number"
-        }
-    }
-
-    $unit = $match.Groups[3].Value
-    return [pscustomobject]@{
-        raw       = $raw
-        operator  = $operator
-        threshold = $threshold
-        unit      = if ([string]::IsNullOrWhiteSpace($unit)) { $null } else { $unit }
-        parsed    = $true
-        reason    = $null
-    }
-}
-
-function Test-ChaosProbeCondition {
-    <#
-    .SYNOPSIS
-        Does one measured value satisfy a parsed probe condition?
-
-    .OUTPUTS
-        $true, $false, or $null when the condition or the value is unusable.
-        Unusable is never a pass.
-    #>
-    param(
-        [Parameter(Mandatory)][AllowNull()][object]$Condition,
-        [AllowNull()][object]$Value
-    )
-    if ($null -eq $Condition -or -not $Condition.parsed) { return $null }
-    if ($null -eq $Value) { return $null }
-    $actual = 0.0
-    if (-not [double]::TryParse([string]$Value, [ref]$actual)) { return $null }
-    $threshold = [double]$Condition.threshold
-    switch ([string]$Condition.operator) {
-        '>=' { return $actual -ge $threshold }
-        '>'  { return $actual -gt $threshold }
-        '<=' { return $actual -le $threshold }
-        '<'  { return $actual -lt $threshold }
-        '==' { return $actual -eq $threshold }
-        '!=' { return $actual -ne $threshold }
-        default { return $null }
     }
 }
 
@@ -973,9 +886,14 @@ function Build-StudyFindings {
         [Parameter(Mandatory)][object]$Evidence
     )
 
-    $pre = @($Evidence.pre)
-    $during = @($Evidence.during)
-    $post = @($Evidence.post)
+    # Evidence arrives as an ordered dictionary in-process and as a
+    # PSCustomObject after a JSON round-trip, and a window that collected
+    # nothing may be absent rather than empty. Read all three through the shared
+    # accessor so a missing window becomes an empty set - which the limitation
+    # logic below reports as a coverage gap - instead of a StrictMode throw.
+    $pre = @(Get-ChaosMember -InputObject $Evidence -Name 'pre')
+    $during = @(Get-ChaosMember -InputObject $Evidence -Name 'during')
+    $post = @(Get-ChaosMember -InputObject $Evidence -Name 'post')
 
     $delta = Get-ChaosImpactDelta -Before $pre -During $during
 
@@ -1130,8 +1048,9 @@ function Build-StudyFindings {
         $touchedCount = $RunRecord.scenarioRun.observation.resourcesTouched
     }
     $declaredCount = $null
-    if (($Plan.scope.PSObject.Properties.Name -contains 'projectedResourceCount')) {
-        $declaredCount = $Plan.scope.projectedResourceCount
+    $planScope = Get-ChaosMember -InputObject $Plan -Name 'scope'
+    if ($null -ne $planScope) {
+        $declaredCount = Get-ChaosMember -InputObject $planScope -Name 'projectedResourceCount'
     }
     if ($null -ne $touchedCount -and $null -ne $declaredCount -and [int]$touchedCount -gt [int]$declaredCount) {
         $findings += New-ChaosFinding -Key (Get-ChaosFindingKey -ActionUrn $actionIdentity -Signal 'blast-radius' -Predicate 'declared-scope') `
@@ -1147,9 +1066,23 @@ function Build-StudyFindings {
             )
     }
 
-    $missing = @(@($pre + $during + $post) | Where-Object { $null -eq $_.values })
+    # An evidence sample that carries no `values` member at all is exactly the
+    # sample this limitation exists to declare, so it must be counted, not
+    # thrown over. Reading `$_.values` directly does the opposite: under
+    # StrictMode an absent member raises, so the one shape that proves the
+    # coverage gap takes the whole report down instead of being reported as a
+    # coverage gap. Read through the shared accessor, where "absent" and
+    # "present but null" both land on $null and both mean "no values".
+    $missing = @(@($pre + $during + $post) | Where-Object { $null -eq (Get-ChaosMember -InputObject $_ -Name 'values') })
     if ($missing.Count -gt 0 -and $limitations -notcontains 'L2') { $limitations += 'L2' }
-    if ([int]$Plan.windows.injectMinutes -le 3) { $limitations += 'L7' }
+    # Same class of bug on the plan: a plan with no windows member is not a plan
+    # with a long injection window. An unknown duration cannot rule the duration
+    # limitation out, so it declares L7 rather than quietly clearing it - and it
+    # does so without reaching through a member that may not exist.
+    $injectMinutes = Get-ChaosMember -InputObject (Get-ChaosMember -InputObject $Plan -Name 'windows') -Name 'injectMinutes'
+    if ($null -eq $injectMinutes -or [int]$injectMinutes -le 3) {
+        if ($limitations -notcontains 'L7') { $limitations += 'L7' }
+    }
     # A run record exists even when the run never started, in which case it has
     # no scenarioRun member at all. Reaching through it would throw under
     # StrictMode and take down the whole report over a run that plainly failed -

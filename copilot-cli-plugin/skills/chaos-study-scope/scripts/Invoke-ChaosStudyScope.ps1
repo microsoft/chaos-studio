@@ -150,6 +150,15 @@ param(
     # resource, or readiness blocks it as untraceable (exit 10).
     [hashtable]$MechanismProbe,
 
+    # The customer's own stop rule, as a table with keys:
+    #   statement    their words, verbatim, never reworded or thresholded here
+    #   source       customer | candidate | unknown | none
+    #   enforcement  who watches it; 'operator' is the only honest value today
+    # A bare string is accepted and read as a customer-stated rule, because
+    # typing one on the command line is an act of stating it. Absent or
+    # unstated blocks arming rather than printing a generated sentence.
+    [AllowNull()][object]$AbortCriteria,
+
     # Signal sources: 'metrics:<name>' or 'logs:<workspaceId>#<kql>'.
     [string[]]$SignalSource = @(),
 
@@ -215,6 +224,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '..' '..' 'chaos-study' 'scripts' 'lib' 'Exercise.ps1')
 . (Join-Path $PSScriptRoot '..' '..' 'chaos-study' 'scripts' 'lib' 'ConfigurationPayload.ps1')
 . (Join-Path $PSScriptRoot '..' '..' 'chaos-study' 'scripts' 'lib' 'FaultDuration.ps1')
+. (Join-Path $PSScriptRoot '..' '..' 'chaos-study' 'scripts' 'lib' 'AbortCriteria.ps1')
 . (Join-Path $PSScriptRoot 'lib' 'ActionDiscovery.ps1')
 . (Join-Path $PSScriptRoot 'lib' 'Workspace.ps1')
 . (Join-Path $PSScriptRoot 'lib' 'Readiness.ps1')
@@ -755,6 +765,13 @@ $exerciseModel = New-ChaosExerciseModel `
     -EligibleFraction $(if ($PSBoundParameters.ContainsKey('EligibleFraction')) { $EligibleFraction } else { $null }) `
     -Assumption $exerciseAssumptions
 
+# The stop rule is normalized before the gates run, because whether it can be
+# armed is a precondition for the study rather than a detail of the plan. The
+# local is deliberately not named $abortCriteria: PowerShell resolves variables
+# case-insensitively, so that name would collide with the [object]$AbortCriteria
+# parameter and silently rebind it.
+$abortSpec = ConvertFrom-ChaosAbortCriteria -Raw $AbortCriteria
+
 $readiness = Invoke-ChaosReadinessGates -Action $selectedAction `
     -Scenario $selectedScenario `
     -ScopedResourceTypes $scopeTypesForGates `
@@ -767,6 +784,7 @@ $readiness = Invoke-ChaosReadinessGates -Action $selectedAction `
     -FailureMechanism $FailureMechanism `
     -MechanismEvidence $MechanismEvidence `
     -MechanismProbe $probeSpec `
+    -AbortCriteria $abortSpec `
     -ExerciseModel $exerciseModel `
     -AcceptWeakExercise:$AcceptWeakExercise `
     -DiscoverySkipped:$SkipDiscovery `
@@ -914,6 +932,85 @@ else {
     }
 }
 
+# -- Abort criteria --------------------------------------------------------
+#
+# The stop rule the customer stated, normalized once, here, so the plan freezes
+# their words rather than a sentence this suite generated from the predicate.
+# The distinction is the whole point: an operator asked to "abort if any signal
+# source stops reporting for two intervals" is watching for something nobody
+# agreed to, and will not recognise the failure they actually care about.
+#
+# Nothing here parses prose into numbers. ConvertFrom-ChaosAbortCriteria keeps
+# a sentence as a sentence and marks it unevaluable; the readiness gate above
+# has already refused to arm on that, so by this point $abortSpec is either
+# measurable or the study never got here. The suite cancels the run itself on
+# breach, so "measurable" is a hard requirement and not a nicety.
+$abortStatement = $null
+$abortSource = 'none'
+$abortEnforcement = 'none'
+$abortEvaluable = $false
+if ($null -ne $abortSpec) {
+    $abortStatement = $abortSpec['statement']
+    if ([string]::IsNullOrWhiteSpace([string]$abortStatement)) { $abortStatement = $null }
+    $abortSource = [string]$abortSpec['source']
+    $abortEvaluable = [bool]$abortSpec['evaluable']
+    # Enforcement is what the run will actually do, not what was requested.
+    # Only a criterion the run can measure gets to claim 'runtime'.
+    $abortEnforcement = $(if ($abortEvaluable) { 'runtime' } else { 'none' })
+}
+
+# Stated means: there are words, and a human is on record as having supplied
+# them. A candidate's shipped template is words without the record. Armable
+# adds the part that makes the rule do something - a measurement the run can
+# take while the fault is live.
+$abortStated = ($null -ne $abortStatement -and $abortSource -eq 'customer')
+$abortArmable = ($abortStated -and $abortEvaluable)
+$abortReason = $null
+if ($null -eq $abortSpec) {
+    $abortReason = 'No abort criteria were supplied. Re-run chaos-study-design and answer the abort question, or pass -AbortCriteria.'
+}
+elseif (-not $abortStated) {
+    if ($null -eq $abortStatement) {
+        $abortReason = 'No abort criteria were supplied. Re-run chaos-study-design and answer the abort question, or pass -AbortCriteria.'
+    }
+    else {
+        $abortReason = "The only abort criteria available came from '$abortSource', not from the customer. A template is not a stop rule anyone agreed to watch for."
+    }
+}
+elseif (-not $abortEvaluable) {
+    $abortReason = [string]$abortSpec['reason']
+    if ([string]::IsNullOrWhiteSpace($abortReason)) {
+        $abortReason = 'The abort criteria cannot be evaluated during the run, so nothing would stop it.'
+    }
+}
+
+# What a poll actually evaluates during injection: the customer's own
+# threshold, not the steady-state predicate. The predicate is the study's
+# question; the abort rule is the customer's floor, and substituting one for
+# the other was exactly the invention this block exists to prevent.
+$abortWatch = $null
+if ($abortArmable) {
+    $watchSignal = [string]$abortSpec['signal']
+    if ([string]::IsNullOrWhiteSpace($watchSignal)) { $watchSignal = 'query result' }
+    $abortWatch = ("{0} {1}" -f $watchSignal, [string]$abortSpec['conditionText']).Trim()
+}
+$abortMonitored = $abortArmable
+
+# The lines the operator is shown. The customer's rule leads because it is the
+# one they gave; everything after it is labelled as this suite's own default so
+# the two are never confused.
+$abortConditions = @()
+if ($null -ne $abortStatement) {
+    $abortConditions += "Stated by the customer: $abortStatement"
+}
+if ($abortMonitored) {
+    $abortConditions += "Enforced by this suite: the run is cancelled when $abortWatch."
+}
+else {
+    $abortConditions += 'Not enforced: no measurable stop rule was armed, so nothing will end this run early.'
+}
+$abortConditions += 'Derived default: any signal source stops reporting for longer than two intervals.'
+
 $plan = [ordered]@{
     planVersion = $ChaosStudyPlanVersion
     createdAt   = Get-ChaosUtcNow
@@ -1036,10 +1133,33 @@ $plan = [ordered]@{
     safety      = [ordered]@{
         reversible      = ($selectedAction.actionType -and $selectedAction.actionType -ine 'Discrete')
         requiresConsent = $true
-        abortConditions = @(
-            "Steady state $($predicate.raw) is breached beyond the recovery window."
-            'Any signal source stops reporting for longer than two intervals.'
-        )
+        # Stays a string[]. Two renderers pipe it straight into list output, and
+        # turning it into objects would print type names for every plan already
+        # frozen on disk. The structured record lives beside it instead.
+        abortConditions = @($abortConditions)
+        # What the arming gate froze and what the run-time watch evaluates. The
+        # measurement fields are the contract: the run resolves `signal` against
+        # its collected signals, aggregates it with `aggregate`, and compares it
+        # to `condition`, cancelling when that condition is met. `statement` and
+        # `source` are kept verbatim so the report can show whose rule it was,
+        # not this suite's paraphrase of it.
+        abortCriteria   = [ordered]@{
+            stated            = $abortStated
+            armable           = $abortArmable
+            statement         = $abortStatement
+            source            = $abortSource
+            enforcement       = $abortEnforcement
+            monitored         = $abortMonitored
+            watch             = $abortWatch
+            reason            = $abortReason
+            signal            = $(if ($null -ne $abortSpec) { $abortSpec['signal'] } else { $null })
+            query             = $(if ($null -ne $abortSpec) { $abortSpec['query'] } else { $null })
+            aggregate         = $(if ($null -ne $abortSpec) { $abortSpec['aggregate'] } else { $null })
+            conditionText     = $(if ($null -ne $abortSpec) { $abortSpec['conditionText'] } else { $null })
+            condition         = $(if ($null -ne $abortSpec) { $abortSpec['condition'] } else { $null })
+            resourceCorrelation = $(if ($null -ne $abortSpec) { $abortSpec['resourceCorrelation'] } else { $null })
+            evaluable         = $abortEvaluable
+        }
     }
 
     signals     = [ordered]@{

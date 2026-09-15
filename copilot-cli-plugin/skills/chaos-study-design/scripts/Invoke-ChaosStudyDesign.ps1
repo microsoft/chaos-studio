@@ -117,6 +117,7 @@ $ErrorActionPreference = 'Stop'
 # answered "local-az ready" and the caller's scope had no transport at all.
 . (Join-Path $PSScriptRoot '..' '..' 'chaos-study' 'scripts' 'lib' 'Operation.ps1')
 . (Join-Path $PSScriptRoot '..' '..' 'chaos-study' 'scripts' 'lib' 'ApiVersions.ps1')
+. (Join-Path $PSScriptRoot '..' '..' 'chaos-study' 'scripts' 'lib' 'AbortCriteria.ps1')
 . (Join-Path $PSScriptRoot '..' '..' 'chaos-study-scope' 'scripts' 'lib' 'Workspace.ps1')
 . (Join-Path $PSScriptRoot '..' '..' 'chaos-study-scope' 'scripts' 'lib' 'ActionDiscovery.ps1')
 . (Join-Path $PSScriptRoot 'lib' 'Brief.ps1')
@@ -339,6 +340,69 @@ interview again or supply new candidates - do not confirm one that is close.
     }
 }
 
+function Get-ChaosDesignAbortCriteria {
+    <#
+    .SYNOPSIS
+        The stop rule, in the shape the run phase can actually act on.
+
+    .DESCRIPTION
+        Three inputs can supply an abort criterion and they are not equivalent:
+        the customer's answer in the interview, a structured criterion the
+        candidate carries, and nothing at all. Collapsing them into one string is
+        what let a generic sentence stand in for a stop rule a human never gave.
+
+        Structure is only ever read from a structured source. The customer's
+        prose becomes `statement` - provenance, preserved verbatim, shown back to
+        them - and never a `signal` or a `condition`. There is no sentence from
+        which `errorRate > 0.05` can honestly be derived, and a study that aborts
+        on a threshold nobody agreed to is worse than one that refuses to arm.
+
+        Evaluability is decided by the shared library rather than here, so the
+        answer is the same at design time, at the arming gate and during the run.
+    #>
+    param(
+        [Parameter(Mandatory)][object]$Candidate,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Answer
+    )
+
+    # `abortCriterion` is the structured slot. `abortCriteria` is the older one
+    # and is usually a sentence, so it is only mined for structure when it is
+    # demonstrably not a string.
+    $structured = Get-ChaosMember -InputObject $Candidate -Name 'abortCriterion'
+    $template = Get-ChaosMember -InputObject $Candidate -Name 'abortCriteria'
+    if ($null -eq $structured -and $null -ne $template -and $template -isnot [string]) {
+        $structured = $template
+    }
+
+    $templateText = if ($template -is [string]) { [string]$template } else { [string](Get-ChaosMember -InputObject $template -Name 'statement') }
+
+    $statement = if (-not [string]::IsNullOrWhiteSpace($Answer)) { $Answer.Trim() } else { $templateText }
+    $source = if (-not [string]::IsNullOrWhiteSpace($Answer)) { 'customer' }
+              elseif (-not [string]::IsNullOrWhiteSpace($templateText) -or $null -ne $structured) { 'candidate' }
+              else { 'none' }
+
+    $raw = [ordered]@{
+        statement           = $statement
+        source              = $source
+        signal              = Get-ChaosMember -InputObject $structured -Name 'signal'
+        query               = Get-ChaosMember -InputObject $structured -Name 'query'
+        aggregate           = Get-ChaosMember -InputObject $structured -Name 'aggregate'
+        condition           = Get-ChaosMember -InputObject $structured -Name 'condition'
+        resourceCorrelation = Get-ChaosMember -InputObject $structured -Name 'resourceCorrelation'
+    }
+
+    $criteria = ConvertFrom-ChaosAbortCriteria -Raw $raw
+    # `source` is provenance and must survive the round trip untouched: the
+    # library defaults a blank source to 'unknown', which would quietly turn "no
+    # stop rule was given" into "one came from somewhere".
+    $criteria['source'] = $source
+    # There is no Chaos Studio abort hook. Enforcement is the suite watching the
+    # criterion between polls and cancelling the run itself, which it can only do
+    # when the criterion is evaluable.
+    $criteria['enforcement'] = if ($criteria.evaluable) { 'runtime' } else { 'none' }
+    return $criteria
+}
+
 function Get-ChaosDesignHandoff {
     <#
     .SYNOPSIS
@@ -350,9 +414,20 @@ function Get-ChaosDesignHandoff {
         chaos-study-scope takes, so none of it is retyped and none of it drifts
         between the conversation and the plan.
 
-        Abort criteria are carried but not claimed to be enforced. There is no
-        platform hook for them, so they are handed over as an operator gate and
-        labelled as one, which is honest rather than reassuring.
+        Abort criteria cross the seam as a structured record, not a sentence.
+        Chaos Studio has no abort hook, so the suite itself watches the criterion
+        during the run and cancels the run when it breaches - and it can only do
+        that against a named signal, a comparison operator and a threshold. What
+        is carried is whatever structure the candidate actually supplies, plus
+        the customer's own words and `source` as provenance, so scope can tell an
+        answer a human gave from a template the candidate shipped with.
+
+        The statement is carried verbatim and is never parsed into a threshold:
+        "stop if the store front starts erroring" is a human instruction, and
+        inventing `errorRate > 0.05` from it would put a number nobody agreed to
+        in front of a fault. Prose therefore arrives `evaluable = $false`, and
+        the refusal happens at the arming gate rather than here - design's job is
+        to say plainly that the stop rule is not yet executable.
     #>
     param([Parameter(Mandatory)][object]$Brief, [Parameter(Mandatory)][object]$Candidate)
 
@@ -360,6 +435,7 @@ function Get-ChaosDesignHandoff {
     $probe = Get-ChaosMember -InputObject $Candidate -Name 'mechanismProbe'
     $exposure = Get-ChaosMember -InputObject $Candidate -Name 'exposure'
     $blast = Get-ChaosMember -InputObject $Candidate -Name 'blastRadius'
+    $abortCriteria = Get-ChaosDesignAbortCriteria -Candidate $Candidate -Answer ([string]$answers['abort'])
 
     return [ordered]@{
         purpose              = [string]$answers['purpose']
@@ -395,17 +471,17 @@ function Get-ChaosDesignHandoff {
             exclusions    = @(Get-ChaosItems -InputObject $blast.exclusions | Where-Object { $_ })
             customerLimit = [string]$answers['blast']
         }
-        abortCriteria        = [ordered]@{
-            statement   = if ([string]::IsNullOrWhiteSpace([string]$answers['abort'])) { [string]$Candidate.abortCriteria } else { [string]$answers['abort'] }
-            enforcement = 'operator'
-            note        = 'Chaos Studio has no abort hook. This is a manual gate the operator watches during the run.'
-        }
+        abortCriteria        = $abortCriteria
         telemetryGaps        = @(Get-ChaosItems -InputObject $Candidate.telemetryGaps | Where-Object { $_ })
         collateralRisks      = @(Get-ChaosItems -InputObject $Candidate.collateralRisks | Where-Object { $_ })
         unresolvedQuestions  = @(
             @(Get-ChaosItems -InputObject $Brief.limitations | Where-Object { $_ }) + @(
                 if ([string]::IsNullOrWhiteSpace([string]$Candidate.steadyStatePredicate)) {
                     "No measurable steady-state predicate was agreed. The stated user impact was '$([string]$answers['impact'])', but prose is not a predicate - scope cannot falsify it. State the steady state as a measurable condition before running."
+                }
+            ) + @(
+                if (-not $abortCriteria.evaluable) {
+                    "The abort criterion is not in an evaluable form ($($abortCriteria.reason)). Chaos Studio has no abort hook, so the suite watches the criterion itself and cancels the run when it breaches - which it can only do against a signal, an operator and a threshold. State the stop rule as { signal, condition, resourceCorrelation } before running; the suite will refuse to arm otherwise."
                 }
             ) | Where-Object { $_ }
         )

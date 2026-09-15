@@ -586,6 +586,124 @@ function Test-ChaosInjectionWindow {
         -Detail "Injection window: $InjectMinutes minutes."
 }
 
+function Test-ChaosAbortCriteriaArmable {
+    <#
+    .SYNOPSIS
+        Is the stop rule something this suite can actually act on mid-run?
+
+    .DESCRIPTION
+        Chaos Studio has no abort hook, so the only stop rule that stops
+        anything is one the suite can evaluate between polls and act on by
+        cancelling the run itself. That takes three things a sentence does not
+        have: a named signal the study is already collecting, a comparison it
+        can apply, and a resource the movement can be tied to.
+
+        A study once armed with the sentence "stop if the store front starts
+        erroring" and an abort panel that told the operator to watch. Nobody was
+        watching. The run completed, the fault ran its full duration, and the
+        stop rule was decoration. This gate is blocking so that outcome is a
+        refusal at scope time rather than a surprise at run time.
+
+        It never invents the missing parts. Prose stays prose; the remediation
+        asks the human for the measurable form instead of guessing one.
+    #>
+    param(
+        [AllowNull()][object]$AbortCriteria,
+        [AllowEmptyCollection()][string[]]$AvailableSources = @(),
+        [AllowEmptyCollection()][string[]]$ScopedResourceIds = @()
+    )
+
+    $problems = @()
+
+    if ($null -eq $AbortCriteria) {
+        $problems += 'no abort criteria were supplied, so there is no stop rule to arm and nothing would end the run early'
+    }
+    else {
+        $statement = [string](Get-ChaosMember -InputObject $AbortCriteria -Name 'statement')
+        $source = [string](Get-ChaosMember -InputObject $AbortCriteria -Name 'source')
+        $signal = [string](Get-ChaosMember -InputObject $AbortCriteria -Name 'signal')
+        $query = [string](Get-ChaosMember -InputObject $AbortCriteria -Name 'query')
+        $correlation = [string](Get-ChaosMember -InputObject $AbortCriteria -Name 'resourceCorrelation')
+        $evaluable = [bool](Get-ChaosMember -InputObject $AbortCriteria -Name 'evaluable')
+        $reason = [string](Get-ChaosMember -InputObject $AbortCriteria -Name 'reason')
+
+        # Provenance first. A template the candidate shipped with is words
+        # nobody agreed to watch for, and arming on it would claim consent that
+        # was never given.
+        if ($source -ne 'customer') {
+            $shown = if ([string]::IsNullOrWhiteSpace($source)) { 'unknown' } else { $source }
+            $problems += "the abort criteria came from '$shown', not from the customer, so no human is on record as having agreed to this stop rule"
+        }
+
+        if (-not $evaluable) {
+            if (-not [string]::IsNullOrWhiteSpace($reason)) { $problems += $reason }
+            else { $problems += 'the abort criteria cannot be evaluated during the run' }
+        }
+        else {
+            # Same traceability rule as the mechanism probe, and for the same
+            # reason: a signal the study does not collect cannot be compared
+            # against a threshold while the fault is live.
+            if (-not [string]::IsNullOrWhiteSpace($signal)) {
+                $matched = @()
+                $undecidable = @()
+                foreach ($source2 in @($AvailableSources)) {
+                    $test = Test-ChaosSourceProducesSignal -Spec $source2 -SignalName $signal
+                    if ($test.matched -eq $true) { $matched += $source2 }
+                    elseif ($null -eq $test.matched) { $undecidable += $test.reason }
+                }
+                if ($matched.Count -eq 0) {
+                    $sourceList = if (@($AvailableSources).Count -gt 0) { $AvailableSources -join ', ' } else { 'none' }
+                    if ($undecidable.Count -gt 0) {
+                        $problems += "the abort signal '$signal' cannot be shown to come from any configured source ($($undecidable -join ' ')); give the query's output column an explicit alias, for example ``| summarize $signal = ...``"
+                    }
+                    else {
+                        $problems += "the abort signal '$signal' is not among the configured signal sources ($sourceList), so it cannot be measured during the run"
+                    }
+                }
+            }
+            elseif (-not [string]::IsNullOrWhiteSpace($query)) {
+                $hasLogs = @(@($AvailableSources) | Where-Object { $_ -like 'logs:*' }).Count -gt 0
+                if (-not $hasLogs) {
+                    $problems += 'the abort criteria use a query but no logs: signal source is configured for it to run against, so it cannot be measured during the run'
+                }
+            }
+
+            # A movement that cannot be tied to a resource under study is not
+            # evidence the study caused it, and cancelling a run on someone
+            # else's incident is its own kind of damage.
+            if ([string]::IsNullOrWhiteSpace($correlation)) {
+                $problems += 'the abort criteria have no resourceCorrelation, so a breach could not be tied to the resource under study'
+            }
+            elseif (@($ScopedResourceIds).Count -gt 0) {
+                $hit = @(@($ScopedResourceIds) | Where-Object { $_ -and ($_ -eq $correlation -or $_ -like "*$correlation*" -or $correlation -like "*$_*") })
+                if ($hit.Count -eq 0) {
+                    $problems += "the abort criteria resourceCorrelation '$correlation' does not resolve to any resource in scope"
+                }
+            }
+        }
+
+        if ($problems.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($statement)) {
+            # The human's words are repeated back verbatim so the remediation is
+            # about translating what they said, not replacing it.
+            $problems += "the stated rule was: '$statement'"
+        }
+    }
+
+    if ($problems.Count -gt 0) {
+        return New-ChaosReadinessGate -Id 'abort-armable' -Title 'The abort criteria can be armed' `
+            -Status 'fail' -Severity 'blocking' `
+            -Detail ('Cannot arm a stop rule: ' + ($problems -join '; ') + '.') `
+            -Remediation 'Re-run scoping with -AbortCriteria giving a measurable rule: a { statement, signal, condition, resourceCorrelation } whose signal is one of -SignalSource and whose resourceCorrelation is a resource in scope. Ask the customer for the number - do not infer one from their sentence.'
+    }
+
+    $shownSignal = [string](Get-ChaosMember -InputObject $AbortCriteria -Name 'signal')
+    if ([string]::IsNullOrWhiteSpace($shownSignal)) { $shownSignal = 'query' }
+    $shownCondition = [string](Get-ChaosMember -InputObject $AbortCriteria -Name 'conditionText')
+    return New-ChaosReadinessGate -Id 'abort-armable' -Title 'The abort criteria can be armed' `
+        -Status 'pass' -Severity 'blocking' `
+        -Detail "The customer's stop rule ($shownSignal $shownCondition) is measurable against a configured signal and a scoped resource, so the run evaluates it between polls and cancels the run on breach."
+}
+
 function Invoke-ChaosReadinessGates {
     <#
     .SYNOPSIS
@@ -604,6 +722,7 @@ function Invoke-ChaosReadinessGates {
         [AllowNull()][AllowEmptyString()][string]$FailureMechanism = $null,
         [AllowNull()][AllowEmptyString()][string]$MechanismEvidence = $null,
         [AllowNull()][object]$MechanismProbe = $null,
+        [AllowNull()][object]$AbortCriteria = $null,
         [AllowNull()][object]$ExerciseModel = $null,
         [switch]$AcceptWeakExercise,
         [switch]$DiscoverySkipped,
@@ -624,6 +743,8 @@ function Invoke-ChaosReadinessGates {
         Test-ChaosScenarioParameterFit -Scenario $Scenario -Parameters $Parameters
         Test-ChaosMechanismTraceable -FailureMechanism $FailureMechanism -MechanismEvidence $MechanismEvidence `
             -MechanismProbe $MechanismProbe -AvailableSources $AvailableSources -ScopedResourceIds $scopedResourceIds
+        Test-ChaosAbortCriteriaArmable -AbortCriteria $AbortCriteria `
+            -AvailableSources $AvailableSources -ScopedResourceIds $scopedResourceIds
         Test-ChaosActionReversibility -Action $Action
         Test-ChaosInjectionWindow -InjectMinutes $InjectMinutes
         Test-ChaosObservabilityCoverage -AvailableSources $AvailableSources -SteadyState $SteadyState
