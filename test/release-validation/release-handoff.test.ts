@@ -341,6 +341,77 @@ test('both marketplaces are released from ONE core commit, provenance recorded o
   assert.match(runbook, /one commit/i);
 });
 
+/**
+ * The body of one `## ` section of a runbook, heading included, up to the next
+ * `## ` heading. Used to assert on the OPERATIONAL steps specifically, rather
+ * than on explanatory prose elsewhere in the same document.
+ */
+function markdownSection(doc: string, heading: string): string {
+  const start = doc.indexOf(heading);
+  assert.notEqual(start, -1, `the runbook has a "${heading}" section`);
+  const rest = doc.slice(start + heading.length);
+  const end = rest.indexOf('\n## ');
+  const body = heading + (end === -1 ? rest : rest.slice(0, end));
+  // Collapsed to single spaces so a phrase that happens to be wrapped across a
+  // line (or bolded around the wrap) still matches as one phrase.
+  return body.replace(/\s+/g, ' ');
+}
+
+test('the publishing steps select the receipt-bearing release commit, not the validated core commit', () => {
+  const runbook = readText('docs/runbooks/release.md');
+
+  // Both release configs read the receipt from THEIR OWN checkout: the GitHub
+  // `validate` job checks out the resolved release commit before reading
+  // `test/release-validation/receipts/<tag>.json`, and the OneBranch `build`
+  // stage reads it from the build's checkout. The receipt normally lands in a
+  // LATER commit than the validated core commit (release.md section 0), so an
+  // operational step that selects the validated core commit for either pipeline
+  // selects a commit without the receipt and cannot publish.
+  const github = markdownSection(runbook, '## 2. Release the GitHub Action');
+  assert.match(
+    github,
+    /release commit/i,
+    'the dispatch input is described as the release commit, not the validated core commit',
+  );
+  assert.match(github, /receipt/i, 'the dispatch step ties the release commit to the receipt');
+  assert.doesNotMatch(
+    github,
+    /=\s*the (?:validated )?core commit/i,
+    'the dispatch input must not be set to the validated core commit (it lacks the receipt)',
+  );
+
+  const ado = markdownSection(runbook, '## 3. Release the Azure Pipelines extension');
+  assert.doesNotMatch(
+    ado,
+    /same core commit/i,
+    'OneBranch must not be run at the validated core commit (its checkout lacks the receipt)',
+  );
+  assert.match(ado, /release commit/i, 'OneBranch is run at the same release commit as the Action');
+  assert.match(ado, /receipt/i, 'the OneBranch step ties that commit to the receipt');
+
+  // The gates the later commit is still held to must remain stated.
+  assert.match(runbook, /ancestor/i, 'the ancestry gate is still documented');
+  assert.match(runbook, /byte-identical/i, 'the shipping-equality gate is still documented');
+  // ...and the receipt still carries the ORIGINAL validated commit.
+  assert.match(
+    markdownSection(runbook, '## 0. Pick the two commits'),
+    /RV1–RV3 were run against/,
+    'the receipt still records the commit RV1-RV3 actually ran against',
+  );
+});
+
+test('the extension rollback publishes from the commit that carries the new receipt', () => {
+  const runbook = readText('docs/runbooks/rollback-and-deprecation.md');
+  const ado = markdownSection(runbook, '## 2. Roll back the Azure Pipelines extension');
+  assert.doesNotMatch(
+    ado,
+    /at the new core commit/i,
+    'rolling forward must not publish from the validated core commit (it lacks the receipt)',
+  );
+  assert.match(ado, /receipt/i, 'the roll-forward step names the receipt-bearing commit');
+  assert.match(ado, /release commit/i);
+});
+
 test('rollback and deprecation runbooks cover both platforms, including the un-deletable task', () => {
   const runbook = readText('docs/runbooks/rollback-and-deprecation.md');
   for (const marker of [

@@ -12,18 +12,24 @@ both pass in the live tenants, and RV1–RV3 are green with a committed receipt
 
 ---
 
-## 0. Pick the release commit
+## 0. Pick the two commits
 
-Choose one commit on `main` that contains everything shipping. Record its full
-40-character SHA — this is the **core commit**, the commit RV1–RV3 were run against.
-It must appear in both:
+Two distinct commits are involved, and confusing them blocks the release:
 
-1. the `coreCommit` of the release-validation receipt, and
-2. the `coreCommit` of each artifact entry in that receipt.
+- the **validated core commit** — the commit RV1–RV3 were run against. Record its
+  full 40-character SHA. It must appear in both:
 
-The commit you actually release (the tag target / the OneBranch build commit) is
-normally a **later** commit — at minimum the one that adds the receipt itself. That is
-expected and allowed. What both release configs enforce is:
+  1. the `coreCommit` of the release-validation receipt, and
+  2. the `coreCommit` of each artifact entry in that receipt.
+
+- the **release commit** — the commit you actually release (the tag target / the
+  OneBranch build commit). It is normally a **later** commit: at minimum the one that
+  adds the receipt itself. Both release configs read the receipt **from their own
+  checkout of the release commit**, so the release commit is the one that *contains*
+  `test/release-validation/receipts/<tag>.json`. Releasing the validated core commit
+  instead would check out history that has no receipt and the gate would reject it.
+
+That the two differ is expected and allowed. What both release configs enforce is:
 
 - the receipt's core commit is an **ancestor** of the release commit, and
 - the **shipped trees are byte-identical** between them.
@@ -52,14 +58,18 @@ enforced on the GitHub side by the `validate` job's clean-rebuild comparison.
 
 ## 1. Confirm the evidence is in place
 
+Run this on a checkout of the **release commit** — the commit that carries the receipt:
+
 ```bash
-git rev-parse HEAD                       # the core commit
+git rev-parse HEAD                       # the release commit
 node scripts/lib/rv-receipt.mjs verify test/release-validation/receipts/<tag>.json
 ```
 
 The receipt lives at `test/release-validation/receipts/<tag>.json`, where `<tag>` is
 the release tag (for example `v1.0.0`). `verify` prints
-`receipt-core-commit=` and `receipt-digest=`; the core commit must match step 0.
+`receipt-core-commit=` and `receipt-digest=`; `receipt-core-commit` must equal the
+**validated core commit** from step 0, and `git merge-base --is-ancestor
+<receipt-core-commit> HEAD` must succeed.
 
 ## 2. Release the GitHub Action
 
@@ -70,8 +80,11 @@ a release tag by hand.
    `main`** (the job refuses any other ref), with:
 
    - `tag` = the exact release version, e.g. `v1.0.0`
-   - `commit` = the core commit from step 0 (only needed for a first publish of the
-     tag; an existing tag pins its own release commit)
+   - `commit` = the **release commit** from step 0 — the commit that contains
+     `test/release-validation/receipts/<tag>.json`, **not** the validated core
+     commit (the `validate` job checks that commit out before reading the receipt,
+     so a commit without the receipt fails the gate). Only needed for a first
+     publish of the tag; an existing tag pins its own release commit.
 
    > **The tag must be exact `vMAJOR.MINOR.PATCH` SemVer with no leading zeros.**
    > The workflow rejects prerelease suffixes, so `v1.0.0-preview.1` is **not** a
@@ -111,7 +124,10 @@ The printed `receipt-core-commit` must be an ancestor of the tag's commit, and
 ## 3. Release the Azure Pipelines extension
 
 Run the `.pipelines/OneBranch.Official.yml` Official pipeline from `refs/heads/main`
-at the **same core commit**, with:
+at the **same release commit** used in section 2 — the receipt-bearing commit, since
+this pipeline also reads the receipt from its own checkout. Both marketplaces are
+therefore built from one commit, holding the one validated core commit recorded in
+that receipt. Set:
 
 - `publishExtension` = `true`
 - `extensionManifest` = `vss-extension.json`
@@ -132,7 +148,7 @@ publish stages. Record the pipeline run ID and build number in the release notes
 
 In the GitHub release notes for the tag, record:
 
-- the core commit SHA,
+- the validated core commit SHA and the release commit SHA,
 - the receipt path and its `receipt-digest`,
 - the Action version and the extension version/task version, and
 - the OneBranch run ID.

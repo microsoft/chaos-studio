@@ -65,7 +65,9 @@ Marketplace. It has no "revert" operation, so rollback means **publishing forwar
 1. Fix the defect, or revert the offending change, on `main`.
 2. Run RV1–RV3 against the fix and record a receipt
    ([`release-validation.md`](release-validation.md)).
-3. Run the Official pipeline with `publishExtension = true` at the new core commit.
+3. Run the Official pipeline with `publishExtension = true` at the new **release
+   commit** — the commit that carries the new receipt, which the pipeline reads from
+   its own checkout (the validated core commit it records normally predates it).
    `PackageAzureDevOpsExtension` stamps a strictly increasing task version, so agents
    pick up the corrected task rather than a cached older one.
 4. If the defect is severe and no fix is ready, **unpublish** the extension
