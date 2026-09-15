@@ -876,6 +876,29 @@ jobs:
           git -C "$bare" fetch --quiet --no-tags "$origin" "$RELEASE_COMMIT" "$DEFAULT_TIP"
           echo "BARE=$bare" >> "$GITHUB_ENV"
 
+      - name: Materialize the shared release-gate helper (single trusted blob, no working tree)
+        run: |
+          set -euo pipefail
+          # This job intentionally never runs `actions/checkout` (no working tree,
+          # so no repository file — hence no hook/script from ANY commit — is ever
+          # placed on disk beside the publishing secret). But the staging and
+          # publication steps below `source` scripts/lib/release-asset-verify.sh,
+          # which therefore must exist on disk from SOME trusted origin.
+          #
+          # That helper is extracted here as a single blob, BY CONTENT, via
+          # `git cat-file` from DEFAULT_TIP — the dispatching commit on the
+          # protected default branch that this job's own `if:` guard already
+          # requires and that IS the trusted source of this very workflow
+          # definition (GitHub already trusts DEFAULT_TIP to define the steps
+          # about to run). This is NOT the release commit (`$RELEASE_COMMIT`,
+          # which can be an older ancestor tag/retry) and no other file from
+          # DEFAULT_TIP is materialized: only this one library path is
+          # extracted, so no arbitrary release-commit (or even default-branch)
+          # code is checked out or executed next to the release secret.
+          mkdir -p scripts/lib
+          git -C "$BARE" cat-file blob "${DEFAULT_TIP}:scripts/lib/release-asset-verify.sh" > scripts/lib/release-asset-verify.sh
+          chmod 0644 scripts/lib/release-asset-verify.sh
+
       - name: Re-enforce release-commit ancestry (bare)
         run: |
           set -euo pipefail

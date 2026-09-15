@@ -133,18 +133,28 @@ verify_required_attestations() {
   local artifactPath="$1"
   [[ -f "$artifactPath" ]] || { echo "::error::verify_required_attestations: artifact '$artifactPath' not found."; exit 1; }
 
+  # Constrain BOTH required attestations to the intended signer workflow (this
+  # release-action workflow, on REPO's default branch), not merely to the repo.
+  # `--repo` alone only requires the attestation to have been produced by SOME
+  # workflow in the repository; `--signer-workflow` additionally requires it to
+  # be THIS workflow, closing the gap the reviewer identified (R2).
+  local signerWorkflow="${REPO}/.github/workflows/release-action.yml"
+
   echo "Verifying build-provenance attestation for ${artifactPath}..."
-  if ! gh attestation verify "$artifactPath" --repo "$REPO" --predicate-type https://slsa.dev/provenance/v1 >/tmp/attest-provenance.log 2>&1; then
-    echo "::error::Required build-provenance attestation is missing or failed verification for ${artifactPath}."
+  if ! gh attestation verify "$artifactPath" --repo "$REPO" \
+      --signer-workflow "$signerWorkflow" \
+      --predicate-type https://slsa.dev/provenance/v1 >/tmp/attest-provenance.log 2>&1; then
+    echo "::error::Required build-provenance attestation is missing, failed verification, or was not signed by ${signerWorkflow}, for ${artifactPath}."
     cat /tmp/attest-provenance.log || true
     exit 1
   fi
 
   echo "Verifying release-commit attestation for ${artifactPath}..."
   if ! gh attestation verify "$artifactPath" --repo "$REPO" \
+      --signer-workflow "$signerWorkflow" \
       --predicate-type https://chaos-studio.dev/attestations/release-commit/v1 \
-      >/tmp/attest-release-commit.log 2>&1; then
-    echo "::error::Required release-commit attestation is missing or failed verification for ${artifactPath}."
+      --format json >/tmp/attest-release-commit.json 2>/tmp/attest-release-commit.log; then
+    echo "::error::Required release-commit attestation is missing, failed verification, or was not signed by ${signerWorkflow}, for ${artifactPath}."
     cat /tmp/attest-release-commit.log || true
     exit 1
   fi
@@ -152,15 +162,20 @@ verify_required_attestations() {
   # Confirm the release-commit attestation's predicate names THIS run's
   # verified release commit, not merely that the predicate type is present
   # (a stale attestation from a different commit must not be accepted).
+  # Fail CLOSED (not merely "skip the check") when the predicate is absent,
+  # empty, or malformed — proof of the required release-commit binding must
+  # be POSITIVELY established, never assumed by default.
   local boundCommit
-  boundCommit="$(gh attestation verify "$artifactPath" --repo "$REPO" \
-      --predicate-type https://chaos-studio.dev/attestations/release-commit/v1 \
-      --format json 2>/dev/null \
-      | jq -r '.[0].verificationResult.statement.predicate.releaseCommit // empty' 2>/dev/null || true)"
-  if [[ -n "$boundCommit" && "$boundCommit" != "$RELEASE_COMMIT" ]]; then
+  boundCommit="$(jq -r '.[0].verificationResult.statement.predicate.releaseCommit // empty' \
+      /tmp/attest-release-commit.json 2>/dev/null || true)"
+  if [[ ! "$boundCommit" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "::error::Release-commit attestation for ${artifactPath} has no well-formed 'releaseCommit' predicate field (got '${boundCommit}'); refusing to accept it as proof of release-commit binding."
+    exit 1
+  fi
+  if [[ "$boundCommit" != "$RELEASE_COMMIT" ]]; then
     echo "::error::Release-commit attestation for ${artifactPath} is bound to ${boundCommit}, expected ${RELEASE_COMMIT}."
     exit 1
   fi
 
-  echo "Both required attestations verified for ${artifactPath} (build-provenance + release-commit)."
+  echo "Both required attestations verified for ${artifactPath} (build-provenance + release-commit), signed by ${signerWorkflow}, bound to release commit ${RELEASE_COMMIT}."
 }

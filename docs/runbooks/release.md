@@ -125,14 +125,39 @@ published sha256 digest in the same job, so it is bound to the published
 artifact, not merely to the release commit. `attestations: write` is scoped to
 only the `publish` job (least privilege).
 
-Verify a published release's provenance with the GitHub CLI:
+Verify a published release's standard build-provenance attestation with the
+GitHub CLI, constraining it to the intended signer workflow (`--repo` alone
+only proves SOME workflow in the repository signed it; `--signer-workflow`
+additionally proves it was THIS workflow):
 
 ```bash
-gh attestation verify pkg/action-bundle.tar.gz --repo <owner>/<repo>
+gh attestation verify pkg/action-bundle.tar.gz --repo <owner>/<repo> \
+  --signer-workflow <owner>/<repo>/.github/workflows/release-action.yml \
+  --predicate-type https://slsa.dev/provenance/v1
 ```
 
 This checks the Sigstore signature, confirms the artifact digest, and confirms
 the attestation was produced by this repository's `release-action` workflow.
+
+A **separate, second** attestation (predicate type
+`https://chaos-studio.dev/attestations/release-commit/v1`) additionally binds
+the same artifact digest to the exact release commit that produced it — the
+standard build-provenance statement above only records the *dispatch run's*
+own source SHA, which is not the same thing when `main` has advanced past an
+ancestor release or a tag is retried. Verify that custom binding, and its
+`releaseCommit` predicate field, separately:
+
+```bash
+gh attestation verify pkg/action-bundle.tar.gz --repo <owner>/<repo> \
+  --signer-workflow <owner>/<repo>/.github/workflows/release-action.yml \
+  --predicate-type https://chaos-studio.dev/attestations/release-commit/v1 \
+  --format json | jq -r '.[0].verificationResult.statement.predicate.releaseCommit'
+```
+
+The printed `releaseCommit` must equal the exact commit the tag points at
+(`git rev-parse <tag>^{commit}`). Both attestations must verify, and both must
+be signed by this repository's `release-action` workflow, before the release's
+provenance is considered established.
 
 ### 2a. GitHub Marketplace listing (manual operator/admin handoff)
 
