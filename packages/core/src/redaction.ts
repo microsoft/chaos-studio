@@ -64,8 +64,30 @@ export function redactedJson(value: unknown): string {
  * surrounding structure (header name, key name, other query parameters) so the
  * log stays useful for diagnostics. Secret-shaped `key=value` pairs are matched
  * with `=`, `:`, or a quoted-JSON (`"key":"value"`) delimiter so a value in a
- * stringified error body is scrubbed too.
+ * stringified error body — or in free-text ARM/exception diagnostics (R2) —
+ * is scrubbed too.
  */
+
+/** Escape a literal string for safe interpolation into a `RegExp` source. */
+function escapeRegExp(literal: string): string {
+  return literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Build a free-text `key <delimiter> value` scrub rule for a secret-shaped key
+ * name (`=`, `:`, or a quoted-JSON `"key":"value"` delimiter). The value runs
+ * to the next delimiter (`;`, `&`, `,`, whitespace, closing quote/brace) so
+ * only the secret is removed and the surrounding structure (key name, other
+ * fields) stays intact for diagnostics.
+ */
+function keyValueRule(key: string): { pattern: RegExp; replacement: string } {
+  const escaped = escapeRegExp(key);
+  return {
+    pattern: new RegExp(`(${escaped}["']?\\s*[:=]\\s*["']?)[^;&,"'\\s}]+`, 'gi'),
+    replacement: `$1${REDACTED}`,
+  };
+}
+
 const RULES: Array<{ pattern: RegExp; replacement: string }> = [
   // `Bearer <token>` (Authorization header value or inline).
   { pattern: /(Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, replacement: `$1${REDACTED}` },
@@ -78,6 +100,15 @@ const RULES: Array<{ pattern: RegExp; replacement: string }> = [
   { pattern: /(AccountKey["']?\s*[:=]\s*["']?)[^;&"'\s]+/gi, replacement: `$1${REDACTED}` },
   // SAS signature parameter.
   { pattern: /(\bsig["']?\s*[:=]\s*["']?)[^;&"'\s]+/gi, replacement: `$1${REDACTED}` },
+  // R2: one key-value scrub rule per secret-shaped key name (password,
+  // clientSecret, accessToken, apiKey, etc.) so free-text ARM/exception
+  // diagnostics get the same protection structured objects already get via
+  // `redactSecretFields`. `authorization` and `bearerToken` are excluded here:
+  // they name a HEADER, not a `key=value` pair, and the value is a
+  // whitespace-containing `Bearer <token>` shape already fully scrubbed by the
+  // dedicated Bearer-prefix rule above (a naive `[^;&,"'\s}]+` value-stop would
+  // truncate at the first space and leave the token fragment exposed).
+  ...[...SECRET_KEY_NAMES].filter((k) => k !== 'authorization' && k !== 'bearertoken').map(keyValueRule),
 ];
 
 /** Returns `text` with tokens and secret-shaped values replaced by `<redacted>`. */

@@ -12,7 +12,7 @@
 import * as tl from 'azure-pipelines-task-lib/task.js';
 import type { TaskHost } from './adapter.ts';
 import type { ArmServiceConnection } from './auth.ts';
-import { fetchOidcToken } from './oidc.ts';
+import { fetchOidcToken, type OidcRequestFn } from './oidc.ts';
 
 /** The real Azure Pipelines host backed by `azure-pipelines-task-lib`. */
 export function azurePipelinesTaskHost(): TaskHost {
@@ -47,7 +47,7 @@ function requireVar(name: string): string {
  * presents it to Entra ID to obtain an ARM access token. There is NO long-lived
  * client secret anywhere in the flow (NFR3).
  */
-export function readArmServiceConnection(): ArmServiceConnection {
+export function readArmServiceConnection(deps: { request?: OidcRequestFn } = {}): ArmServiceConnection {
   const connectionId = tl.getInput('azureSubscription', true);
   if (connectionId === undefined || connectionId === '') {
     throw new Error("required input 'azureSubscription' (ARM service connection) is not set");
@@ -68,7 +68,7 @@ export function readArmServiceConnection(): ArmServiceConnection {
   return {
     tenantId,
     clientId,
-    getAssertion: () => fetchAzureDevOpsOidcToken(connectionId),
+    getAssertion: () => fetchAzureDevOpsOidcToken(connectionId, deps.request),
   };
 }
 
@@ -92,7 +92,7 @@ export function readArmServiceConnection(): ArmServiceConnection {
  * on an unmodified pipeline. `SYSTEMVSSCONNECTION` is always present without any
  * such opt-in.
  */
-async function fetchAzureDevOpsOidcToken(connectionId: string): Promise<string> {
+async function fetchAzureDevOpsOidcToken(connectionId: string, request?: OidcRequestFn): Promise<string> {
   const accessToken = readSystemAccessToken();
 
   // Azure DevOps exposes the exact OIDC token endpoint for this job as
@@ -108,7 +108,7 @@ async function fetchAzureDevOpsOidcToken(connectionId: string): Promise<string> 
   url.searchParams.set('serviceConnectionId', connectionId);
   url.searchParams.set('api-version', '7.1-preview.1');
 
-  return fetchOidcToken(url, accessToken);
+  return fetchOidcToken(url, accessToken, request === undefined ? {} : { request });
 }
 
 /**

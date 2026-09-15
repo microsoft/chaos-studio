@@ -127,24 +127,33 @@ reconcile_draft_assets() {
 # attestation verification (not merely "a release already exists"). Fails
 # closed (nonzero exit) if either attestation is missing or does not verify.
 #
-# Required: TAG, REPO, RELEASE_COMMIT env vars; the artifact must already be
-# downloaded/available at `artifactPath`.
+# Required: TAG, REPO, RELEASE_COMMIT, DEFAULT_BRANCH env vars; the artifact
+# must already be downloaded/available at `artifactPath`.
 verify_required_attestations() {
   local artifactPath="$1"
   [[ -f "$artifactPath" ]] || { echo "::error::verify_required_attestations: artifact '$artifactPath' not found."; exit 1; }
 
-  # Constrain BOTH required attestations to the intended signer workflow (this
-  # release-action workflow, on REPO's default branch), not merely to the repo.
-  # `--repo` alone only requires the attestation to have been produced by SOME
-  # workflow in the repository; `--signer-workflow` additionally requires it to
-  # be THIS workflow, closing the gap the reviewer identified (R2).
+  # R3: `--signer-workflow` alone constrains WHICH workflow file produced the
+  # attestation, but NOT the git ref that workflow ran from — a workflow run
+  # dispatched from an arbitrary branch/fork still matches `--signer-workflow`.
+  # These are separate identity fields in `gh attestation verify`'s certificate
+  # checks (SAN workflow path vs. source ref), so both must be constrained
+  # explicitly. Fail CLOSED if DEFAULT_BRANCH is not available — never fall
+  # back to "skip the source-ref check".
   local signerWorkflow="${REPO}/.github/workflows/release-action.yml"
+  if [[ -z "${DEFAULT_BRANCH:-}" ]]; then
+    echo "::error::verify_required_attestations: DEFAULT_BRANCH is not set; refusing to verify attestations without a trusted source-ref constraint."
+    exit 1
+  fi
+  local sourceRef="refs/heads/${DEFAULT_BRANCH}"
 
   echo "Verifying build-provenance attestation for ${artifactPath}..."
   if ! gh attestation verify "$artifactPath" --repo "$REPO" \
       --signer-workflow "$signerWorkflow" \
-      --predicate-type https://slsa.dev/provenance/v1 >/tmp/attest-provenance.log 2>&1; then
-    echo "::error::Required build-provenance attestation is missing, failed verification, or was not signed by ${signerWorkflow}, for ${artifactPath}."
+      --source-ref "$sourceRef" \
+      --predicate-type https://slsa.dev/provenance/v1 \
+      --format json >/tmp/attest-provenance.json 2>/tmp/attest-provenance.log; then
+    echo "::error::Required build-provenance attestation is missing, failed verification, or was not signed by ${signerWorkflow} from ${sourceRef}, for ${artifactPath}."
     cat /tmp/attest-provenance.log || true
     exit 1
   fi
@@ -152,30 +161,45 @@ verify_required_attestations() {
   echo "Verifying release-commit attestation for ${artifactPath}..."
   if ! gh attestation verify "$artifactPath" --repo "$REPO" \
       --signer-workflow "$signerWorkflow" \
+      --source-ref "$sourceRef" \
       --predicate-type https://chaos-studio.dev/attestations/release-commit/v1 \
       --format json >/tmp/attest-release-commit.json 2>/tmp/attest-release-commit.log; then
-    echo "::error::Required release-commit attestation is missing, failed verification, or was not signed by ${signerWorkflow}, for ${artifactPath}."
+    echo "::error::Required release-commit attestation is missing, failed verification, or was not signed by ${signerWorkflow} from ${sourceRef}, for ${artifactPath}."
     cat /tmp/attest-release-commit.log || true
     exit 1
   fi
 
-  # Confirm the release-commit attestation's predicate names THIS run's
-  # verified release commit, not merely that the predicate type is present
-  # (a stale attestation from a different commit must not be accepted).
-  # Fail CLOSED (not merely "skip the check") when the predicate is absent,
-  # empty, or malformed — proof of the required release-commit binding must
-  # be POSITIVELY established, never assumed by default.
-  local boundCommit
-  boundCommit="$(jq -r '.[0].verificationResult.statement.predicate.releaseCommit // empty' \
+  # R4: `gh attestation verify --format json` can return MULTIPLE verified
+  # entries — identical artifact bytes can legitimately carry attestations
+  # from more than one release (e.g. an unchanged floating-major retarget, or
+  # a retry of an already-published release). Examining only `.[0]` accepts
+  # whichever entry the API/jq happens to order first, which can be an
+  # UNRELATED release's attestation and would wrongly reject a legitimate
+  # already-published retry. Instead, scan every well-formed (40-hex)
+  # `releaseCommit` predicate across ALL verified entries and require that AT
+  # LEAST ONE matches this run's verified release commit. Continue to fail
+  # closed (reject) when no entry has a well-formed, matching predicate.
+  local boundCommits matched=""
+  boundCommits="$(jq -r '.[].verificationResult.statement.predicate.releaseCommit // empty' \
       /tmp/attest-release-commit.json 2>/dev/null || true)"
-  if [[ ! "$boundCommit" =~ ^[0-9a-f]{40}$ ]]; then
-    echo "::error::Release-commit attestation for ${artifactPath} has no well-formed 'releaseCommit' predicate field (got '${boundCommit}'); refusing to accept it as proof of release-commit binding."
+  if [[ -z "$boundCommits" ]]; then
+    echo "::error::Release-commit attestation(s) for ${artifactPath} have no 'releaseCommit' predicate field; refusing to accept as proof of release-commit binding."
     exit 1
   fi
-  if [[ "$boundCommit" != "$RELEASE_COMMIT" ]]; then
-    echo "::error::Release-commit attestation for ${artifactPath} is bound to ${boundCommit}, expected ${RELEASE_COMMIT}."
+  while IFS= read -r candidate; do
+    [[ -z "$candidate" ]] && continue
+    if [[ ! "$candidate" =~ ^[0-9a-f]{40}$ ]]; then
+      continue
+    fi
+    if [[ "$candidate" == "$RELEASE_COMMIT" ]]; then
+      matched="$candidate"
+      break
+    fi
+  done <<< "$boundCommits"
+  if [[ -z "$matched" ]]; then
+    echo "::error::No verified release-commit attestation for ${artifactPath} has a well-formed 'releaseCommit' predicate matching ${RELEASE_COMMIT} (candidates: ${boundCommits//$'\n'/, })."
     exit 1
   fi
 
-  echo "Both required attestations verified for ${artifactPath} (build-provenance + release-commit), signed by ${signerWorkflow}, bound to release commit ${RELEASE_COMMIT}."
+  echo "Both required attestations verified for ${artifactPath} (build-provenance + release-commit), signed by ${signerWorkflow} from ${sourceRef}, bound to release commit ${RELEASE_COMMIT}."
 }

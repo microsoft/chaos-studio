@@ -126,18 +126,24 @@ artifact, not merely to the release commit. `attestations: write` is scoped to
 only the `publish` job (least privilege).
 
 Verify a published release's standard build-provenance attestation with the
-GitHub CLI, constraining it to the intended signer workflow (`--repo` alone
-only proves SOME workflow in the repository signed it; `--signer-workflow`
-additionally proves it was THIS workflow):
+GitHub CLI, constraining it to both the intended signer workflow AND its
+trusted source ref (`--repo` alone only proves SOME workflow in the
+repository signed it; `--signer-workflow` proves it was THIS workflow;
+`--source-ref` is a SEPARATE identity constraint that proves the workflow ran
+from the repository's default branch, not an arbitrary branch or fork —
+`gh attestation verify` treats these as independent certificate fields, so
+both flags are required):
 
 ```bash
 gh attestation verify pkg/action-bundle.tar.gz --repo <owner>/<repo> \
   --signer-workflow <owner>/<repo>/.github/workflows/release-action.yml \
+  --source-ref refs/heads/<default-branch> \
   --predicate-type https://slsa.dev/provenance/v1
 ```
 
 This checks the Sigstore signature, confirms the artifact digest, and confirms
-the attestation was produced by this repository's `release-action` workflow.
+the attestation was produced by this repository's `release-action` workflow
+running from its default branch.
 
 A **separate, second** attestation (predicate type
 `https://chaos-studio.dev/attestations/release-commit/v1`) additionally binds
@@ -150,14 +156,23 @@ ancestor release or a tag is retried. Verify that custom binding, and its
 ```bash
 gh attestation verify pkg/action-bundle.tar.gz --repo <owner>/<repo> \
   --signer-workflow <owner>/<repo>/.github/workflows/release-action.yml \
+  --source-ref refs/heads/<default-branch> \
   --predicate-type https://chaos-studio.dev/attestations/release-commit/v1 \
-  --format json | jq -r '.[0].verificationResult.statement.predicate.releaseCommit'
+  --format json | jq -r '.[].verificationResult.statement.predicate.releaseCommit'
 ```
 
-The printed `releaseCommit` must equal the exact commit the tag points at
-(`git rev-parse <tag>^{commit}`). Both attestations must verify, and both must
-be signed by this repository's `release-action` workflow, before the release's
-provenance is considered established.
+Identical artifact bytes can carry attestations from more than one release
+(e.g. a retry of an already-published release, or an unchanged floating-major
+retarget), so `gh attestation verify --format json` may return **multiple**
+verified entries in no guaranteed order. Do not assume the first (`.[0]`) is
+the relevant one — check **every** printed `releaseCommit` value and confirm
+**at least one** equals the exact commit the tag points at
+(`git rev-parse <tag>^{commit}`). This mirrors the order-independent matching
+`verify_required_attestations` (in `scripts/lib/release-asset-verify.sh`)
+performs in the workflow itself. Both attestations must verify, both must be
+signed by this repository's `release-action` workflow from its default
+branch, and at least one release-commit predicate must match, before the
+release's provenance is considered established.
 
 ### 2a. GitHub Marketplace listing (manual operator/admin handoff)
 

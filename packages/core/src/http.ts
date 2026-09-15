@@ -144,6 +144,26 @@ export interface PollStep<T> {
   value?: T;
 }
 
+/**
+ * Redacted protocol-metadata snapshot of one request/response pair (RV1). Never
+ * carries a body, header value, or token — only the shape-proving fields the
+ * client already parses for its own decisions ({@link ParsedResponse}), plus the
+ * request method/URL/api-version so an operator's capture can attribute each
+ * observation to the call that produced it.
+ */
+export interface ProtocolObservation {
+  method: 'GET' | 'POST';
+  url: string;
+  status: number;
+  location: string | undefined;
+  retryAfterSeconds: number | undefined;
+  correlationId: string | undefined;
+  requestId: string | undefined;
+  errorCode: string | undefined;
+  /** ARM `error.message` (plus nested `details[].message`), already redacted (R2). */
+  errorMessage: string | undefined;
+}
+
 export interface ArmClientOptions {
   transport: IHttpTransport;
   clock: IClock;
@@ -153,6 +173,17 @@ export interface ArmClientOptions {
   rng?: () => number;
   backoff?: BackoffOptions;
   scope?: string;
+  /**
+   * RV1 evidence-capture hook (E6/R1). When supplied, every parsed response is
+   * reported here as a {@link ProtocolObservation} — never anything beyond
+   * that shape. This is the ONLY sanctioned way to observe wire metadata
+   * during a live RV session: it adds no public generic-ARM capability (the
+   * hook is a plain callback on the same private client the adapters already
+   * construct), and the reported fields are exactly the ones the client
+   * itself already parses and relies on, so they cannot diverge from what
+   * `raiseForAcceptance`/`raiseForActionStatus`/pollers actually observed.
+   */
+  onObservation?: (obs: ProtocolObservation) => void;
 }
 
 export class ArmHttpClient {
@@ -167,6 +198,7 @@ export class ArmHttpClient {
   private readonly cred: ICredentialProvider;
   private readonly signal: AbortSignal;
   private readonly scope: string;
+  private readonly onObservation: ((obs: ProtocolObservation) => void) | undefined;
 
   constructor(opts: ArmClientOptions) {
     this.transport = opts.transport;
@@ -177,6 +209,7 @@ export class ArmHttpClient {
     this.rng = opts.rng ?? Math.random;
     this.backoff = opts.backoff ?? DEFAULT_BACKOFF;
     this.scope = opts.scope ?? ARM_SCOPE;
+    this.onObservation = opts.onObservation;
   }
 
   /**
@@ -383,7 +416,21 @@ export class ArmHttpClient {
           requestId: this.lastCorrelation.requestId,
         });
       }
-      return this.parse(res);
+      const parsed = this.parse(res);
+      if (this.onObservation !== undefined) {
+        this.onObservation({
+          method,
+          url,
+          status: parsed.status,
+          location: parsed.location,
+          retryAfterSeconds: parsed.retryAfterSeconds,
+          correlationId: parsed.correlationId,
+          requestId: parsed.requestId,
+          errorCode: parsed.errorCode,
+          errorMessage: parsed.errorMessage === undefined ? undefined : redact(parsed.errorMessage),
+        });
+      }
+      return parsed;
     } finally {
       // Cancel any lingering deadline-watcher sleep and unlink the main signal.
       ac.abort();
@@ -456,6 +503,19 @@ export class ArmHttpClient {
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Render a {@link ProtocolObservation} as a single redacted log line (RV1/R1).
+ * This is the exact, shared format both private adapters print when an
+ * operator opts a live RV session into evidence capture — a stable, greppable
+ * `RV-OBSERVATION ` prefix followed by JSON so the operator's transcript can
+ * mechanically extract one JSON object per line. `errorMessage` is passed
+ * through {@link redact} a second time defensively (it is already redacted by
+ * {@link ArmHttpClient}), and no header value or body is ever included.
+ */
+export function formatProtocolObservation(obs: ProtocolObservation): string {
+  return `RV-OBSERVATION ${JSON.stringify({ ...obs, errorMessage: obs.errorMessage === undefined ? undefined : redact(obs.errorMessage) })}`;
 }
 
 /** Reads `error.code` from an ARM error envelope, if present (VF10). */

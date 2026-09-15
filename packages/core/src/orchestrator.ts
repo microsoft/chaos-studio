@@ -30,7 +30,15 @@ import {
   validateScenarioCoordinates,
   type ScenarioCoordinates,
 } from './ids.ts';
-import { ArmHttpClient, Deadline, fetchTransport, type BackoffOptions, type IHttpTransport, type ResourceStatus } from './http.ts';
+import {
+  ArmHttpClient,
+  Deadline,
+  fetchTransport,
+  type BackoffOptions,
+  type IHttpTransport,
+  type ProtocolObservation,
+  type ResourceStatus,
+} from './http.ts';
 import { acceptValidate, pollValidation } from './validation.ts';
 import { acceptExecute, pollRun, readRunOnce, type ExecuteAcceptance } from './run.ts';
 import { bestEffortCancel } from './cancel.ts';
@@ -40,10 +48,26 @@ import { redact } from './redaction.ts';
 export interface OrchestrateOptions {
   rng?: () => number;
   backoff?: BackoffOptions;
+  /** RV1 evidence-capture hook (E6/R1); forwarded to every {@link ArmHttpClient} this run constructs, including the cleanup client. */
+  onObservation?: (obs: ProtocolObservation) => void;
 }
 
 /** The public entry point the platform adapters call (E3/E4). */
 export const run: RunFn = (io) => orchestrate(io, fetchTransport);
+
+/**
+ * Build a {@link RunFn} that reports every ARM protocol observation to
+ * `onObservation` (RV1/R1). This is the ONLY sanctioned capture seam: it is
+ * still the same private orchestrator and transport the adapters always use,
+ * it adds no public generic-ARM capability, and it reports exactly the
+ * {@link ProtocolObservation} fields the client already parses for its own
+ * acceptance/poll decisions — nothing more. Adapters call this instead of
+ * {@link run} only when an operator has explicitly opted in to RV evidence
+ * capture (see each adapter's `RV_CAPTURE` wiring), never in normal operation.
+ */
+export function createObservingRun(onObservation: (obs: ProtocolObservation) => void): RunFn {
+  return (io) => orchestrate(io, fetchTransport, { onObservation });
+}
 
 export async function orchestrate(
   io: RunContext,
@@ -83,6 +107,7 @@ export async function orchestrate(
     signal: io.signal,
     rng: opts.rng,
     backoff: opts.backoff,
+    onObservation: opts.onObservation,
   });
   const completion = Deadline.fromNow(io.clock, completionTimeoutSeconds);
   const emitCorrelation = (): void => {
@@ -233,6 +258,7 @@ async function handleForwardFailure(
       signal: new AbortController().signal,
       rng: opts.rng,
       backoff: opts.backoff,
+      onObservation: opts.onObservation,
     });
     const cleanupDeadline = Deadline.fromNow(io.clock, CLEANUP_TIMEOUT_SECONDS);
     const observed = await bestEffortCancel(cleanupClient, acceptance.runResourceId, cleanupDeadline, io.log);

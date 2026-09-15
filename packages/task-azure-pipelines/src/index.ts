@@ -85,7 +85,7 @@ export async function main(): Promise<void> {
       process.exitCode = 1;
       return;
     }
-    await runAzurePipelinesTask({ host, cred, signal });
+    await runAzurePipelinesTask({ host, cred, signal, rvCapture: process.env.CHAOS_STUDIO_RV_CAPTURE === '1' });
   } finally {
     dispose();
   }

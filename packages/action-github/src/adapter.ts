@@ -20,9 +20,10 @@ import type {
   RunContext,
   RunFn,
 } from '../../core/src/contract.ts';
-import { run as coreRun } from '../../core/src/orchestrator.ts';
+import { run as coreRun, createObservingRun } from '../../core/src/orchestrator.ts';
 import { CoreError } from '../../core/src/ids.ts';
 import { redact } from '../../core/src/redaction.ts';
+import { formatProtocolObservation } from '../../core/src/http.ts';
 
 /**
  * The minimal GitHub-platform surface the adapter needs. A runtime-erased type
@@ -174,6 +175,17 @@ export interface RunGithubActionDeps {
   clock?: IClock;
   /** Injectable orchestrator entry (defaults to the core `run`); tests pass a fake. */
   orchestrate?: RunFn;
+  /**
+   * RV1 evidence-capture opt-in (E6/R1). When true and `orchestrate` is not
+   * overridden, every ARM protocol observation is printed via `host.info` as a
+   * single redacted `RV-OBSERVATION {...}` JSON line ({@link formatProtocolObservation}).
+   * Never enabled by default; `index.ts` wires it only from
+   * `CHAOS_STUDIO_RV_CAPTURE=1`, an operator-set env var used exclusively
+   * during a live RV1 session — it adds no public generic-ARM capability, it
+   * only surfaces the same fields the client already parses for its own
+   * decisions.
+   */
+  rvCapture?: boolean;
 }
 
 /** Fallback failure message when the core reports failure without a reason. */
@@ -200,7 +212,8 @@ export async function runGithubAction(deps: RunGithubActionDeps): Promise<Orches
     clock: deps.clock ?? systemClock,
     signal: deps.signal,
   };
-  const orchestrate = deps.orchestrate ?? coreRun;
+  const orchestrate =
+    deps.orchestrate ?? (deps.rvCapture ? createObservingRun((obs) => deps.host.info(formatProtocolObservation(obs))) : coreRun);
   let result: OrchestrationResult;
   try {
     result = await orchestrate(io);

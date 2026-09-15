@@ -73,6 +73,7 @@ export async function main(): Promise<void> {
       host: githubActionsHost(),
       cred: azureCliCredentialProvider(),
       signal,
+      rvCapture: process.env.CHAOS_STUDIO_RV_CAPTURE === '1',
     });
   } finally {
     dispose();

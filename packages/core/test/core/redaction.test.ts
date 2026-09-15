@@ -63,6 +63,43 @@ test('redact leaves non-secret text unchanged', () => {
   assert.equal(redact(plain), plain);
 });
 
+// R2: free-text ARM/exception diagnostics (not just structured objects or
+// bearer/JWT/connection-string shapes) must scrub password/clientSecret/
+// accessToken key/value text so it cannot survive into logs or failure
+// messages, mirroring the key-name coverage `redactSecretFields` already
+// applies to parsed objects.
+test('redact scrubs free-text password/clientSecret/accessToken key-value pairs (ARM message text)', () => {
+  const armMessage =
+    'credential acquisition failed: invalid request body: password=Sup3rSecretPW!, clientSecret=Sup3rSecretCS!, accessToken=Sup3rSecretAT!';
+  const out = redact(armMessage);
+  assert.ok(!out.includes('Sup3rSecretPW!'));
+  assert.ok(!out.includes('Sup3rSecretCS!'));
+  assert.ok(!out.includes('Sup3rSecretAT!'));
+  assert.ok(out.includes('password=<redacted>'));
+  assert.ok(out.includes('clientSecret=<redacted>'));
+  assert.ok(out.includes('accessToken=<redacted>'));
+  assert.ok(out.startsWith('credential acquisition failed: invalid request body:'));
+});
+
+test('redact scrubs free-text secret key/value pairs in a JSON-ish exception message', () => {
+  const exceptionText = 'transport error: {"error":"invalid_client","client_secret":"topsecretvalue123","hint":"check config"}';
+  const out = redact(exceptionText);
+  assert.ok(!out.includes('topsecretvalue123'));
+  assert.ok(out.includes('"client_secret":<redacted>') || out.includes('"client_secret":"<redacted>'));
+  assert.ok(out.includes('invalid_client'));
+  assert.ok(out.includes('check config'));
+});
+
+test('redact scrubs a free-text apiKey/refreshToken pair without disturbing adjacent fields', () => {
+  const text = 'apiKey=AKIA1234567890EXAMPLE&refreshToken=rt-1234567890&region=eastus';
+  const out = redact(text);
+  assert.ok(!out.includes('AKIA1234567890EXAMPLE'));
+  assert.ok(!out.includes('rt-1234567890'));
+  assert.ok(out.includes('apiKey=<redacted>'));
+  assert.ok(out.includes('refreshToken=<redacted>'));
+  assert.ok(out.includes('region=eastus'));
+});
+
 // R3: recursive secret-key redaction covers ordinary password/clientSecret/
 // accessToken fields at ANY nesting depth, not just bearer/JWT/connection-string
 // text shapes.

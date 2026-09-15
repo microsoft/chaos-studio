@@ -39,22 +39,49 @@ printf '%s' "<workspace-resource-id>" | sha256sum
 
 ## RV1 — target-region protocol smoke
 
+**Capture mechanism.** Both private builds print a shared, redacted protocol-metadata
+line for every ARM request/response they issue when an operator opts in — set
+`CHAOS_STUDIO_RV_CAPTURE=1` in the environment/pipeline variables of the RV session
+(GitHub Action step `env:`, or the Azure Pipelines task's process environment). With
+that variable set, each adapter reports every call through the core's
+`ArmHttpClient` `onObservation` hook (`packages/core/src/http.ts`) and prints one
+line per call via its normal info-log channel (`::notice::` on GitHub, `##[section]`
+on Azure Pipelines) in the fixed, greppable shape:
+
+```
+RV-OBSERVATION {"method":"POST","url":"https://management.azure.com/.../execute?api-version=...","status":202,"location":"https://management.azure.com/.../runs/<runId>","retryAfterSeconds":5,"correlationId":"<id>","requestId":"<id>","errorCode":null,"errorMessage":null}
+```
+
+This is exactly (and only) the set of fields the client already parses for its own
+acceptance/poll decisions (`ParsedResponse` in `http.ts`) — no header value, request
+body, or credential ever appears, and `errorMessage` is passed through the shared
+`redact()` before it is printed. Extract the transcript from the job/task log with:
+
+```bash
+grep -o 'RV-OBSERVATION .*' <job-log> | sed 's/^RV-OBSERVATION //' > observations.jsonl
+```
+
 Run `validate`, then `execute` (the **success run**), poll it to `Succeeded`, then
 separately `execute` a **second, independent run** (the **cancellation run**),
 observe it **in flight** (a `202` GET reporting a non-terminal `properties.status`,
 e.g. `Running`), and only THEN `cancel` it — against the workspace from **each**
-private build, with request logging on. A terminal-run cancellation is a no-op
-(RV3), so the cancellation run must never be driven to (or recorded at) any
-terminal state before the cancel: recording one run's `Succeeded` observation and
-then its own (no-op) cancel attempt as `Canceled` is not real evidence and is
-rejected, and so is skipping the in-flight observation entirely.
+private build, with `CHAOS_STUDIO_RV_CAPTURE=1` set for that job/task run. A
+terminal-run cancellation is a no-op (RV3), so the cancellation run must never be
+driven to (or recorded at) any terminal state before the cancel: recording one run's
+`Succeeded` observation and then its own (no-op) cancel attempt as `Canceled` is not
+real evidence and is rejected, and so is skipping the in-flight observation entirely.
 
-Record, for each long-running call: the acceptance status, the trailing
-`Location` segments, the advertised `Retry-After`, and — for calls actually driven
-to a terminal outcome (`validate`, the success run, and the cancel) — the
-terminal polled status and the terminal `properties.status`. Also record the wire
-shape actually observed (status/start/end field names and both error channels)
-and the `api-version` the requests carried.
+From `observations.jsonl`, record, for each long-running call: the acceptance
+`status`, the trailing `location` segments, the advertised `retryAfterSeconds`, and
+— for calls actually driven to a terminal outcome (`validate`, the success run, and
+the cancel) — the terminal polled `status` and the terminal `properties.status`
+(read directly from the job/task's own step summary output, which already surfaces
+`run-state`/`validation-state`; `RV-OBSERVATION` lines give the wire-level status
+codes, the step outputs give the business-level terminal state). Also record the
+wire shape actually observed (status/start/end field names and both error channels,
+visible in the `RV-OBSERVATION` line's absence of an `errorMessage`/`errorCode` on
+success, and their presence with the expected shape on the deliberately-forced
+negative cases in RV2) and the `api-version` embedded in each `url`.
 
 The receipt carries **one transcript per adapter** under `observations.transcripts`,
 each tagged with its `platform` (`github-action`, `azure-pipelines-task`). Each
@@ -80,9 +107,26 @@ fixtures encode.
 
 1. Prove both federated identities acquire an ARM token **secretlessly**.
 2. Record the role definition the identity actually held.
-3. For **each** operation the journey invokes, run a negative case: remove that one
-   operation from the role, re-run the journey, and record which calls failed and
-   which still succeeded. Exactly that one call must fail.
+3. For **each** of the 5 `PROVIDER_OPERATIONS` (`validate`, `validationRead`,
+   `execute`, `runRead`, `runCancel` — `packages/core/src/contract.ts`), run an
+   isolated negative case using PREPARED resources, not a full re-run of the
+   journey (the core's `validate-and-execute` mode short-circuits on the first
+   failure and never reaches `execute`/`runCancel` on its own, so "re-run the
+   journey" cannot exercise the later operations at all once an earlier one is
+   removed). For each operation in turn:
+   a. Remove only that operation from the role (leave the other four intact).
+   b. With `CHAOS_STUDIO_RV_CAPTURE=1` set, individually invoke each of the 5
+      operations against PRE-PROVISIONED resources scoped for this case (a
+      configuration already `Succeeded` from validation for `validationRead`; a
+      run already accepted/in-flight from a prior `execute` for `runRead` and
+      `runCancel`; the configuration itself for `validate`; a fresh accepted run
+      for `execute`) — e.g. call `validate` once, `GET` the validations-latest
+      resource once, `execute` once, `GET` the run resource once, and `cancel`
+      that run once — each as its own independent call, not as one pipeline run.
+   c. From the resulting `RV-OBSERVATION` lines, confirm the removed operation's
+      call returned `403`/`AuthorizationFailed` and every one of the other four
+      calls returned its normal 2xx acceptance/read status.
+   d. Restore the role to the full set before the next operation's case.
 4. Prove the operations the journey deliberately does not call
    (`Microsoft.Chaos/workspaces/read`,
    `Microsoft.Chaos/locations/workspaceOperationResults/read`) are genuinely
@@ -90,7 +134,9 @@ fixtures encode.
 
 Passes when the role is exactly the required set — no missing, extraneous, unknown,
 data-action, or `NotActions` entries — assigned at workspace scope, both identities
-are secretless, and every negative case isolates a single operation.
+are secretless, and every negative case isolates a single operation: the removed
+operation's own call fails with `403`, and each of the other four operations'
+independently-exercised calls still succeeds.
 
 ## RV3 — cancellation operational bounds
 

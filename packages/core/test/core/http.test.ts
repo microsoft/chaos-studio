@@ -10,11 +10,13 @@ import {
   MAX_GET_ATTEMPTS,
   backoffDelayMs,
   bodyErrorMessage,
+  formatProtocolObservation,
   headerValue,
   parseRetryAfter,
   raiseForAcceptance,
   raiseForActionStatus,
   type ParsedResponse,
+  type ProtocolObservation,
 } from '../../src/http.ts';
 import { FakeClock, FakeCredential, FailingCredential, FakeLogger, FakeTransport, FIXED_TOKEN, fixedRng, HANG, response } from '../helpers/harness.ts';
 
@@ -584,4 +586,128 @@ test('the client refuses to send a credential to a non-ARM URL (no token acquire
   );
   assert.equal(t.requests.length, 0, 'no request was sent to the foreign origin');
   assert.equal(cred.calls.length, 0, 'no token was acquired for a foreign origin');
+});
+
+// ---------------------------------------------------------------------------
+// RV1 evidence-capture hook (E6/R1): `onObservation` reports every parsed
+// response as a redacted, shape-bound ProtocolObservation. These tests use
+// injected responses to prove the capture path itself — independent of any
+// live environment — addressing the reviewer's stated R1 test gap.
+// ---------------------------------------------------------------------------
+
+test('onObservation reports one ProtocolObservation per parsed response, matching what raiseForAcceptance/poll actually saw (R1)', async () => {
+  const t = new FakeTransport()
+    .on('POST', '/execute', response(202, { Location: 'https://management.azure.com/runs/poll', 'Retry-After': '5' }))
+    .on('GET', '/runs/poll', response(200, { 'x-ms-correlation-request-id': 'corr-1', 'x-ms-request-id': 'req-1' }, { properties: { status: 'Succeeded' } }));
+  const observations: ProtocolObservation[] = [];
+  const log = new FakeLogger();
+  const cred = new FakeCredential();
+  const c = new ArmHttpClient({
+    transport: t,
+    clock: new FakeClock(),
+    log,
+    cred,
+    signal: new AbortController().signal,
+    rng: fixedRng(0.5),
+    onObservation: (obs) => observations.push(obs),
+  });
+  const post = await c.post('https://management.azure.com/execute');
+  raiseForAcceptance(post, 'execute');
+  const get = await c.getOnce('https://management.azure.com/runs/poll');
+  raiseForActionStatus(get, 'get');
+
+  assert.equal(observations.length, 2, 'one observation per independently exercised operation');
+  assert.equal(observations[0]!.method, 'POST');
+  assert.equal(observations[0]!.status, 202);
+  assert.equal(observations[0]!.location, 'https://management.azure.com/runs/poll');
+  assert.equal(observations[0]!.retryAfterSeconds, 5);
+  assert.equal(observations[1]!.method, 'GET');
+  assert.equal(observations[1]!.status, 200);
+  assert.equal(observations[1]!.correlationId, 'corr-1');
+  assert.equal(observations[1]!.requestId, 'req-1');
+});
+
+test('onObservation is not required — omitting it changes nothing about the client behavior (opt-in only)', async () => {
+  const t = new FakeTransport().on('GET', '/runs/', response(200, {}, { properties: { status: 'Succeeded' } }));
+  const { c } = client(t);
+  const res = await c.getOnce('https://management.azure.com/runs/x');
+  assert.equal(res.status, 200);
+});
+
+test('onObservation.errorMessage is redacted even when the ARM error body carries secret-shaped text (R1 + R2)', async () => {
+  const t = new FakeTransport().on(
+    'GET',
+    '/runs/',
+    response(403, { 'x-ms-error-code': 'AuthorizationFailed' }, {
+      error: { code: 'AuthorizationFailed', message: 'denied for password=hunter2 clientSecret=abcd' },
+    }),
+  );
+  const observations: ProtocolObservation[] = [];
+  const log = new FakeLogger();
+  const cred = new FakeCredential();
+  const c = new ArmHttpClient({
+    transport: t,
+    clock: new FakeClock(),
+    log,
+    cred,
+    signal: new AbortController().signal,
+    rng: fixedRng(0.5),
+    onObservation: (obs) => observations.push(obs),
+  });
+  await c.getOnce('https://management.azure.com/runs/x');
+  assert.equal(observations.length, 1);
+  assert.ok(!observations[0]!.errorMessage!.includes('hunter2'));
+  assert.ok(!observations[0]!.errorMessage!.includes('abcd'));
+});
+
+test('formatProtocolObservation emits a single greppable RV-OBSERVATION JSON line with redacted errorMessage', () => {
+  const obs: ProtocolObservation = {
+    method: 'POST',
+    url: 'https://management.azure.com/execute',
+    status: 202,
+    location: 'https://management.azure.com/runs/x',
+    retryAfterSeconds: 5,
+    correlationId: 'corr-1',
+    requestId: 'req-1',
+    errorCode: undefined,
+    errorMessage: 'password=hunter2',
+  };
+  const line = formatProtocolObservation(obs);
+  assert.ok(line.startsWith('RV-OBSERVATION '));
+  const parsed = JSON.parse(line.slice('RV-OBSERVATION '.length)) as ProtocolObservation;
+  assert.equal(parsed.method, 'POST');
+  assert.equal(parsed.status, 202);
+  assert.ok(!line.includes('hunter2'));
+});
+
+test('across four independently-exercised operations, onObservation records all four — proving a per-operation matrix is observable (RV2 shape)', async () => {
+  const t = new FakeTransport()
+    .on('POST', '/validate', response(202, { Location: 'https://management.azure.com/validations/latest' }))
+    .on('GET', '/validations/latest', response(200, {}, { properties: { status: 'Succeeded' } }))
+    .on('POST', '/execute', response(202, { Location: 'https://management.azure.com/runs/x' }))
+    .on('POST', '/runs/x/cancel', response(202, { Location: 'https://management.azure.com/runs/x' }));
+  const observations: ProtocolObservation[] = [];
+  const log = new FakeLogger();
+  const cred = new FakeCredential();
+  const c = new ArmHttpClient({
+    transport: t,
+    clock: new FakeClock(),
+    log,
+    cred,
+    signal: new AbortController().signal,
+    rng: fixedRng(0.5),
+    onObservation: (obs) => observations.push(obs),
+  });
+  await c.post('https://management.azure.com/validate');
+  await c.getOnce('https://management.azure.com/validations/latest');
+  await c.post('https://management.azure.com/execute');
+  await c.post('https://management.azure.com/runs/x/cancel');
+
+  const urls = observations.map((o) => o.url);
+  assert.deepEqual(urls, [
+    'https://management.azure.com/validate',
+    'https://management.azure.com/validations/latest',
+    'https://management.azure.com/execute',
+    'https://management.azure.com/runs/x/cancel',
+  ]);
 });

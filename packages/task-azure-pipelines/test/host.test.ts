@@ -43,12 +43,53 @@ function run(script: string, env: Record<string, string>): string {
 // Drives `readArmServiceConnection().getAssertion()` and prints either
 // `OK:<assertion>` or `ERR:<message>` so the parent can assert without relying on
 // child process exit codes (an unhandled rejection would otherwise just crash).
+// R5: injects a FAKE OIDC transport (an in-process function, not the real
+// `node:https`) so the exchange is deterministic and offline — no DNS, proxy,
+// or real network dependency on `vstoken.dev.azure.com`. The fake still
+// exercises the REAL request/token composition: it asserts the composed URL
+// and the `Authorization: Bearer <accessToken>` header shape, and returns a
+// deterministic canned response.
 const DRIVE_ASSERTION_SCRIPT = `
 import(process.env.HOST_TS_PATH).then(async ({ readArmServiceConnection }) => {
   try {
-    const connection = readArmServiceConnection();
+    const requestLog = [];
+    const fakeRequest = (url, options, callback) => {
+      requestLog.push({ url: url.toString(), method: options.method, headers: options.headers });
+      const chunks = [];
+      const listeners = {};
+      const res = {
+        statusCode: 200,
+        on(event, listener) {
+          listeners[event] = listener;
+          return res;
+        },
+      };
+      queueMicrotask(() => {
+        callback(res);
+        listeners['data']?.(Buffer.from(JSON.stringify({ oidcToken: 'fake-oidc-token' })));
+        listeners['end']?.();
+      });
+      return {
+        on() { return this; },
+        destroy() {},
+        end() {},
+      };
+    };
+    const connection = readArmServiceConnection({ request: fakeRequest });
     const assertion = await connection.getAssertion();
-    console.log('OK:' + assertion);
+    if (assertion !== 'fake-oidc-token') {
+      console.log('ERR:unexpected assertion value: ' + assertion);
+    } else if (requestLog.length !== 1) {
+      console.log('ERR:expected exactly one request, got ' + requestLog.length);
+    } else if (requestLog[0].method !== 'POST') {
+      console.log('ERR:unexpected method: ' + requestLog[0].method);
+    } else if (requestLog[0].headers.authorization !== 'Bearer job-oauth-token') {
+      console.log('ERR:unexpected authorization header: ' + requestLog[0].headers.authorization);
+    } else if (!requestLog[0].url.includes('serviceConnectionId=theconnection')) {
+      console.log('ERR:composed URL missing serviceConnectionId: ' + requestLog[0].url);
+    } else {
+      console.log('OK:' + assertion);
+    }
   } catch (e) {
     console.log('ERR:' + e.message);
   }
@@ -100,11 +141,12 @@ test('readArmServiceConnection composes a WIF connection and reads the job OAuth
     }),
     // Deliberately no SYSTEM_ACCESSTOKEN anywhere in the child's env.
   });
-  assert.ok(line.startsWith('ERR:'), `expected the OIDC network call to fail (no live agent): ${line}`);
-  // Reaching (and failing at) the network call — rather than failing on a
-  // missing/invalid token — proves the token was read successfully from
-  // SYSTEMVSSCONNECTION.
-  assert.doesNotMatch(line, /AccessToken|SYSTEMVSSCONNECTION/);
+  // The fake transport (injected via `readArmServiceConnection({ request })`)
+  // asserts the composed request/token shape itself and returns a
+  // deterministic canned token — no real network call to
+  // vstoken.dev.azure.com is made, so this no longer depends on DNS, proxies,
+  // or remote behavior (R5).
+  assert.equal(line, 'OK:fake-oidc-token', line);
 });
 
 test('readArmServiceConnection: a missing SYSTEMVSSCONNECTION endpoint fails the assertion with an actionable error', () => {
