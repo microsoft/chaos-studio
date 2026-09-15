@@ -756,6 +756,37 @@ test('onObservation reports the observed properties.status/startTime/endTime bus
   assert.deepEqual([...obs.errorChannelsPresent].sort(), ['errors', 'executionErrors']);
 });
 
+test('onObservation excludes properties.resources from errorChannelsPresent — a resources array is genuine captured evidence, not an error channel (R1 review)', async () => {
+  const t = new FakeTransport().on(
+    'GET',
+    '/runs/x',
+    response(200, {}, {
+      properties: {
+        status: 'Succeeded',
+        startTime: '2026-01-01T00:00:00Z',
+        endTime: '2026-01-01T00:05:00Z',
+        errors: [],
+        executionErrors: [],
+        resources: [{ id: '/subscriptions/s/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm1' }],
+      },
+    }),
+  );
+  const observations: ProtocolObservation[] = [];
+  const observingClient = new ArmHttpClient({
+    transport: t,
+    clock: new FakeClock(),
+    log: new FakeLogger(),
+    cred: new FakeCredential(),
+    signal: new AbortController().signal,
+    rng: fixedRng(0.5),
+    onObservation: (obs) => observations.push(obs),
+  });
+  await observingClient.getOnce('https://management.azure.com/runs/x');
+
+  const obs = observations[0]!;
+  assert.deepEqual([...obs.errorChannelsPresent].sort(), ['errors', 'executionErrors']);
+});
+
 test('onObservation reports absent wire-shape fields as undefined/empty when the deployed body uses a different shape (R2 review — a real drift is visible, not masked)', async () => {
   // Simulates a service that regressed to the stale `state` field instead of `status`.
   const t = new FakeTransport().on('GET', '/runs/x', response(200, {}, { properties: { state: 'Succeeded' } }));

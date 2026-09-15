@@ -61,6 +61,28 @@ test('bestEffortCancel swallows a failed cancel POST and never throws (FR11)', a
   assert.ok(log.warnings.some((m) => m.includes('cleanup did not complete')));
 });
 
+test('bestEffortCancel preserves redacted ARM diagnostic context (code/correlation/request IDs) on a cleanup failure without masking the original failure (R2)', async () => {
+  const t = new FakeTransport().on(
+    'POST',
+    '/cancel',
+    response(
+      500,
+      { 'x-ms-correlation-request-id': 'corr-1', 'x-ms-request-id': 'req-1' },
+      { error: { code: 'ServerError', message: 'internal failure' } },
+    ),
+  );
+  const { c, log, clock } = client(t);
+  const outcome = await bestEffortCancel(c, RUN_RESOURCE_ID, Deadline.fromNow(clock, 300), log);
+  assert.equal(outcome, undefined);
+  // The original failure/cancellation reason must still be preserved (never masked)...
+  const warning = log.warnings.find((m) => m.includes('cleanup did not complete'));
+  assert.ok(warning, 'expected a cleanup warning');
+  // ...AND the ARM diagnostic context must be retained, redacted, alongside it.
+  assert.ok(warning!.includes('armErrorCode=ServerError'), warning);
+  assert.ok(warning!.includes('correlationId=corr-1'), warning);
+  assert.ok(warning!.includes('requestId=req-1'), warning);
+});
+
 test('bestEffortCancel refuses a cancel Location pointing at a DIFFERENT run and reports no terminal (D14, finding #2)', async () => {
   // A cancel 202 whose Location names another run must not be followed — cleanup
   // must never poll or report a foreign run's state.

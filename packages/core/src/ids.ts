@@ -64,8 +64,16 @@ export interface ScenarioCoordinates {
 // carrying `/`, whitespace, `?`, `#`, or `..` would corrupt the resource path).
 // ---------------------------------------------------------------------------
 
-/** ARM resource-group name: letters/digits/`-`/`_`/`.`/`(`/`)`, 1–90 chars, not ending in a period. */
-const RESOURCE_GROUP_PATTERN = /^[A-Za-z0-9._\-()]{1,90}$/;
+/**
+ * ARM resource-group name (R3): Unicode letters (`\p{L}`), combining marks
+ * (`\p{M}`), digits (`\p{N}`), `-`/`_`/`.`/`(`/`)`, 1–90 chars, not ending in a
+ * period. ARM itself accepts Unicode resource-group names (e.g. `rg-café`) —
+ * an ASCII-only restriction is not authorized by the plan, so this uses
+ * Unicode property escapes (`/u` flag) rather than `\w`, which in JS matches
+ * only ASCII. Reference:
+ * https://learn.microsoft.com/azure/azure-resource-manager/management/resource-name-rules#microsoftresources
+ */
+const RESOURCE_GROUP_PATTERN = /^[\p{L}\p{M}\p{N}._\-()]{1,90}$/u;
 /**
  * Conservative Chaos child-resource name (workspace/scenario/configuration):
  * must start alphanumeric, then alphanumeric/`-`/`_`/`.`, 1–128 chars. This is a
@@ -95,7 +103,7 @@ export function validateResourceGroup(value: string): string {
     throw identifierError(
       'resource-group',
       value,
-      'must be 1–90 chars of letters, digits, or `-` `_` `.` `(` `)` and not end with a period',
+      'must be 1–90 chars of Unicode letters/digits or `-` `_` `.` `(` `)` and not end with a period',
     );
   }
   return value;
@@ -195,6 +203,22 @@ export function cancelActionUrl(resourceId: string): string {
 // (D14): the core never fabricates a run URL and never re-POSTs.
 // ---------------------------------------------------------------------------
 
+/**
+ * Percent-decode one URL path segment for identifier comparison/return (R3).
+ * `URL#pathname` percent-encodes non-ASCII (and some ASCII) characters, so a
+ * raw Unicode resource-group name like `rg-café` appears as `rg-caf%C3%A9` in
+ * `url.pathname` — comparing that directly against a raw input name would
+ * always fail. A malformed percent-escape (fails to decode) is a malformed
+ * path and must still be rejected, not silently passed through.
+ */
+function decodeSegment(segment: string, what: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    throw new CoreError('ambiguous-acceptance', `${what} contains a malformed percent-encoded path segment`);
+  }
+}
+
 /** Extracts `{ runResourceId, runId }` from an execute/cancel `Location`. */
 export function parseRunLocation(
   location: string | undefined,
@@ -217,7 +241,7 @@ export function parseRunLocation(
   // The Location MUST carry the single pinned api-version (D5, D14) — an unpinned
   // or foreign version is not a resource this release trusts.
   assertPinnedApiVersion(url, 'acceptance Location');
-  const segments = url.pathname.split('/').filter(Boolean);
+  const segments = url.pathname.split('/').filter(Boolean).map((s) => decodeSegment(s, 'acceptance Location'));
   const runsIndex = segments.lastIndexOf('runs');
   if (runsIndex < 0 || runsIndex !== segments.length - 2) {
     throw new CoreError('ambiguous-acceptance', 'acceptance Location is not a .../runs/{runId} resource path');
@@ -259,7 +283,7 @@ export function parseRunLocation(
       );
     }
   }
-  return { runResourceId: url.pathname, runId };
+  return { runResourceId: `/${segments.join('/')}`, runId };
 }
 
 /**
@@ -322,7 +346,7 @@ export function parseValidationLocation(location: string | undefined, expected: 
     throw new CoreError('ambiguous-acceptance', `validate acceptance Location is not an ARM URL (${url.protocol}//${url.host})`);
   }
   assertPinnedApiVersion(url, 'validate acceptance Location');
-  const s = url.pathname.split('/').filter(Boolean);
+  const s = url.pathname.split('/').filter(Boolean).map((seg) => decodeSegment(seg, 'validate acceptance Location'));
   // Expected 14-segment shape: subscriptions/{s}/resourceGroups/{rg}/providers/
   // Microsoft.Chaos/workspaces/{ws}/scenarios/{scn}/configurations/{cfg}/validations/latest
   const shapeOk =

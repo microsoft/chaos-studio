@@ -13076,7 +13076,7 @@ var CoreError = class extends Error {
     this.requestId = context3.requestId;
   }
 };
-var RESOURCE_GROUP_PATTERN = /^[A-Za-z0-9._\-()]{1,90}$/;
+var RESOURCE_GROUP_PATTERN = /^[\p{L}\p{M}\p{N}._\-()]{1,90}$/u;
 var RESOURCE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 function identifierError(field, value, requirement) {
   const shown = value.length > 64 ? `${value.slice(0, 64)}\u2026` : value;
@@ -13093,7 +13093,7 @@ function validateResourceGroup(value) {
     throw identifierError(
       "resource-group",
       value,
-      "must be 1\u201390 chars of letters, digits, or `-` `_` `.` `(` `)` and not end with a period"
+      "must be 1\u201390 chars of Unicode letters/digits or `-` `_` `.` `(` `)` and not end with a period"
     );
   }
   return value;
@@ -13135,6 +13135,13 @@ function runResourceUrl(resourceId) {
 function cancelActionUrl(resourceId) {
   return withApiVersion(resourceId, "/cancel");
 }
+function decodeSegment(segment, what) {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    throw new CoreError("ambiguous-acceptance", `${what} contains a malformed percent-encoded path segment`);
+  }
+}
 function parseRunLocation(location, expected) {
   if (!location) {
     throw new CoreError("ambiguous-acceptance", "acceptance response carried no Location header");
@@ -13149,7 +13156,7 @@ function parseRunLocation(location, expected) {
     throw new CoreError("ambiguous-acceptance", `acceptance Location is not an ARM URL (${url.protocol}//${url.host})`);
   }
   assertPinnedApiVersion(url, "acceptance Location");
-  const segments = url.pathname.split("/").filter(Boolean);
+  const segments = url.pathname.split("/").filter(Boolean).map((s) => decodeSegment(s, "acceptance Location"));
   const runsIndex = segments.lastIndexOf("runs");
   if (runsIndex < 0 || runsIndex !== segments.length - 2) {
     throw new CoreError("ambiguous-acceptance", "acceptance Location is not a .../runs/{runId} resource path");
@@ -13171,7 +13178,7 @@ function parseRunLocation(location, expected) {
       );
     }
   }
-  return { runResourceId: url.pathname, runId };
+  return { runResourceId: `/${segments.join("/")}`, runId };
 }
 function assertArmUrl(url) {
   let u;
@@ -13210,7 +13217,7 @@ function parseValidationLocation(location, expected) {
     throw new CoreError("ambiguous-acceptance", `validate acceptance Location is not an ARM URL (${url.protocol}//${url.host})`);
   }
   assertPinnedApiVersion(url, "validate acceptance Location");
-  const s = url.pathname.split("/").filter(Boolean);
+  const s = url.pathname.split("/").filter(Boolean).map((seg) => decodeSegment(seg, "validate acceptance Location"));
   const shapeOk = s.length === 14 && s[0] === "subscriptions" && s[2] === "resourceGroups" && s[4] === "providers" && s[5] === "Microsoft.Chaos" && s[6] === "workspaces" && s[8] === "scenarios" && s[10] === "configurations" && s[12] === "validations" && s[13] === "latest";
   if (!shapeOk) {
     throw new CoreError("ambiguous-acceptance", "validate acceptance Location is not a canonical validations/latest resource");
@@ -13361,7 +13368,10 @@ function readObservedWireShape(json) {
   const status = asString(props["status"]);
   const startTime = asString(props["startTime"]);
   const endTime = asString(props["endTime"]);
-  const errorChannelsPresent = Object.keys(props).filter((k) => Array.isArray(props[k]));
+  const NON_ERROR_ARRAY_FIELDS = /* @__PURE__ */ new Set(["resources"]);
+  const errorChannelsPresent = Object.keys(props).filter(
+    (k) => Array.isArray(props[k]) && !NON_ERROR_ARRAY_FIELDS.has(k)
+  );
   return {
     businessState: status,
     startTime,
@@ -13860,8 +13870,18 @@ async function bestEffortCancel(cleanupClient, runResourceId, cleanupDeadline, l
     return outcome;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    const details = [];
+    if (err instanceof CoreError) {
+      if (err.armErrorCode !== void 0) details.push(`armErrorCode=${err.armErrorCode}`);
+      if (err.armErrorMessage !== void 0) details.push(`armErrorMessage=${err.armErrorMessage}`);
+      if (err.correlationId !== void 0) details.push(`correlationId=${err.correlationId}`);
+      if (err.requestId !== void 0) details.push(`requestId=${err.requestId}`);
+    }
+    const suffix = details.length > 0 ? ` (${details.join(", ")})` : "";
     log2.warning(
-      redact(`cleanup did not complete; original failure/cancellation reason is preserved: ${message}`)
+      redact(
+        `cleanup did not complete; original failure/cancellation reason is preserved: ${message}${suffix}`
+      )
     );
     return void 0;
   }

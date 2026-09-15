@@ -132,7 +132,7 @@ test('a receipt transcript built ENTIRELY from captured RV-OBSERVATION output ev
     ],
     [
       'GET /subscriptions/s/resourceGroups/rg/providers/Microsoft.Chaos/workspaces/ws/scenarios/scn/configurations/cfg/validations/latest',
-      [{ status: 200, headers: {}, body: { properties: { status: 'Succeeded', startTime: 't0', endTime: 't1', errors: [], validationErrors: [] } } }],
+      [{ status: 200, headers: {}, body: { properties: { status: 'Succeeded', startTime: 't0', endTime: 't1', errors: [], validationErrors: [], resources: [{ id: 'r0' }] } } }],
     ],
     [
       'POST /subscriptions/s/resourceGroups/rg/providers/Microsoft.Chaos/workspaces/ws/scenarios/scn/configurations/cfg/execute',
@@ -140,7 +140,7 @@ test('a receipt transcript built ENTIRELY from captured RV-OBSERVATION output ev
     ],
     [
       `GET /subscriptions/s/resourceGroups/rg/providers/Microsoft.Chaos/workspaces/ws/scenarios/scn/runs/${successRunId}`,
-      [{ status: 200, headers: {}, body: { properties: { status: 'Succeeded', startTime: 't0', endTime: 't2', errors: [], executionErrors: [] } } }],
+      [{ status: 200, headers: {}, body: { properties: { status: 'Succeeded', startTime: 't0', endTime: 't2', errors: [], executionErrors: [], resources: [{ id: 'r1' }] } } }],
     ],
   ]);
   const cancelRoutes = new Map<string, Fixture[]>([

@@ -5,7 +5,7 @@ import type { RunContext } from '../../core/src/contract.ts';
 import { orchestrate } from '../../core/src/orchestrator.ts';
 import { runAzurePipelinesTask } from '../src/adapter.ts';
 import { FakeTaskHost, FakeTokenCredentialProvider } from './fake-host.ts';
-import { FakeClock, FakeTransport, fixedRng, fixtureResponses } from '../../core/test/helpers/harness.ts';
+import { FakeClock, FakeTransport, fixedRng, fixtureResponses, response } from '../../core/test/helpers/harness.ts';
 
 /**
  * Canonical inputs keyed by the task.json wire names (camelCase). These are the
@@ -67,6 +67,31 @@ test('parity: a terminal Failed run fails the task with the core failure reason 
   assert.equal(host.outputs['completed-at'], '2026-05-01T12:04:30Z', 'completed-at is emitted for a normally observed Failed terminal run (R4)');
   assert.match(host.failureMessage!, /run-failed/, 'the task failure carries the core category');
   assert.match(host.failureMessage!, /InternalExecutionError/, 'the customer-actionable ARM error code is preserved');
+});
+
+test('parity: a valid Unicode resource-group name (e.g. rg-café) is accepted and drives a real request through the Azure Pipelines adapter (R3)', async () => {
+  const clock = new FakeClock();
+  const base =
+    'https://management.azure.com/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-café/providers/Microsoft.Chaos/workspaces/ws-demo/scenarios/scn-demo/configurations/cfg-demo';
+  const transport = new FakeTransport()
+    .on(
+      'POST',
+      '/validate',
+      response(202, { Location: `${base}/validations/latest?api-version=2026-05-01-preview`, 'Retry-After': '10' }),
+    )
+    .on(
+      'GET',
+      '/validations/latest',
+      response(200, {}, { properties: { status: 'Succeeded', startTime: 't0', endTime: 't1', errors: [], validationErrors: [] } }),
+    );
+  const host = new FakeTaskHost({ ...BASE_INPUTS, resourceGroup: 'rg-café', mode: 'validate-only' });
+
+  const result = await runWithCore(host, transport, clock);
+
+  assert.equal(result.success, true, `a Unicode resource-group name is accepted, not rejected as invalid: ${host.failureMessage}`);
+  assert.equal(host.failed, false);
+  assert.equal(host.outputs['validation-state'], 'Succeeded');
+  assert.equal(transport.requests.length, 2, 'the validate POST and validations/latest GET both went through');
 });
 
 test('parity: an invalid identifier fails the task with no ARM calls (FR14 fail-closed)', async () => {

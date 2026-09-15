@@ -158,7 +158,10 @@ export interface PollStep<T> {
  * NAMES from the source-proven contract constants, and only the business
  * VALUES the client itself already trusts — `status`/`startTime`/`endTime`
  * and which error-channel keys are present, never error array contents,
- * which are separately redacted into `errorMessage`). This is what lets an
+ * which are separately redacted into `errorMessage`). Array-valued
+ * `properties` keys that are known NOT to be error channels (e.g.
+ * `resources`) are excluded from `errorChannelsPresent` (R1). This is what
+ * lets an
  * operator populate a receipt's `wire.*` and terminal-state fields directly
  * from the printed transcript instead of typing in the expected contract
  * constants — a GET whose deployed body actually uses `properties.state`
@@ -210,7 +213,16 @@ function readObservedWireShape(json: unknown): Pick<
   const status = asString(props['status']);
   const startTime = asString(props['startTime']);
   const endTime = asString(props['endTime']);
-  const errorChannelsPresent = Object.keys(props).filter((k) => Array.isArray(props[k]));
+  // Only array-valued keys that are actually error channels (R1). A run/
+  // validation body's `properties.resources` is genuine captured evidence of
+  // the affected resources, not an error array — including it here would make
+  // an authoritative, error-free run response fail the receipt's exact
+  // error-channel comparison. `errorChannelsPresent` therefore excludes the
+  // known non-error array field(s) the pinned wire shape defines.
+  const NON_ERROR_ARRAY_FIELDS = new Set(['resources']);
+  const errorChannelsPresent = Object.keys(props).filter(
+    (k) => Array.isArray(props[k]) && !NON_ERROR_ARRAY_FIELDS.has(k),
+  );
   return {
     businessState: status,
     startTime,

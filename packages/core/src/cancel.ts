@@ -13,7 +13,7 @@
  */
 
 import type { ILogger } from './contract.ts';
-import { cancelActionUrl, resolveCancelPollUrl } from './ids.ts';
+import { cancelActionUrl, resolveCancelPollUrl, CoreError } from './ids.ts';
 import { ArmHttpClient, Deadline, raiseForAcceptance } from './http.ts';
 import { pollRun, type RunOutcome } from './run.ts';
 import { redact } from './redaction.ts';
@@ -43,8 +43,24 @@ export async function bestEffortCancel(
     return outcome;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    // Preserve the ARM diagnostic context (code, actionable message,
+    // request/correlation IDs) a CoreError already carries, redacted, so an
+    // operator investigating a possibly-still-running scenario after a failed
+    // cancel is not left with only a generic message (R2, FR12). The original
+    // forward failure/cancellation reason is still what the caller returns —
+    // this is logged, never thrown or substituted.
+    const details: string[] = [];
+    if (err instanceof CoreError) {
+      if (err.armErrorCode !== undefined) details.push(`armErrorCode=${err.armErrorCode}`);
+      if (err.armErrorMessage !== undefined) details.push(`armErrorMessage=${err.armErrorMessage}`);
+      if (err.correlationId !== undefined) details.push(`correlationId=${err.correlationId}`);
+      if (err.requestId !== undefined) details.push(`requestId=${err.requestId}`);
+    }
+    const suffix = details.length > 0 ? ` (${details.join(', ')})` : '';
     log.warning(
-      redact(`cleanup did not complete; original failure/cancellation reason is preserved: ${message}`),
+      redact(
+        `cleanup did not complete; original failure/cancellation reason is preserved: ${message}${suffix}`,
+      ),
     );
     return undefined;
   }
