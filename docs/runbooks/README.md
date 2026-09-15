@@ -2,7 +2,9 @@
 
 Operational handoff for the GitHub Action (`microsoft/chaos-studio@v1`) and the
 Azure Pipelines extension (`AzureChaosStudio.ChaosStudioWorkspaces`). Both wrap the
-same shared TypeScript core and are released from **one core commit**.
+same shared TypeScript core and are released from **one validated core commit**,
+published from the single release commit that carries that commit's validation
+receipt ([`release.md`](release.md)).
 
 **Owning team:** Azure Chaos Engineering Services (ACES) — `aces@microsoft.com`.
 File defects in this repository; page the on-call rotation only for a live customer
@@ -18,7 +20,8 @@ impact caused by a published integration.
 ## Standing operating principles
 
 1. **One commit, two marketplaces.** Every release ships artifacts built from a
-   single core commit; both release configs prove it before publishing.
+   single validated core commit; both release configs prove it before publishing,
+   from one shared release commit.
 2. **Evidence, not assertion.** RV1–RV3 results are recorded as a receipt whose
    observations are *re-evaluated* against the source-proven contract. A receipt
    that merely claims `passed` is rejected.

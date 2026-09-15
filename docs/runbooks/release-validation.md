@@ -22,7 +22,7 @@ receipt failure — never as a silently accommodating client change.
 | Scenario configuration | A short, safe, repeatable configuration (a no-op or low-blast-radius fault) |
 | Identities | One federated (WIF/OIDC) CI identity per platform — GitHub Actions and Azure Pipelines — with **no** client secret |
 | Role | The custom role from `security/chaos-studio-runner.role-template.json`, assigned at **workspace** scope |
-| Builds | The private Action build ref and the `ChaosStudioWorkspacesDev` VSIX, both built from the release core commit |
+| Builds | The private Action build ref and the `ChaosStudioWorkspacesDev` VSIX, both built from the validated core commit |
 
 Record the workspace resource ID's sha256 (never the raw ID):
 

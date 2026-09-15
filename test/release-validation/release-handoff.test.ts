@@ -410,6 +410,22 @@ test('the extension rollback publishes from the commit that carries the new rece
   );
   assert.match(ado, /receipt/i, 'the roll-forward step names the receipt-bearing commit');
   assert.match(ado, /release commit/i);
+
+  // The incident repoint moves the floating major tag onto a RELEASED commit —
+  // the commit the last-good version tag resolves to — not onto the core commit
+  // that release's receipt happens to record.
+  const github = markdownSection(runbook, '## 1. Roll back the GitHub Action');
+  assert.match(github, /git tag -f/, 'the incident repoint is still documented');
+  assert.doesNotMatch(
+    github,
+    /<last-good-core-commit>/,
+    'the floating tag must not be repointed at a validated core commit',
+  );
+  assert.match(
+    github,
+    /last-good-release-commit/,
+    'the floating tag is repointed at the last-good release commit',
+  );
 });
 
 test('rollback and deprecation runbooks cover both platforms, including the un-deletable task', () => {

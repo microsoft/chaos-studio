@@ -38,7 +38,10 @@ takes effect on the consumer's next run with no action from them.
 
    ```bash
    # Authenticated as the release identity (on the tag-ruleset bypass list).
-   git tag -f -a v1 -m 'Rollback: v1 -> <last-good-version>' <last-good-core-commit>
+   # <last-good-release-commit> is the commit the last-good VERSION tag resolves
+   # to — `git rev-parse <last-good-version>^{commit}` — not the core commit that
+   # release's receipt records.
+   git tag -f -a v1 -m 'Rollback: v1 -> <last-good-version>' <last-good-release-commit>
    git push --force origin v1
    ```
 
@@ -55,7 +58,8 @@ takes effect on the consumer's next run with no action from them.
    naming the affected versions.
 
 **Never** re-publish a different build under an already-published version number.
-Cut a new patch version from a new core commit and move `v1` to it.
+Cut a new patch version from a new validated core commit, release it through
+[`release.md`](release.md), and move `v1` to the resulting release commit.
 
 ## 2. Roll back the Azure Pipelines extension
 
