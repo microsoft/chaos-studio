@@ -168,6 +168,7 @@ jobs:
       url: https://pypi.org/p/chaos-mcp
     env:
       REPO: ${{ github.repository }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -176,7 +177,15 @@ jobs:
 
       - name: Preflight — revalidate the pypi environment protections on THIS attempt
         env:
-          GH_TOKEN: ${{ secrets.ACTION_RELEASE_TOKEN }}
+          # A SEPARATE, ENVIRONMENT-SCOPED, READ-ONLY credential — NOT ACTION_RELEASE_TOKEN.
+          # ACTION_RELEASE_TOKEN is stored only on the `release`/`mcp-release` environments
+          # (it can write tags/releases); environment secrets are NEVER shared across
+          # environments, so referencing it here would always be empty and this preflight
+          # would fail closed on every run. PYPI_VERIFY_TOKEN is a fine-grained PAT scoped to
+          # this repo with ONLY `Administration: read` (to read environment/branch-policy
+          # config) — no write scope of any kind — provisioned as an environment secret on
+          # `pypi` itself. See CONTRIBUTING.md ("MCP release").
+          GH_TOKEN: ${{ secrets.PYPI_VERIFY_TOKEN }}
         run: |
           set -euo pipefail
           # Re-runs the same checks github-release performs for `pypi`, but here, in
@@ -186,11 +195,15 @@ jobs:
           # reviewer with prevent_self_review=true, an explicit can_admins_bypass=false,
           # and a deployment policy limited to EXACTLY one default-branch policy.
           if [[ -z "${GH_TOKEN:-}" ]]; then
-            echo "::error::ACTION_RELEASE_TOKEN is not available to publish-pypi; cannot revalidate the pypi environment protections. Refusing to publish."
+            echo "::error::PYPI_VERIFY_TOKEN is not available to publish-pypi; cannot revalidate the pypi environment protections. Refusing to publish."
+            exit 1
+          fi
+          if [[ -z "${DEFAULT_BRANCH:-}" ]]; then
+            echo "::error::DEFAULT_BRANCH is not available to publish-pypi; cannot verify the deployment-branch policy name. Refusing to publish."
             exit 1
           fi
           if ! envjson="$(gh api "repos/${REPO}/environments/pypi" 2>/dev/null)"; then
-            echo "::error::The 'pypi' environment does not exist or is not readable by ACTION_RELEASE_TOKEN. Refusing to publish."
+            echo "::error::The 'pypi' environment does not exist or is not readable by PYPI_VERIFY_TOKEN. Refusing to publish."
             exit 1
           fi
           reviewerRule="$(printf '%s' "$envjson" | jq -c '.protection_rules[]? | select(.type=="required_reviewers")')"
@@ -219,8 +232,8 @@ jobs:
           fi
           ptype="$(printf '%s' "$polJson" | jq -r '.branch_policies[0].type // "null"')"
           pname="$(printf '%s' "$polJson" | jq -r '.branch_policies[0].name // "null"')"
-          if [[ "$ptype" != "branch" ]]; then
-            echo "::error::The 'pypi' deployment policy must be a BRANCH policy, got type='${ptype}' name='${pname}'. Refusing to publish."
+          if [[ "$ptype" != "branch" || "$pname" != "$DEFAULT_BRANCH" ]]; then
+            echo "::error::The 'pypi' deployment policy must be a single BRANCH policy named exactly '${DEFAULT_BRANCH}', got type='${ptype}' name='${pname}'. Refusing to publish."
             exit 1
           fi
           echo "pypi environment preflight (re-verified on this attempt) passed."

@@ -434,7 +434,14 @@ on) that refuses to publish unless **both** environments have the full protectio
 - **`pypi`** (used by `publish-pypi`) — **required reviewers**, **`prevent_self_review=true`**,
   **`can_admins_bypass=false`**, and a deployment-branch policy of type "Selected
   branches and tags" naming **only** the default branch. The PyPI trusted publisher is
-  bound to (this repo, `release.yml`, environment `pypi`).
+  bound to (this repo, `release.yml`, environment `pypi`). `publish-pypi` also runs its
+  OWN preflight (defense against a failed-job-only retry that skips `github-release` and
+  rides on a stale prior pass) that revalidates these same protections on every attempt.
+  That preflight needs a **read-only** credential — it must NOT reuse `ACTION_RELEASE_TOKEN`,
+  since that token lives on `release`/`mcp-release` only and environment secrets are never
+  shared across environments. Provision a **`pypi`-scoped** fine-grained PAT named
+  **`PYPI_VERIFY_TOKEN`** with **only `Administration: read`** (no write scope of any
+  kind) as an **environment secret on `pypi`**.
 - **`mcp-release`** (used by `github-release`) — the SAME protections (required reviewers +
   `prevent_self_review=true` + `can_admins_bypass=false` + default-branch-only), and it
   stores `ACTION_RELEASE_TOKEN` (the release identity's fine-grained token, `Contents: write`
@@ -475,6 +482,11 @@ done
 
 # The tag-writing token is an ENVIRONMENT secret on mcp-release (not a repo secret).
 gh secret set ACTION_RELEASE_TOKEN --env mcp-release --repo OWNER/REPO
+
+# The pypi preflight's READ-ONLY verification credential is a SEPARATE environment secret
+# on `pypi` — a fine-grained PAT scoped to THIS repo with ONLY `Administration: read` (no
+# write scope). It must NOT be ACTION_RELEASE_TOKEN (environment secrets are not shared).
+gh secret set PYPI_VERIFY_TOKEN --env pypi --repo OWNER/REPO
 
 # Record the dedicated release user's numeric actor id (shared with the v* flow) so the
 # mcp tag preflight can verify the token identity and the ruleset bypass actor.

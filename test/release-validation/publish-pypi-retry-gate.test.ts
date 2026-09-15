@@ -79,3 +79,69 @@ test('publish-pypi still declares the native `environment: pypi` gate as defense
   const job = publishPypiJobSlice(readWorkflow());
   assert.match(job, /environment:\s*\n\s*name:\s*pypi/, 'the environment: pypi gate must remain declared');
 });
+
+test('the preflight uses a pypi-scoped read-only verification credential, not the release-writing ACTION_RELEASE_TOKEN', () => {
+  const job = publishPypiJobSlice(readWorkflow());
+  assert.match(
+    job,
+    /GH_TOKEN:\s*\$\{\{\s*secrets\.PYPI_VERIFY_TOKEN\s*\}\}/,
+    'publish-pypi must authenticate its preflight with a dedicated PYPI_VERIFY_TOKEN, not ACTION_RELEASE_TOKEN (environment secrets are not shared across environments)'
+  );
+  assert.doesNotMatch(
+    job,
+    /secrets\.ACTION_RELEASE_TOKEN/,
+    'publish-pypi must not reference ACTION_RELEASE_TOKEN — that secret lives only on release/mcp-release environments and would always be empty here'
+  );
+});
+
+test('the preflight requires DEFAULT_BRANCH and enforces exact policy-name equality, not just policy type', () => {
+  const job = publishPypiJobSlice(readWorkflow());
+  assert.match(
+    job,
+    /DEFAULT_BRANCH:\s*\$\{\{\s*github\.event\.repository\.default_branch\s*\}\}/,
+    'publish-pypi must be given DEFAULT_BRANCH (it is not otherwise in scope for this job)'
+  );
+  const preflightStart = job.indexOf('Preflight — revalidate the pypi environment protections');
+  const preflight = job.slice(preflightStart, preflightStart + 4000);
+  assert.match(
+    preflight,
+    /if \[\[ -z "\$\{DEFAULT_BRANCH:-\}" \]\]/,
+    'must fail closed under set -u if DEFAULT_BRANCH is somehow unavailable'
+  );
+  assert.match(
+    preflight,
+    /\$ptype"\s*!=\s*"branch"\s*\|\|\s*"\$pname"\s*!=\s*"\$DEFAULT_BRANCH"/,
+    'must require BOTH policy type == branch AND policy name == exactly DEFAULT_BRANCH — a wildcard or non-default-named branch policy must be rejected'
+  );
+});
+
+test('CONTRIBUTING.md documents PYPI_VERIFY_TOKEN provisioning on the pypi environment', () => {
+  const contributingPath = join(__dirname, '..', '..', 'CONTRIBUTING.md');
+  const contributing = readFileSync(contributingPath, 'utf8');
+  assert.match(
+    contributing,
+    /PYPI_VERIFY_TOKEN/,
+    'CONTRIBUTING.md must document the PYPI_VERIFY_TOKEN credential used by the pypi preflight'
+  );
+  assert.match(
+    contributing,
+    /gh secret set PYPI_VERIFY_TOKEN --env pypi/,
+    'CONTRIBUTING.md must show provisioning PYPI_VERIFY_TOKEN as an environment secret on pypi'
+  );
+});
+
+test('verify-release-protections.sh checks for the PYPI_VERIFY_TOKEN environment secret on pypi (aligned with the workflow credential)', () => {
+  const verifierPath = join(__dirname, '..', '..', 'scripts', 'verify-release-protections.sh');
+  const verifier = readFileSync(verifierPath, 'utf8');
+  assert.match(
+    verifier,
+    /environments\/\$\{envname\}\/secrets\/PYPI_VERIFY_TOKEN/,
+    'the standalone verifier must check for PYPI_VERIFY_TOKEN on the pypi environment, matching the workflow credential'
+  );
+  assert.doesNotMatch(
+    verifier,
+    /pypi.*uses a trusted publisher and holds no token/i,
+    'the verifier must no longer claim pypi holds no token now that PYPI_VERIFY_TOKEN is required'
+  );
+});
+

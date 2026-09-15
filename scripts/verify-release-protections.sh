@@ -61,7 +61,10 @@ fi
 # Each must have >=1 required reviewer, prevent_self_review=true, can_admins_bypass=false,
 # and EXACTLY ONE deployment-branch policy of type 'branch' named the default branch.
 # `release` and `mcp-release` must ALSO hold the ACTION_RELEASE_TOKEN environment secret
-# (the tag-writing credential); `pypi` uses a trusted publisher and holds no token.
+# (the tag-writing credential). `pypi` publishes via a trusted publisher (no writing
+# token) but must hold its OWN read-only PYPI_VERIFY_TOKEN environment secret, used by
+# publish-pypi's own retry-safe preflight to revalidate these protections on every
+# attempt without borrowing the release-writing credential from another environment.
 verify_env() {
   local envname="$1" needsToken="$2" envjson polJson reviewerRule total ptype pname
   # Snapshot the ERROR COUNT at entry. Because `fail` is an incrementing count (not a 0/1
@@ -103,9 +106,17 @@ verify_env() {
       err "environment '${envname}' is missing the ACTION_RELEASE_TOKEN environment secret (the tag-writing release identity token)."
     fi
   fi
+  # `pypi` does not hold ACTION_RELEASE_TOKEN (never shared across environments), but its
+  # own publish-pypi preflight needs a READ-ONLY verification credential, provisioned as
+  # PYPI_VERIFY_TOKEN on this environment specifically.
+  if [[ "$envname" == "pypi" ]]; then
+    if ! gh api "repos/${REPO}/environments/${envname}/secrets/PYPI_VERIFY_TOKEN" >/dev/null 2>&1; then
+      err "environment '${envname}' is missing the PYPI_VERIFY_TOKEN environment secret (the read-only credential publish-pypi's own preflight uses to revalidate this environment's protections)."
+    fi
+  fi
   # Success message + return status derive from THIS call only (compare to the entry
   # snapshot), so the function returns 0 regardless of any earlier environment's failure.
-  [[ $fail -eq $before ]] && ok "environment '${envname}' hardened (reviewers + prevent_self_review + can_admins_bypass=false + default-branch-only$([[ "$needsToken" == "yes" ]] && echo " + ACTION_RELEASE_TOKEN"))."
+  [[ $fail -eq $before ]] && ok "environment '${envname}' hardened (reviewers + prevent_self_review + can_admins_bypass=false + default-branch-only$([[ "$needsToken" == "yes" ]] && echo " + ACTION_RELEASE_TOKEN")$([[ "$envname" == "pypi" ]] && echo " + PYPI_VERIFY_TOKEN"))."
   return 0
 }
 verify_env release yes
