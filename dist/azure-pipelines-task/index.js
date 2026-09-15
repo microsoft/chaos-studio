@@ -5950,7 +5950,7 @@ var require_task = __commonJS({
       return getEndpointAuthorizationParameter(id, key, false);
     }
     exports2.getEndpointAuthorizationParameterRequired = getEndpointAuthorizationParameterRequired2;
-    function getEndpointAuthorization(id, optional) {
+    function getEndpointAuthorization2(id, optional) {
       var aval = im._vault.retrieveSecret("ENDPOINT_AUTH_" + id);
       if (!optional && !aval) {
         setResult2(TaskResult2.Failed, (0, exports2.loc)("LIB_EndpointAuthNotExist", id));
@@ -5966,7 +5966,7 @@ var require_task = __commonJS({
       }
       return auth;
     }
-    exports2.getEndpointAuthorization = getEndpointAuthorization;
+    exports2.getEndpointAuthorization = getEndpointAuthorization2;
     function getSecureFileName(id) {
       var name3 = process.env["SECUREFILE_NAME_" + id];
       (0, exports2.debug)("secure file name for id " + id + " = " + name3);
@@ -13034,8 +13034,26 @@ var VALIDATION_TERMINAL_FAILURE = [
   "RequiresAttention",
   "NoResolvedResources"
 ];
+var RUN_STATES = [
+  "Queued",
+  "Resolving",
+  "Generating",
+  "Validating",
+  "ValidationSucceeded",
+  "Starting",
+  "Preparing",
+  "Running",
+  "CleaningUp",
+  "Canceling",
+  "Canceled",
+  "Succeeded",
+  "Failed"
+];
 var RUN_TERMINAL_SUCCESS = ["Succeeded"];
 var RUN_TERMINAL_FAILURE = ["Failed", "Canceled"];
+var RUN_NONTERMINAL_STATES = RUN_STATES.filter(
+  (s) => !RUN_TERMINAL_SUCCESS.includes(s) && !RUN_TERMINAL_FAILURE.includes(s)
+);
 var GUID_PATTERN = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
 // packages/core/src/ids.ts
@@ -13212,6 +13230,38 @@ function resolveCancelPollUrl(location, knownRunResourceId) {
 
 // packages/core/src/redaction.ts
 var REDACTED = "<redacted>";
+var SECRET_KEY_NAMES = /* @__PURE__ */ new Set([
+  "password",
+  "clientsecret",
+  "client_secret",
+  "accesstoken",
+  "access_token",
+  "refreshtoken",
+  "refresh_token",
+  "secret",
+  "apikey",
+  "api_key",
+  "sharedaccesskey",
+  "sharedaccesssignature",
+  "accountkey",
+  "sig",
+  "authorization",
+  "bearertoken"
+]);
+function redactSecretFields(value) {
+  if (Array.isArray(value)) return value.map(redactSecretFields);
+  if (value !== null && typeof value === "object") {
+    const out = {};
+    for (const [key, v] of Object.entries(value)) {
+      out[key] = SECRET_KEY_NAMES.has(key.toLowerCase()) ? REDACTED : redactSecretFields(v);
+    }
+    return out;
+  }
+  return value;
+}
+function redactedJson(value) {
+  return JSON.stringify(redactSecretFields(value));
+}
 var RULES = [
   // `Bearer <token>` (Authorization header value or inline).
   { pattern: /(Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, replacement: `$1${REDACTED}` },
@@ -13401,7 +13451,16 @@ var ArmHttpClient = class {
     if (this.signal.aborted) ac.abort();
     else this.signal.addEventListener("abort", onMainAbort, { once: true });
     try {
-      const token = await this.withDeadline(this.cred.getArmToken(this.scope, ac.signal), deadline, ac);
+      let token;
+      try {
+        token = await this.withDeadline(this.cred.getArmToken(this.scope, ac.signal), deadline, ac);
+      } catch (err) {
+        if (err instanceof CoreError && err.category === "timeout") throw err;
+        if (this.signal.aborted) {
+          throw new CoreError("transport", `credential acquisition for ${method} ${url} aborted`, { cause: err });
+        }
+        throw new CoreError("auth", redact(`credential acquisition failed: ${errText(err)}`), { cause: err });
+      }
       this.log.mask(token);
       if (deadline?.expired()) throw this.timeoutError();
       const headers = {
@@ -13568,6 +13627,16 @@ function raiseForActionStatus(res, action) {
     requestId: res.requestId
   });
 }
+function raiseForAcceptance(res, action) {
+  if (res.status === 202) return;
+  const category = res.status === 401 || res.status === 403 ? "auth" : "transport";
+  throw new CoreError(category, `${action} failed: expected a 202 acceptance, observed status ${res.status}`, {
+    armErrorCode: res.errorCode,
+    armErrorMessage: res.errorMessage,
+    correlationId: res.correlationId,
+    requestId: res.requestId
+  });
+}
 var fetchTransport = {
   async send(req, signal) {
     const res = await fetch(req.url, {
@@ -13595,7 +13664,7 @@ function classifyValidationStatus(status) {
 async function acceptValidate(client, url, coords, deadline) {
   const res = await client.post(url, void 0, deadline);
   client.assertWithinDeadline(deadline);
-  raiseForActionStatus(res, "validate");
+  raiseForAcceptance(res, "validate");
   let location;
   try {
     location = parseValidationLocation(res.location, coords);
@@ -13636,7 +13705,7 @@ async function pollValidation(client, location, deadline, log2, initialRetryAfte
   if (outcome.disposition === "failure") {
     log2.warning(
       redact(
-        `validation terminal ${outcome.status}; errors=${JSON.stringify(outcome.errors)} validationErrors=${JSON.stringify(outcome.businessErrors)}`
+        `validation terminal ${outcome.status}; errors=${redactedJson(outcome.errors)} validationErrors=${redactedJson(outcome.businessErrors)}`
       )
     );
   }
@@ -13652,7 +13721,7 @@ function classifyRunStatus(status) {
 }
 async function acceptExecute(client, url, coords, deadline) {
   const res = await client.post(url, void 0, deadline);
-  raiseForActionStatus(res, "execute");
+  raiseForAcceptance(res, "execute");
   let parsed;
   try {
     parsed = parseRunLocation(res.location, coords);
@@ -13700,7 +13769,7 @@ async function pollRun(client, location, deadline, log2, observe, initialRetryAf
   if (outcome.disposition === "failure") {
     log2.warning(
       redact(
-        `run terminal ${outcome.status}; errors=${JSON.stringify(outcome.errors)} executionErrors=${JSON.stringify(outcome.businessErrors)}`
+        `run terminal ${outcome.status}; errors=${redactedJson(outcome.errors)} executionErrors=${redactedJson(outcome.businessErrors)}`
       )
     );
   }
@@ -13716,7 +13785,7 @@ async function readRunOnce(client, location, deadline) {
 async function bestEffortCancel(cleanupClient, runResourceId, cleanupDeadline, log2) {
   try {
     const accept = await cleanupClient.post(cancelActionUrl(runResourceId), void 0, cleanupDeadline);
-    raiseForActionStatus(accept, "cancel");
+    raiseForAcceptance(accept, "cancel");
     const location = resolveCancelPollUrl(accept.location, runResourceId);
     const outcome = await pollRun(cleanupClient, location, cleanupDeadline, log2, void 0, accept.retryAfterSeconds);
     log2.info(redact(`cleanup: run reached terminal ${outcome.status} after cancel`));
@@ -14058,14 +14127,14 @@ async function runAzurePipelinesTask(deps) {
   try {
     result = await orchestrate2(io);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = redact(err instanceof Error ? err.message : String(err));
     deps.host.setResult(false, message || DEFAULT_FAILURE_MESSAGE);
     return { success: false, outputs: {}, failureReason: message || DEFAULT_FAILURE_MESSAGE };
   }
   if (result.success) {
     deps.host.setResult(true, SUCCESS_MESSAGE);
   } else {
-    deps.host.setResult(false, result.failureReason ?? DEFAULT_FAILURE_MESSAGE);
+    deps.host.setResult(false, redact(result.failureReason ?? DEFAULT_FAILURE_MESSAGE));
   }
   return result;
 }
@@ -14177,12 +14246,33 @@ function readArmServiceConnection() {
   };
 }
 async function fetchAzureDevOpsOidcToken(connectionId) {
+  const accessToken = readSystemAccessToken();
   const oidcRequestUri = tl.getVariable("System.OidcRequestUri");
   const url = oidcRequestUri !== void 0 && oidcRequestUri !== "" ? new URL(oidcRequestUri) : reconstructOidcUri();
   url.searchParams.set("serviceConnectionId", connectionId);
   url.searchParams.set("api-version", "7.1-preview.1");
-  const accessToken = requireVar("System.AccessToken");
   return fetchOidcToken(url, accessToken);
+}
+function readSystemAccessToken() {
+  const auth = tl.getEndpointAuthorization("SYSTEMVSSCONNECTION", false);
+  if (auth === void 0) {
+    throw new Error(
+      "the built-in 'SYSTEMVSSCONNECTION' service endpoint is not available; run this task inside an Azure Pipelines job"
+    );
+  }
+  if (auth.scheme !== "OAuth") {
+    throw new Error(
+      `the built-in 'SYSTEMVSSCONNECTION' service endpoint uses auth scheme '${auth.scheme}'; expected 'OAuth'`
+    );
+  }
+  const accessToken = auth.parameters["AccessToken"];
+  if (accessToken === void 0 || accessToken === "") {
+    throw new Error(
+      "the 'SYSTEMVSSCONNECTION' service endpoint has no 'AccessToken' parameter; enable OAuth token access for this pipeline job"
+    );
+  }
+  tl.setSecret(accessToken);
+  return accessToken;
 }
 function reconstructOidcUri() {
   const collectionUri = requireVar("System.CollectionUri");
@@ -30325,7 +30415,7 @@ async function main() {
     try {
       cred = armServiceConnectionCredentialProvider(readArmServiceConnection());
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = redact(err instanceof Error ? err.message : String(err));
       host.setResult(false, message || "Azure Chaos Studio task failed.");
       return;
     }
@@ -30336,7 +30426,7 @@ async function main() {
 }
 if (process.argv[1] && importMetaUrl === (0, import_node_url2.pathToFileURL)(process.argv[1]).href) {
   void main().catch((err) => {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = redact(err instanceof Error ? err.message : String(err));
     void Promise.resolve().then(() => __toESM(require_task(), 1)).then(
       (tl2) => tl2.setResult(tl2.TaskResult.Failed, message, true)
     );

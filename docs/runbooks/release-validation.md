@@ -41,7 +41,7 @@ printf '%s' "<workspace-resource-id>" | sha256sum
 
 Run `validate`, then `execute` (the **success run**), poll it to `Succeeded`, then
 separately `execute` a **second, independent run** (the **cancellation run**),
-observe it **in flight** (a `200` GET reporting a non-terminal `properties.status`,
+observe it **in flight** (a `202` GET reporting a non-terminal `properties.status`,
 e.g. `Running`), and only THEN `cancel` it — against the workspace from **each**
 private build, with request logging on. A terminal-run cancellation is a no-op
 (RV3), so the cancellation run must never be driven to (or recorded at) any
@@ -70,7 +70,7 @@ as the cancellation run, is rejected.
 
 Passes when *every* transcript's observed protocol equals the pinned contract: a `202`
 acceptance with the expected `Location` suffix and `Retry-After`, a terminal `200`, a
-terminal state in the contract's success set, an in-flight `200` GET reporting a
+terminal state in the contract's success set, an in-flight `202` GET reporting a
 non-terminal state for the cancellation run, GUID run IDs that each execute
 `Location` and `runs/{runId}` suffix address, a cancel `Location` addressing the
 cancellation run's own run ID, and the exact field/error-channel names the

@@ -328,7 +328,22 @@ export class ArmHttpClient {
       // Awaiting credentials is bounded by the deadline (a hung token exchange is
       // aborted); a token that consumed but resolved within budget is caught by
       // the recheck below.
-      const token = await this.withDeadline(this.cred.getArmToken(this.scope, ac.signal), deadline, ac);
+      let token: string;
+      try {
+        token = await this.withDeadline(this.cred.getArmToken(this.scope, ac.signal), deadline, ac);
+      } catch (err) {
+        // A deadline-race timeout is authoritative — surface it as `timeout`.
+        if (err instanceof CoreError && err.category === 'timeout') throw err;
+        if (this.signal.aborted) {
+          throw new CoreError('transport', `credential acquisition for ${method} ${url} aborted`, { cause: err });
+        }
+        // Any other credential-provider failure (missing login, failed WIF token
+        // exchange, expired/invalid federated assertion, etc.) is an AUTH failure,
+        // not a transport failure — normalize it here rather than letting it
+        // escape as a raw exception that `toNormalizedError` would otherwise
+        // default to `transport` (R4). No request has been sent yet.
+        throw new CoreError('auth', redact(`credential acquisition failed: ${errText(err)}`), { cause: err });
+      }
       this.log.mask(token);
       // Credential acquisition can consume the remaining budget (a slow token
       // exchange). Recheck AFTER acquiring the token and IMMEDIATELY before

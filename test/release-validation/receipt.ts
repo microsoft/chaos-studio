@@ -99,7 +99,7 @@ export type ExecuteAcceptance = Omit<LroObservation, 'terminalStatus' | 'termina
 
 /** A single non-terminal GET observed on the run WHILE it was still in flight. */
 export interface InFlightObservation {
-  /** HTTP status of the poll GET (200, per the LRO contract). */
+  /** HTTP status of the poll GET while non-terminal (202, per the LRO contract — see `run-nonterminal-202.json`). */
   status: number;
   /** The non-terminal `properties.status` observed (e.g. `Running`). */
   state: string;
@@ -323,15 +323,15 @@ function checkAcceptance(
 
 /**
  * The in-flight GET proves the cancellation run was genuinely caught mid-run —
- * a 200 with a NON-terminal `properties.status` (RUN_NONTERMINAL_STATES).
- * Requiring a terminal (e.g. `Succeeded`) state here would be the exact
- * impossible transcript this check exists to reject (R1): a terminal-run
- * cancellation is a no-op (RV3), so a run already terminal cannot later be
- * observed `Canceled`.
+ * an HTTP 202 (the pinned nonterminal-GET contract, `run-nonterminal-202.json`)
+ * with a NON-terminal `properties.status` (RUN_NONTERMINAL_STATES). Requiring a
+ * terminal (e.g. `Succeeded`) state here would be the exact impossible
+ * transcript this check exists to reject (R1): a terminal-run cancellation is a
+ * no-op (RV3), so a run already terminal cannot later be observed `Canceled`.
  */
 function checkInFlight(failures: string[], label: string, obs: InFlightObservation): void {
-  if (obs.status !== 200) {
-    failures.push(`${label}: expected a 200 GET while in flight, observed ${obs.status}`);
+  if (obs.status !== 202) {
+    failures.push(`${label}: expected a 202 GET while in flight, observed ${obs.status}`);
   }
   if (!(RUN_NONTERMINAL_STATES as readonly string[]).includes(obs.state)) {
     failures.push(

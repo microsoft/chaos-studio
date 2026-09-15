@@ -74,14 +74,27 @@ export function readArmServiceConnection(): ArmServiceConnection {
 
 /**
  * Mint the Azure DevOps federated OIDC token for `connectionId` from the running
- * job, using the job's `System.AccessToken`. This is the client assertion that
+ * job, using the job's OAuth token. This is the client assertion that
  * `ClientAssertionCredential` exchanges with Entra ID (WIF). It reads the pipeline
  * variables here (task-lib) and delegates the bounded HTTP exchange to
  * {@link fetchOidcToken} (task-lib-free, absolute-deadline). Runtime-only: it is
  * exercised by the guarded live WIF integration test, not the deterministic unit
  * tests (which inject a fake credential and never construct the real one).
+ *
+ * The job's OAuth credential is obtained from the built-in `SYSTEMVSSCONNECTION`
+ * service endpoint (`scheme: OAuth`, `parameters.AccessToken`), the same
+ * mechanism Microsoft's own built-in tasks use (e.g. `AzureRmWebAppDeployment`,
+ * `Microsoft.TeamFoundation.DistributedTask.Tasks.*` OAuth token retrieval). A
+ * normal custom-task job does NOT automatically map `System.AccessToken` as a
+ * pipeline variable — that requires an explicit
+ * `env: { SYSTEM_ACCESSTOKEN: $(System.AccessToken) }` the pipeline author would
+ * have to opt into — so reading it via `System.AccessToken` directly would fail
+ * on an unmodified pipeline. `SYSTEMVSSCONNECTION` is always present without any
+ * such opt-in.
  */
 async function fetchAzureDevOpsOidcToken(connectionId: string): Promise<string> {
+  const accessToken = readSystemAccessToken();
+
   // Azure DevOps exposes the exact OIDC token endpoint for this job as
   // `System.OidcRequestUri`; prefer it over reconstructing the URL from the hub
   // name, because `System.HostType` values (release/deployment/gates) are NOT the
@@ -95,8 +108,36 @@ async function fetchAzureDevOpsOidcToken(connectionId: string): Promise<string> 
   url.searchParams.set('serviceConnectionId', connectionId);
   url.searchParams.set('api-version', '7.1-preview.1');
 
-  const accessToken = requireVar('System.AccessToken');
   return fetchOidcToken(url, accessToken);
+}
+
+/**
+ * Read the job's OAuth access token from the built-in `SYSTEMVSSCONNECTION`
+ * service endpoint, mask it, and validate its authorization scheme is `OAuth`
+ * before returning it — following the pattern Microsoft's built-in tasks use to
+ * obtain the job token, rather than requiring the pipeline author to map
+ * `System.AccessToken` explicitly.
+ */
+function readSystemAccessToken(): string {
+  const auth = tl.getEndpointAuthorization('SYSTEMVSSCONNECTION', false);
+  if (auth === undefined) {
+    throw new Error(
+      "the built-in 'SYSTEMVSSCONNECTION' service endpoint is not available; run this task inside an Azure Pipelines job",
+    );
+  }
+  if (auth.scheme !== 'OAuth') {
+    throw new Error(
+      `the built-in 'SYSTEMVSSCONNECTION' service endpoint uses auth scheme '${auth.scheme}'; expected 'OAuth'`,
+    );
+  }
+  const accessToken = auth.parameters['AccessToken'];
+  if (accessToken === undefined || accessToken === '') {
+    throw new Error(
+      "the 'SYSTEMVSSCONNECTION' service endpoint has no 'AccessToken' parameter; enable OAuth token access for this pipeline job",
+    );
+  }
+  tl.setSecret(accessToken);
+  return accessToken;
 }
 
 /**

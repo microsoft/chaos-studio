@@ -95,7 +95,7 @@ function transcript(
         retryAfterSeconds: 10,
       },
       inFlight: {
-        status: 200,
+        status: 202,
         state: 'Running',
       },
       cancel: {
@@ -320,7 +320,7 @@ test('RV1 fails when a terminal state is outside the source-proven terminal sets
 test('RV1 passes a realistic in-flight-to-Canceled cancellation transcript (202 accepted, Running observed, then Canceled)', () => {
   const obs = rv1();
   for (const t of obs.transcripts) {
-    assert.equal(t.cancellationRun.inFlight.status, 200);
+    assert.equal(t.cancellationRun.inFlight.status, 202);
     assert.equal(t.cancellationRun.inFlight.state, 'Running');
   }
   assert.equal(evaluateRv1(obs).pass, true);
@@ -336,12 +336,12 @@ test('RV1 rejects a cancellation run whose in-flight observation reports a termi
   }
 });
 
-test('RV1 rejects a cancellation run whose in-flight observation was not a 200 GET', () => {
+test('RV1 rejects a cancellation run whose in-flight observation was not a 202 GET', () => {
   const obs = rv1();
-  obs.transcripts[0]!.cancellationRun.inFlight.status = 202;
+  obs.transcripts[0]!.cancellationRun.inFlight.status = 200;
   const result = evaluateRv1(obs);
   assert.equal(result.pass, false);
-  assert.ok(result.failures.some((f) => f.includes('in-flight') && f.includes('200')));
+  assert.ok(result.failures.some((f) => f.includes('in-flight') && f.includes('202')));
 });
 
 test('RV1 rejects a cancellation execute acceptance that is not a bare 202/Location/Retry-After (no terminal fields to fabricate)', () => {

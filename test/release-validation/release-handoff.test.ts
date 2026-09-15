@@ -89,7 +89,7 @@ function rv1Transcript(
         retryAfterSeconds: 10,
       },
       inFlight: {
-        status: 200,
+        status: 202,
         state: 'Running',
       },
       cancel: {

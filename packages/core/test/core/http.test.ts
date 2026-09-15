@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+import type { ICredentialProvider } from '../../src/contract.ts';
 import { CoreError } from '../../src/ids.ts';
 import {
   ArmHttpClient,
@@ -15,7 +16,7 @@ import {
   raiseForActionStatus,
   type ParsedResponse,
 } from '../../src/http.ts';
-import { FakeClock, FakeCredential, FakeLogger, FakeTransport, FIXED_TOKEN, fixedRng, HANG, response } from '../helpers/harness.ts';
+import { FakeClock, FakeCredential, FailingCredential, FakeLogger, FakeTransport, FIXED_TOKEN, fixedRng, HANG, response } from '../helpers/harness.ts';
 
 function client(transport: FakeTransport, clock = new FakeClock(), rng = fixedRng(0.5)) {
   const log = new FakeLogger();
@@ -267,6 +268,79 @@ test('a request WITHOUT a deadline is never subjected to the watcher (no clock a
   const res = await c.getOnce('https://management.azure.com/x/runs/y');
   assert.equal(res.status, 200);
   assert.equal(clock.totalSleptMs, 0, 'no watcher sleep for a deadline-less request');
+});
+
+// R4: a credential-provider failure (missing login, failed WIF token exchange,
+// invalid/expired federated assertion) must normalize as an AUTH failure, never
+// a raw exception that a caller's generic error mapping would default to
+// `transport` — and the request must never reach the transport at all.
+test('post: a failing credential provider raises an auth CoreError and never reaches the transport (R4)', async () => {
+  const clock = new FakeClock();
+  const t = new FakeTransport().on('POST', '/execute', response(202, { Location: 'x' }));
+  const log = new FakeLogger();
+  const cred = new FailingCredential(new Error('AADSTS700016: no matching federated credential'));
+  const c = new ArmHttpClient({ transport: t, clock, log, cred, signal: new AbortController().signal, rng: fixedRng(0.5) });
+
+  await assert.rejects(
+    () => c.post('https://management.azure.com/x/execute', undefined, undefined),
+    (e) => e instanceof CoreError && e.category === 'auth' && /AADSTS700016/.test(e.message),
+  );
+  assert.equal(cred.calls.length, 1, 'the credential acquisition was attempted');
+  assert.equal(t.requestsFor('POST').length, 0, 'no request is sent when credential acquisition fails');
+});
+
+test('get: a failing credential provider raises an auth CoreError and never reaches the transport (R4)', async () => {
+  const clock = new FakeClock();
+  const t = new FakeTransport().on('GET', '/runs/', response(200, {}, { properties: { status: 'Succeeded' } }));
+  const log = new FakeLogger();
+  const cred = new FailingCredential(new Error('token exchange failed: invalid client assertion'));
+  const c = new ArmHttpClient({ transport: t, clock, log, cred, signal: new AbortController().signal, rng: fixedRng(0.5) });
+
+  await assert.rejects(
+    () => c.get('https://management.azure.com/x/runs/y', undefined),
+    (e) => e instanceof CoreError && e.category === 'auth',
+  );
+  assert.equal(t.requestsFor('GET').length, 0, 'no request is sent when credential acquisition fails');
+});
+
+test('a credential failure that races the deadline still surfaces `timeout`, not `auth` (deadline precedence preserved, R4)', async () => {
+  // The credential rejects only once its signal aborts (deadline-triggered),
+  // mirroring PendingCredential's abort-aware shape but rejecting with a
+  // generic (non-Abort) error to prove the deadline race — not the raw
+  // rejection shape — decides the category.
+  const clock = new FakeClock();
+  const deadline = Deadline.fromNow(clock, 10);
+  const t = new FakeTransport().on('GET', '/runs/', response(200, {}, { properties: { status: 'Succeeded' } }));
+  const log = new FakeLogger();
+  const cred: ICredentialProvider = {
+    getArmToken: (_scope, signal) =>
+      new Promise((_resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(new Error('credential exchange aborted mid-flight')), { once: true });
+      }),
+  };
+  const c = new ArmHttpClient({ transport: t, clock, log, cred, signal: new AbortController().signal, rng: fixedRng(0.5) });
+  clock.advance(11000); // the credential promise settles once its signal is aborted by the deadline watcher
+
+  await assert.rejects(
+    () => c.get('https://management.azure.com/x/runs/y', deadline),
+    (e) => e instanceof CoreError && e.category === 'timeout',
+  );
+  assert.equal(t.requestsFor('GET').length, 0);
+});
+
+test('a credential failure while the caller signal is already aborted (cancellation) surfaces `transport`, preserving prior precedence, not `auth` (R4)', async () => {
+  const clock = new FakeClock();
+  const t = new FakeTransport().on('GET', '/runs/', response(200, {}, { properties: { status: 'Succeeded' } }));
+  const log = new FakeLogger();
+  const controller = new AbortController();
+  controller.abort();
+  const cred = new FailingCredential(new Error('should not matter — signal is already aborted'));
+  const c = new ArmHttpClient({ transport: t, clock, log, cred, signal: controller.signal, rng: fixedRng(0.5) });
+
+  await assert.rejects(
+    () => c.get('https://management.azure.com/x/runs/y', undefined),
+    (e) => e instanceof CoreError && e.category === 'transport',
+  );
 });
 
 test('poll advances 202 -> 202 -> 200 and returns the terminal value, sleeping Retry-After each poll', async () => {

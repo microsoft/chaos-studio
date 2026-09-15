@@ -197,6 +197,22 @@ export class PendingCredential implements ICredentialProvider {
   }
 }
 
+/**
+ * A credential whose `getArmToken` REJECTS with an arbitrary error — simulates a
+ * missing login / failed WIF token exchange (R4). Never touches the transport.
+ */
+export class FailingCredential implements ICredentialProvider {
+  readonly calls: string[] = [];
+  private readonly err: unknown;
+  constructor(err: unknown = new Error('AADSTS700016: no matching federated credential')) {
+    this.err = err;
+  }
+  getArmToken(scope: string): Promise<string> {
+    this.calls.push(scope);
+    return Promise.reject(this.err);
+  }
+}
+
 /** Collecting logger; also records masked secrets. */
 export class FakeLogger implements ILogger {
   readonly infos: string[] = [];
