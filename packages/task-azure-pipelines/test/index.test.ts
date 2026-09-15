@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { jobCancellationSignal, main } from '../src/index.ts';
+import { jobCancellationSignal, main, runSmokeSelfTest } from '../src/index.ts';
 
 // NOTE: importing ../src/index.ts loads the real azure-pipelines-task-lib +
 // @azure/identity (this is the composition-root entry test — an OFFLINE test with
@@ -52,4 +52,23 @@ test('jobCancellationSignal: a second signal is a no-op (idempotent abort) and d
   assert.doesNotThrow(() => dispose());
   assert.doesNotThrow(() => dispose());
   assert.equal(process.listenerCount('SIGINT'), beforeInt, 'no leaked SIGINT listener');
+});
+
+test('runSmokeSelfTest completes without reading a real ARM service connection or leaking listeners', async () => {
+  const beforeInt = process.listenerCount('SIGINT');
+  const beforeTerm = process.listenerCount('SIGTERM');
+  await assert.doesNotReject(runSmokeSelfTest());
+  assert.equal(process.listenerCount('SIGINT'), beforeInt, 'self-test disposes its cancellation bridge');
+  assert.equal(process.listenerCount('SIGTERM'), beforeTerm, 'self-test disposes its cancellation bridge');
+});
+
+test('main() honors CHAOS_STUDIO_SMOKE_CHECK=1 and resolves without reading the service connection', async () => {
+  const previous = process.env.CHAOS_STUDIO_SMOKE_CHECK;
+  process.env.CHAOS_STUDIO_SMOKE_CHECK = '1';
+  try {
+    await assert.doesNotReject(main());
+  } finally {
+    if (previous === undefined) delete process.env.CHAOS_STUDIO_SMOKE_CHECK;
+    else process.env.CHAOS_STUDIO_SMOKE_CHECK = previous;
+  }
 });

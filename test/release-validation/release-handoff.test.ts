@@ -327,6 +327,54 @@ test('the OneBranch extension pipeline gates the VSIX publish on the same receip
   assert.match(publish, /dependsOn: sign\n/);
 });
 
+test('private-preview bootstrap: the Dev manifest can publish without an RV receipt, but the production manifest never can', () => {
+  // Architecture fix: RV1-RV3 must be executed against the PRIVATE
+  // `ChaosStudioWorkspacesDev` build, so requiring a receipt for EVERY publishing
+  // run (including that very first Dev publish) is circular. The receipt gate and
+  // the receipt-bound runtime baseline must therefore be conditioned on the
+  // PRODUCTION manifest specifically, never on `publishExtension` alone.
+  const pipeline = readText('.pipelines/OneBranch.Official.yml');
+  const build = pipeline.slice(pipeline.indexOf('- stage: build'), pipeline.indexOf('- stage: sign'));
+
+  const gateStart = build.indexOf('Release-validation receipt gate');
+  assert.ok(gateStart > 0, 'the receipt gate step exists');
+  const gateStep = build.slice(build.lastIndexOf('- script: |', gateStart), build.indexOf('- script: npm ci'));
+  assert.match(
+    gateStep,
+    /condition:[\s\S]*?eq\('\$\{\{ parameters\.extensionManifest \}\}', 'vss-extension\.json'\)/,
+    'the receipt gate is conditioned on the PRODUCTION manifest, not merely on publishExtension',
+  );
+  assert.match(gateStep, /eq\('\$\{\{ parameters\.publishExtension \}\}', 'True'\)/);
+
+  const equalityStart = build.indexOf('node scripts/lib/verify-built-runtime.mjs');
+  const equalityStep = build.slice(build.lastIndexOf('- script: |', equalityStart), build.indexOf('displayName', equalityStart));
+  assert.match(
+    equalityStep,
+    /IS_PRODUCTION_MANIFEST/,
+    'the runtime-equality gate distinguishes the production manifest before requiring a receipt-bound baseline',
+  );
+
+  // The Dev manifest itself is the private, unlisted, distinctly-named artifact
+  // this exemption is scoped to — never the production manifest.
+  const devManifest = JSON.parse(
+    readFileSync(new URL('azure-pipelines-extension/vss-extension.dev.json', repoRootUrl), 'utf8'),
+  ) as { public: boolean; id: string; galleryFlags: string[] };
+  assert.equal(devManifest.public, false, 'the Dev manifest is never public/listed');
+  assert.equal(devManifest.id, 'ChaosStudioWorkspacesDev', 'the Dev manifest has a distinct extension id');
+  assert.ok(devManifest.galleryFlags.includes('Preview'), 'the Dev manifest carries the Preview gallery flag');
+
+  const prodManifest = JSON.parse(
+    readFileSync(new URL('azure-pipelines-extension/vss-extension.json', repoRootUrl), 'utf8'),
+  ) as { public: boolean; id: string };
+  assert.notEqual(prodManifest.id, devManifest.id, 'the production and Dev manifests are distinct extensions');
+
+  // The runbook documents the initial bootstrap sequence and the exemption's scope.
+  const runbook = readText('docs/runbooks/release-validation.md');
+  assert.match(runbook, /Private-preview bootstrap/);
+  assert.match(runbook, /vss-extension\.dev\.json/);
+  assert.match(runbook, /vss-extension\.json/);
+});
+
 test('the OneBranch publication is bound to the SAME release commit as the GitHub release', () => {
   // A green receipt alone does not make two pipelines ship one commit: two distinct
   // receipt-bearing descendants of the validated core commit each satisfy their own

@@ -447,6 +447,25 @@ function checkTranscript(failures: string[], t: Rv1Transcript): void {
   }
 }
 
+/**
+ * An operator-supplied receipt is untyped JSON at the boundary (`as
+ * Rv2Observations`/`as Rv3Observations` casts do not enforce runtime shape).
+ * A field JSON-Schema-typed as `boolean` can therefore arrive as a string
+ * (`"true"`), a number, `null`, or any other truthy-but-not-`true` value, and
+ * a bare `if (!o.field)` check would silently accept it as positive evidence.
+ * This requires the LITERAL boolean `true`/`false` and returns an actionable
+ * failure message (naming the field and the malformed value observed)
+ * whenever it is anything else, instead of coercing via truthiness.
+ */
+function requireBoolean(value: unknown, fieldPath: string, failures: string[]): boolean {
+  if (typeof value === 'boolean') return value;
+  failures.push(
+    `${fieldPath}: expected a literal boolean, observed ${JSON.stringify(value)} (${typeof value}); ` +
+      'malformed receipt evidence is rejected rather than coerced.',
+  );
+  return false;
+}
+
 /** RV2 — workload identity and least-privilege authorization. */
 export function evaluateRv2(o: Rv2Observations, providerOpNames: ReadonlySet<string>): CheckResult {
   const failures: string[] = [];
@@ -484,8 +503,10 @@ export function evaluateRv2(o: Rv2Observations, providerOpNames: ReadonlySet<str
       failures.push(`identity: unknown platform '${identity.platform}'`);
       continue;
     }
-    if (!identity.tokenAcquired) failures.push(`identity: ${identity.platform} did not acquire an ARM token`);
-    if (!identity.secretless) {
+    if (!requireBoolean(identity.tokenAcquired, `identity[${identity.platform}].tokenAcquired`, failures)) {
+      failures.push(`identity: ${identity.platform} did not acquire an ARM token`);
+    }
+    if (!requireBoolean(identity.secretless, `identity[${identity.platform}].secretless`, failures)) {
       failures.push(`identity: ${identity.platform} did not authenticate secretlessly (WIF)`);
     }
   }
@@ -537,7 +558,7 @@ export function evaluateRv3(o: Rv3Observations): CheckResult {
       `cancellation: ${o.cancelToCanceledSeconds}s exceeds the ${CLEANUP_TIMEOUT_SECONDS}s cleanup deadline`,
     );
   }
-  if (!o.duplicateCancelAccepted) {
+  if (!requireBoolean(o.duplicateCancelAccepted, 'duplicateCancelAccepted', failures)) {
     failures.push('cancellation: two rapid cancel requests were not both accepted');
   }
   // A duplicate cancel must leave the run on the cancellation path, not flip it
@@ -547,10 +568,10 @@ export function evaluateRv3(o: Rv3Observations): CheckResult {
       `cancellation: after a duplicate cancel the run was '${o.duplicateCancelTerminalState}', not Canceling/Canceled`,
     );
   }
-  if (!o.cancelOnTerminalRunAccepted) {
+  if (!requireBoolean(o.cancelOnTerminalRunAccepted, 'cancelOnTerminalRunAccepted', failures)) {
     failures.push('cancellation: canceling an already terminal run was not a safe accepted no-op');
   }
-  if (!o.cleanupFailurePreservesOriginalFailure) {
+  if (!requireBoolean(o.cleanupFailurePreservesOriginalFailure, 'cleanupFailurePreservesOriginalFailure', failures)) {
     failures.push('cancellation: a cleanup failure did not preserve the original pipeline failure');
   }
 

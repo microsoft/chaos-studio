@@ -13002,7 +13002,8 @@ var init_open = __esm({
 var index_exports = {};
 __export(index_exports, {
   jobCancellationSignal: () => jobCancellationSignal,
-  main: () => main
+  main: () => main,
+  runSmokeSelfTest: () => runSmokeSelfTest
 });
 module.exports = __toCommonJS(index_exports);
 var import_node_url2 = require("node:url");
@@ -30407,7 +30408,20 @@ function jobCancellationSignal() {
   };
   return { signal: controller.signal, dispose };
 }
+async function runSmokeSelfTest() {
+  azurePipelinesTaskHost();
+  const { signal, dispose } = jobCancellationSignal();
+  if (typeof signal.aborted !== "boolean") {
+    throw new Error("smoke self-test: cancellation bridge did not return a usable AbortSignal.");
+  }
+  dispose();
+}
 async function main() {
+  if (process.env.CHAOS_STUDIO_SMOKE_CHECK === "1") {
+    await runSmokeSelfTest();
+    process.stdout.write("chaos-studio smoke self-test: OK\n");
+    return;
+  }
   const host = azurePipelinesTaskHost();
   const { signal, dispose } = jobCancellationSignal();
   try {
@@ -30417,6 +30431,7 @@ async function main() {
     } catch (err) {
       const message = redact(err instanceof Error ? err.message : String(err));
       host.setResult(false, message || "Azure Chaos Studio task failed.");
+      process.exitCode = 1;
       return;
     }
     await runAzurePipelinesTask({ host, cred, signal });
@@ -30427,6 +30442,12 @@ async function main() {
 if (process.argv[1] && importMetaUrl === (0, import_node_url2.pathToFileURL)(process.argv[1]).href) {
   void main().catch((err) => {
     const message = redact(err instanceof Error ? err.message : String(err));
+    if (process.env.CHAOS_STUDIO_SMOKE_CHECK === "1") {
+      process.stderr.write(`::error::chaos-studio smoke self-test failed: ${message}
+`);
+      process.exitCode = 1;
+      return;
+    }
     void Promise.resolve().then(() => __toESM(require_task(), 1)).then(
       (tl2) => tl2.setResult(tl2.TaskResult.Failed, message, true)
     );
@@ -30435,7 +30456,8 @@ if (process.argv[1] && importMetaUrl === (0, import_node_url2.pathToFileURL)(pro
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   jobCancellationSignal,
-  main
+  main,
+  runSmokeSelfTest
 });
 /*! Bundled license information:
 

@@ -175,17 +175,33 @@ extends:
               # exact version tag it creates is the shared release record this build is
               # matched against (docs/runbooks/release.md).
               #
-              # SCOPE OF THE GATE, precisely: it runs only on a PUBLISHING run. A
-              # non-publishing main-branch build still reaches the `sign` stage and can
-              # produce a signed VSIX without RV evidence — that artifact is never
-              # published, because the `publish` stage additionally requires
-              # `publishExtension` and consumes only the artifact signed in its OWN run,
-              # whose `build` stage therefore ran this gate. The enforced invariant is
-              # "nothing is PUBLISHED without evidence", not "nothing is ever signed".
+              # SCOPE OF THE GATE, precisely: it runs only on a PUBLISHING run OF THE
+              # PRODUCTION MANIFEST (`vss-extension.json`). A non-publishing main-branch
+              # build still reaches the `sign` stage and can produce a signed VSIX without
+              # RV evidence — that artifact is never published, because the `publish`
+              # stage additionally requires `publishExtension` and consumes only the
+              # artifact signed in its OWN run, whose `build` stage therefore ran this gate.
+              # The enforced invariant is "nothing PRODUCTION is PUBLISHED without
+              # evidence", not "nothing is ever signed".
+              #
+              # PRIVATE-PREVIEW BOOTSTRAP (architecture fix — see
+              # docs/runbooks/release-validation.md "Private-preview bootstrap"): RV1-RV3
+              # must be executed against the PRIVATE `ChaosStudioWorkspacesDev` build, but
+              # that build cannot exist yet if publishing it always required this receipt
+              # first — a circular dependency. This gate is therefore SKIPPED when
+              # `extensionManifest` is the DEV manifest (`vss-extension.dev.json`), which
+              # is `public: false` (never listed/discoverable), carries the "Preview"
+              # gallery flag, ships a distinct task GUID/name
+              # (`AzureChaosStudioScenarioDev@1`, not the production
+              # `AzureChaosStudioScenario@1`), and is shared only with restricted test
+              # organizations — so it can NEVER be mistaken for or substituted as the
+              # production release, and this exemption never weakens the production gate
+              # below. Signing, environment approvals, and private/`Preview` visibility
+              # are unaffected: this only changes which manifest may skip the receipt.
               - script: |
                   set -euo pipefail
                   if [ -z "${RELEASE_TAG}" ]; then
-                    echo "##vso[task.logissue type=error]A publishing run requires the releaseTag parameter (the exact vMAJOR.MINOR.PATCH release tag). Run RV1-RV3 in the target preview environment, commit the receipt, and release the GitHub Action first (docs/runbooks/release.md)."
+                    echo "##vso[task.logissue type=error]A publishing run of the PRODUCTION manifest requires the releaseTag parameter (the exact vMAJOR.MINOR.PATCH release tag). Run RV1-RV3 in the target preview environment, commit the receipt, and release the GitHub Action first (docs/runbooks/release.md)."
                     exit 1
                   fi
                   # Exact SemVer only — never a path — so the parameter cannot reach
@@ -250,9 +266,15 @@ extends:
                   # metadata) that changes what the rebuild emits.
                   echo "##vso[task.setvariable variable=ReleaseValidatedCommit]$VALIDATED_COMMIT"
                 displayName: Release-validation receipt gate (RV1-RV3 evidence + the shared release commit)
-                # Inescapable on a PUBLISHING run. A non-publishing validation build still
-                # compiles and packages an unsigned VSIX without environment evidence.
-                condition: and(succeeded(), eq('${{ parameters.publishExtension }}', 'True'))
+                # Inescapable on a PUBLISHING run of the PRODUCTION manifest only. A
+                # non-publishing validation build, and every DEV-manifest build (private
+                # preview bootstrap — see the header comment above), still compile and
+                # package without this gate; the Dev manifest is never public and can never
+                # substitute for the production release (see docs/runbooks/release-validation.md).
+                condition: >-
+                  and(succeeded(),
+                      eq('${{ parameters.publishExtension }}', 'True'),
+                      eq('${{ parameters.extensionManifest }}', 'vss-extension.json'))
                 env:
                   RELEASE_TAG: ${{ parameters.releaseTag }}
                   # Environment evidence goes stale as the service deploys; re-run RV1-RV3
@@ -281,10 +303,13 @@ extends:
               # blob hashes. This runs BEFORE the runtime is staged into the task folders
               # and long before anything is signed or published.
               #
-              # On a PUBLISHING run the baseline is the receipt's validated commit and a
-              # missing baseline FAILS (it is never downgraded to HEAD). On a
-              # non-publishing build the baseline is HEAD, which is the same build-drift
-              # gate the GitHub `test` and `release-action` workflows enforce.
+              # On a PUBLISHING run OF THE PRODUCTION MANIFEST the baseline is the
+              # receipt's validated commit and a missing baseline FAILS (it is never
+              # downgraded to HEAD). On a non-publishing build, AND on every DEV-manifest
+              # build (private-preview bootstrap — the receipt gate above never runs for
+              # the Dev manifest, so there is no validated commit to bind to), the baseline
+              # is HEAD, which is the same build-drift gate the GitHub `test` and
+              # `release-action` workflows enforce.
               - script: |
                   set -euo pipefail
                   # An unset pipeline variable arrives as the literal macro, so require a
@@ -294,9 +319,9 @@ extends:
                     [0-9a-f]*) [ "${#BASELINE}" -eq 40 ] || BASELINE='' ;;
                     *) BASELINE='' ;;
                   esac
-                  if [ "${PUBLISHING}" = "True" ]; then
+                  if [ "${PUBLISHING}" = "True" ] && [ "${IS_PRODUCTION_MANIFEST}" = "True" ]; then
                     if [ -z "$BASELINE" ]; then
-                      echo "##vso[task.logissue type=error]A publishing run has no validated baseline commit; the release-validation receipt gate must run before the rebuilt runtime can be bound to it."
+                      echo "##vso[task.logissue type=error]A publishing run of the PRODUCTION manifest has no validated baseline commit; the release-validation receipt gate must run before the rebuilt runtime can be bound to it."
                       exit 1
                     fi
                   else
@@ -307,6 +332,7 @@ extends:
                 env:
                   RUNTIME_BASELINE_COMMIT: $(ReleaseValidatedCommit)
                   PUBLISHING: ${{ parameters.publishExtension }}
+                  IS_PRODUCTION_MANIFEST: ${{ eq(parameters.extensionManifest, 'vss-extension.json') }}
 
               - script: |
                   set -euo pipefail

@@ -53,15 +53,71 @@ Prefer waiting unless you deliberately want fire-and-forget.
 ## Job timeout budget: reserve time for cleanup beyond `completion-timeout-seconds`
 
 `completion-timeout-seconds` (default `2700`) bounds only how long the
-integration **waits for the run to complete**. On a completion timeout, or when
-the pipeline job itself is cancelled, best-effort cleanup runs `cancel` and polls
-for the run to reach `Canceled` — and that cleanup has its **own fixed budget of
-300 seconds**, separate from and **in addition to** `completion-timeout-seconds`.
+integration **waits for the run to complete**. On a completion timeout, best-effort
+cleanup runs `cancel` and polls for the run to reach `Canceled` — and that cleanup
+has its **own fixed budget of 300 seconds**, separate from and **in addition to**
+`completion-timeout-seconds`.
+
+**These two mechanisms are different, and increasing the job timeout affects only
+one of them:**
+
+- **Completion-timeout cleanup** (the 300-second budget above) is an INTERNAL
+  behavior of this integration's own process: it only matters when the run does
+  not finish within `completion-timeout-seconds` *while the step/task is still
+  running normally* (not cancelled). Raising the job/step timeout gives this
+  internal cleanup the wall-clock room it needs to run to completion, because the
+  platform is not otherwise trying to end the job.
+- **Platform cancellation** (an operator or workflow cancels the running job/step)
+  is a SEPARATE, platform-enforced grace period that the job's configured
+  `timeout-minutes`/`timeoutInMinutes` **does not extend or grant**. Once a job is
+  cancelled, GitHub Actions sends `SIGINT` to the step's process, then `SIGTERM`
+  after **7.5 seconds** if the process has not exited, then force-terminates the
+  process tree after a further **2.5 seconds** (10 seconds total) — see
+  [GitHub Actions: Canceling a workflow](https://docs.github.com/actions/how-tos/manage-workflow-runs/cancel-a-workflow-run).
+  Azure Pipelines applies its own agent-enforced cancellation timeout, independent
+  of the job's configured `timeoutInMinutes`. **Neither platform's cancellation
+  grace period is anywhere close to 300 seconds**, so a *manually cancelled* job
+  cannot rely on this integration's 300-second cleanup budget running to
+  completion — the platform will kill the process first. Job/step timeout
+  configuration has no effect on this: it only governs when the platform itself
+  decides to time the job out, not how long a job gets to react after being
+  cancelled.
+
+Treat platform cancellation of the CI job as **best-effort** for the chaos run's
+own cleanup, not a guarantee:
+
+- The integration's `SIGINT`/`SIGTERM` handler (see `jobCancellationSignal` in each
+  adapter's `index.ts`) starts best-effort cancellation immediately on the first
+  signal, so it has already begun before the platform's grace period elapses — but
+  whether the `cancel` call and the subsequent poll for `Canceled` complete within
+  ~10 seconds depends on the service's own response time, which is not bounded by
+  this integration.
+- **Confirm whether a genuinely in-flight run survived a cancelled CI job** by
+  checking the run's status directly, rather than assuming the platform's grace
+  period was sufficient:
+
+  ```bash
+  az rest --method get \
+    --url "https://management.azure.com<run-resource-id>?api-version=2026-05-01-preview"
+  ```
+
+- If the run is still not in a terminal state, **cancel it manually**:
+
+  ```bash
+  az rest --method post \
+    --url "https://management.azure.com<run-resource-id>/cancel?api-version=2026-05-01-preview"
+  ```
+
+The job timeout budget described below (`completion-timeout-seconds + 300`)
+protects the case where the run legitimately takes longer than expected and the
+integration's OWN completion-timeout cleanup needs to run — it does **not** change
+what happens when an operator cancels the CI job directly.
+
 The job/step timeout you configure on the platform must therefore be at least
 `completion-timeout-seconds + 300` seconds (plus normal job overhead: checkout,
-setup, etc.) — otherwise the platform kills the job mid-cleanup, before the run
-is actually cancelled, and the chaos run is left going exactly as in the no-wait
-case above.
+setup, etc.) — otherwise the platform kills the job mid-cleanup on a completion
+timeout, before the run is actually cancelled, and the chaos run is left going
+exactly as in the no-wait case above.
 
 Platforms can only cancel a running job/step, not extend its own timeout, so
 this reservation must be set explicitly:
@@ -87,7 +143,9 @@ this reservation must be set explicitly:
 If you lower `completion-timeout-seconds`/`completionTimeoutSeconds`, lower the
 job timeout proportionally but always keep the 300-second cleanup margin. A job
 timeout set at or below `completion-timeout-seconds` will routinely kill the job
-before cleanup can run.
+before cleanup can run — but, per above, this margin only helps the completion-timeout
+path; a manually cancelled job is bounded by the platform's own (much shorter)
+cancellation grace period regardless of this setting.
 
 ## Least privilege — the runner role
 

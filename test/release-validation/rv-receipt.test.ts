@@ -391,6 +391,31 @@ test('RV2 fails when either platform identity is missing or used a secret instea
   assert.equal(evaluateRv2(secretful, providerOpNames()).pass, false);
 });
 
+test('RV2 rejects malformed (non-literal-boolean) tokenAcquired/secretless values instead of coercing via truthiness', () => {
+  // An operator-supplied receipt is untyped JSON at the boundary. A truthy
+  // non-boolean string ('yes') or a stray '0'/'false' STRING (truthy in JS!)
+  // must be rejected outright rather than silently treated as evidence.
+  for (const badValue of ['yes', 'false', '0', 1, 0, null, undefined] as const) {
+    const tainted = rv2();
+    (tainted.federatedIdentities[0] as { tokenAcquired: unknown }).tokenAcquired = badValue;
+    const result = evaluateRv2(tainted, providerOpNames());
+    assert.equal(result.pass, false, `tokenAcquired=${JSON.stringify(badValue)} must fail, not pass by truthiness`);
+    assert.ok(
+      result.failures.some((f) => f.includes('tokenAcquired') && f.includes('expected a literal boolean')),
+      `expected an actionable malformed-field failure for tokenAcquired=${JSON.stringify(badValue)}`,
+    );
+  }
+  for (const badValue of ['yes', 'false', '0', 1, 0, null, undefined] as const) {
+    const tainted = rv2();
+    (tainted.federatedIdentities[0] as { secretless: unknown }).secretless = badValue;
+    const result = evaluateRv2(tainted, providerOpNames());
+    assert.equal(result.pass, false, `secretless=${JSON.stringify(badValue)} must fail, not pass by truthiness`);
+    assert.ok(
+      result.failures.some((f) => f.includes('secretless') && f.includes('expected a literal boolean')),
+    );
+  }
+});
+
 test('RV2 evaluates EVERY identity entry, so a contradictory duplicate cannot hide', () => {
   // A failed/secret-backed retry appended after a passing entry for the same
   // platform must not be ignored.
@@ -478,6 +503,26 @@ test('RV3 fails when a rapid duplicate cancel, a terminal-run cancel, or cleanup
     const obs = rv3();
     mutate(obs);
     assert.equal(evaluateRv3(obs).pass, false);
+  }
+});
+
+test('RV3 rejects malformed (non-literal-boolean) cancellation-outcome values instead of coercing via truthiness', () => {
+  const fields = [
+    'duplicateCancelAccepted',
+    'cancelOnTerminalRunAccepted',
+    'cleanupFailurePreservesOriginalFailure',
+  ] as const;
+  for (const field of fields) {
+    for (const badValue of ['yes', 'false', '0', 1, 0, null, undefined] as const) {
+      const tainted = rv3();
+      (tainted as unknown as Record<string, unknown>)[field] = badValue;
+      const result = evaluateRv3(tainted);
+      assert.equal(result.pass, false, `${field}=${JSON.stringify(badValue)} must fail, not pass by truthiness`);
+      assert.ok(
+        result.failures.some((f) => f.includes(field) && f.includes('expected a literal boolean')),
+        `expected an actionable malformed-field failure for ${field}=${JSON.stringify(badValue)}`,
+      );
+    }
   }
 });
 

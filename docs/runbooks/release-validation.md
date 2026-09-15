@@ -192,3 +192,60 @@ past a red gate. Triage by what failed:
 Every service defect must name the observed value, the expected contract value, the
 region, and the receipt path. Link the defect from the release issue and keep the
 release blocked until it is resolved or the contract is re-derived and re-reviewed.
+
+---
+
+## Private-preview bootstrap (breaking the RV ↔ Dev-publish circular dependency)
+
+RV1–RV3 require a **private** `ChaosStudioWorkspacesDev` build (Environment
+prerequisites, above) — but the OneBranch `build` stage's release-validation receipt
+gate normally requires a receipt (i.e. a completed RV pass) for **every** publishing
+run, including the very first `ChaosStudioWorkspacesDev` publish. Enforced literally,
+that is circular: RV needs the private build, and the private build's gate needs RV.
+
+The gate is scoped to break that cycle **without weakening the production gate**:
+
+- The receipt gate (`Release-validation receipt gate` step) and the runtime-equality
+  gate's requirement for a receipt-validated baseline run **only** when
+  `extensionManifest == vss-extension.json` (the production manifest). See the
+  `condition:` on those steps in `.pipelines/OneBranch.Official.yml`.
+- Publishing `vss-extension.dev.json` (`ChaosStudioWorkspacesDev`) therefore requires
+  **no** RV receipt. Every other control stays in force for that run: `npm ci` /
+  `typecheck` / `test` / `npm run build` still execute; the built runtime is still
+  bound to its own `HEAD` for byte-identical shipping (the runtime-equality gate falls
+  back to `HEAD` rather than skipping); `sign` still requires the protected
+  `SigningEnvironment` deployment approval and produces a real ESRP signature; `publish`
+  still requires `publishExtension`, the trusted `PublishBranch`, and the
+  `ADO-Plugin Publishing` service connection's own branch-control + approval gate; and
+  the Dev manifest is `public: false` with the `Preview` gallery flag, so it is never
+  listed on the Marketplace and can only be **shared explicitly** with specific
+  Azure DevOps organizations (the restricted test organizations used for RV) — see
+  [Microsoft Learn: share a private extension](https://learn.microsoft.com/azure/devops/extend/publish/overview#share-your-extension).
+- Publishing `vss-extension.json` (the production `ChaosStudioWorkspaces` extension)
+  is **never** exempt: its manifest name does not match the Dev-only condition, so the
+  receipt gate and the receipt-bound runtime baseline are always required for it, with
+  no code path around them.
+
+**Initial sequence for a brand-new environment (no prior RV evidence exists yet):**
+
+1. Run this pipeline manually with `publishExtension: true`,
+   `extensionManifest: vss-extension.dev.json`, and no `releaseTag`. The receipt gate
+   is skipped (Dev manifest); build/sign/publish proceed normally and produce a signed,
+   private `ChaosStudioWorkspacesDev` VSIX on the Marketplace (unlisted, shared only
+   with the RV test organizations).
+2. Install `ChaosStudioWorkspacesDev` into the RV test organizations (per
+   "Environment prerequisites" above) alongside the corresponding private GitHub Action
+   build, and execute RV1–RV3 against them.
+3. Record and stamp the receipt (`node scripts/lib/rv-receipt.mjs stamp|verify`, above)
+   and commit it under `test/release-validation/receipts/<tag>.json`.
+4. Release the GitHub Action first (creates the exact `vMAJOR.MINOR.PATCH` tag —
+   [`release.md`](release.md)), then run this pipeline again with
+   `extensionManifest: vss-extension.json` and `releaseTag` set to that tag. The
+   production receipt gate now runs, verifies the committed receipt, binds this build
+   to the shared release commit, and — only if all of that passes — signs and publishes
+   the production `ChaosStudioWorkspaces` extension.
+
+Later releases repeat only steps 2–4 (using either the previously-published Dev build
+or a fresh private one for RV, as needed); step 1 need not be repeated once a
+`ChaosStudioWorkspacesDev` build already exists in the Marketplace, though re-running
+it to refresh the Dev build before a new RV pass is expected and safe.

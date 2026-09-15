@@ -32,8 +32,41 @@ export function jobCancellationSignal(): { signal: AbortSignal; dispose: () => v
   return { signal: controller.signal, dispose };
 }
 
+/**
+ * Deterministic, no-side-effect self-test used by the release smoke harness
+ * (`scripts/smoke-action-bundle.mjs`). It validates that the bundle's own
+ * wiring — host construction, credential-provider construction, and the
+ * cancellation bridge — can be exercised WITHOUT touching the network,
+ * mutating anything, or reading real inputs. It must be a deliberate,
+ * verifiable pass/fail: any thrown error or rejected promise here is a real
+ * self-test failure, not merely "exit non-zero because inputs were missing".
+ */
+export async function runSmokeSelfTest(): Promise<void> {
+  // Constructing the host is side-effect-free (no I/O until a method is called).
+  githubActionsHost();
+  // Constructing the credential provider must not touch the network/CLI; only
+  // an actual getArmToken() call would shell out to `az`, which we never call.
+  azureCliCredentialProvider();
+  // Exercise the cancellation bridge end-to-end (attach + abort + dispose) to
+  // prove it does not throw and cleans up its listeners.
+  const { signal, dispose } = jobCancellationSignal();
+  if (typeof signal.aborted !== 'boolean') {
+    throw new Error('smoke self-test: cancellation bridge did not return a usable AbortSignal.');
+  }
+  dispose();
+}
+
 /** Compose the real host/credential/signal and run the Action. */
 export async function main(): Promise<void> {
+  // Deterministic offline self-test path (release smoke harness only). Must
+  // complete and exit 0 ONLY on genuine success — any thrown error below
+  // propagates to the catch handler, which fails the process instead of
+  // silently exiting 0.
+  if (process.env.CHAOS_STUDIO_SMOKE_CHECK === '1') {
+    await runSmokeSelfTest();
+    process.stdout.write('chaos-studio smoke self-test: OK\n');
+    return;
+  }
   const { signal, dispose } = jobCancellationSignal();
   try {
     await runGithubAction({
@@ -52,6 +85,14 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   // here is an unexpected adapter fault — fail the step rather than crash silently.
   void main().catch((err: unknown) => {
     const message = redact(err instanceof Error ? err.message : String(err));
+    if (process.env.CHAOS_STUDIO_SMOKE_CHECK === '1') {
+      // The smoke harness requires a real nonzero exit on self-test failure,
+      // not a masked core.setFailed (which does not affect process exit code
+      // in all hosts). Fail the process directly and deterministically.
+      process.stderr.write(`::error::chaos-studio smoke self-test failed: ${message}\n`);
+      process.exitCode = 1;
+      return;
+    }
     // Lazy import avoids loading @actions/core in the pure test paths.
     void import('@actions/core').then((core) => core.setFailed(message));
   });

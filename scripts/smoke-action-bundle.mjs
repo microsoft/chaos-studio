@@ -84,9 +84,21 @@ function fail(message, detail) {
   process.exit(1);
 }
 
+/**
+ * Early argument validation, BEFORE anything is spawned. This intentionally
+ * does NOT go through `fail()`: `fail()` calls `reapHelpers()`, which
+ * references `child`/`winKiller` — declared further below, in the temporal
+ * dead zone until then — so calling `fail()` this early would throw a
+ * `ReferenceError` instead of reporting the actual validation error.
+ */
+function failEarly(message) {
+  console.error(`::error::${message}`);
+  process.exit(1);
+}
+
 const bundle = process.argv[2];
-if (!bundle) fail('smoke harness requires a bundle path argument.');
-if (!existsSync(bundle)) fail(`smoke harness: bundle '${bundle}' does not exist.`);
+if (!bundle) failEarly('smoke harness requires a bundle path argument.');
+if (!existsSync(bundle)) failEarly(`smoke harness: bundle '${bundle}' does not exist.`);
 
 // Scrubbed, deterministic child environment: keep only what Node needs to run,
 // then add the explicit self-test signal. No INPUT_*, tokens, or CI vars leak in.

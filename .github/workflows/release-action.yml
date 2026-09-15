@@ -1043,6 +1043,11 @@ jobs:
           RELEASE_TOKEN: ${{ secrets.ACTION_RELEASE_TOKEN }}
         run: |
           set -euo pipefail
+          # Shared helpers (require_immutable, verify_final_assets, etc.) live in a
+          # library sourced by BOTH this staging step and the later publication step,
+          # so both steps' fresh shells get an IDENTICAL definition (see the file's
+          # header comment for why this file exists).
+          source scripts/lib/release-asset-verify.sh
           origin="https://x-access-token:${RELEASE_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           # Authoritative binding is the TAG REF -> commit, resolved via git refs
           # (NOT the release targetCommitish). Re-confirm the exact tag == commit.
@@ -1055,79 +1060,10 @@ jobs:
             exit 1
           fi
           # The intended asset set (the deterministic archive of the ENTIRE verified
-          # tree + its manifest + digest), keyed by name -> intended sha256.
-          assets=( pkg/action-bundle.tar.gz pkg/action-bundle.tar.gz.sha256 pkg/dist-manifest.tsv )
-          declare -A want=()
-          for a in "${assets[@]}"; do
-            [[ -f "$a" ]] || { echo "::error::Expected asset '$a' is missing."; exit 1; }
-            want["$(basename "$a")"]="$(sha256sum "$a" | awk '{print $1}')"
-          done
-          wantNames="$(printf '%s\n' "${!want[@]}" | LC_ALL=C sort)"
-
-          verify_final_assets() {
-            # The remote asset set must equal the intended set EXACTLY, and every
-            # remote asset's DOWNLOADED bytes must hash to the intended digest.
-            local finalNames verdir got name
-            finalNames="$(gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name' | LC_ALL=C sort)"
-            if [[ "$finalNames" != "$wantNames" ]]; then
-              echo "::error::Remote asset set does not match the intended set."
-              diff <(printf '%s\n' "$wantNames") <(printf '%s\n' "$finalNames") || true
-              exit 1
-            fi
-            verdir="${RUNNER_TEMP}/asset-verify"; rm -rf "$verdir"; mkdir -p "$verdir"
-            gh release download "$TAG" --repo "$REPO" --dir "$verdir" --clobber
-            for name in "${!want[@]}"; do
-              got="$(sha256sum "${verdir}/${name}" | awk '{print $1}')"
-              if [[ "$got" != "${want[$name]}" ]]; then
-                echo "::error::Remote asset '$name' digest ${got} != intended ${want[$name]}."
-                exit 1
-              fi
-            done
-          }
-
-          require_immutable() {
-            # GitHub release immutability (a repository setting) FREEZES a published
-            # release's assets AND tag. Require GitHub to report the release as immutable so
-            # "immutable" is ENFORCED by the platform, not merely asserted by this workflow.
-            # (Provisioning: enable release immutability in repo settings — see CONTRIBUTING.md.)
-            local imm
-            imm="$(gh api "repos/${REPO}/releases/tags/${TAG}" --jq '(.immutable // .is_immutable) // false' 2>/dev/null || echo false)"
-            if [[ "$imm" != "true" ]]; then
-              echo "::error::Release $TAG is NOT immutable (isImmutable=${imm}). Enable repository release immutability so published releases (assets + tag) are frozen (see CONTRIBUTING.md)."
-              exit 1
-            fi
-            echo "Release $TAG is immutable (isImmutable=true)."
-          }
-
-          require_repo_immutability_enabled() {
-            # Repository-level immutable releases must be ENABLED *before* we make ANY release
-            # write. Otherwise a publish/flip would create a MUTABLE public release and the
-            # per-release require_immutable check would only fail AFTER the mutable release is
-            # already public. GET the repo setting (returns { enabled, enforced_by_owner });
-            # fail CLOSED unless enabled==true so no mutable public release is ever produced.
-            local en
-            en="$(gh api "repos/${REPO}/immutable-releases" -H "X-GitHub-Api-Version: 2022-11-28" --jq ".enabled == true" 2>/dev/null || echo false)"
-            if [[ "$en" != "true" ]]; then
-              echo "::error::Repository immutable releases are NOT enabled; refusing to write any release (a published release would be mutable). Enable it (see CONTRIBUTING.md) before releasing."
-              exit 1
-            fi
-            echo "Repository immutable releases are enabled."
-          }
-
-          reconcile_draft_assets() {
-            # Bring a (possibly partial) DRAFT's assets to EXACTLY the intended set:
-            # delete any unintended asset, then (re)upload the intended ones. Safe
-            # ONLY on a draft, which is not public.
-            local existing name
-            existing="$(gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name' || true)"
-            while IFS= read -r name; do
-              [[ -z "$name" ]] && continue
-              if [[ -z "${want[$name]+x}" ]]; then
-                gh release delete-asset "$TAG" "$name" --repo "$REPO" --yes
-              fi
-            done <<< "$existing"
-            gh release upload "$TAG" "${assets[@]}" --repo "$REPO" --clobber
-          }
+          # tree + its manifest + digest), keyed by name -> intended sha256. Also
+          # persisted to pkg/asset-digests.tsv so the LATER publication step (a fresh
+          # shell) can rebuild the identical map via load_want_assets.
+          compute_want_assets
 
           # Fail CLOSED before ANY release write if repository immutable releases are off,
           # so a publish can never leave a MUTABLE public release behind.
@@ -1146,6 +1082,12 @@ jobs:
               echo "::notice::Release $TAG is already published (immutable); verifying assets + GitHub immutability without mutation."
               verify_final_assets
               require_immutable
+              # P2 fix: a retry hitting the already-published branch must not treat
+              # "the release exists" as proof the required provenance attestations
+              # were ever generated for it. Verify BOTH attestations exist and are
+              # bound to this artifact digest + release commit before accepting
+              # this path and letting the major tag advance.
+              verify_required_attestations "pkg/action-bundle.tar.gz"
               echo "already-published=true" >> "$GITHUB_OUTPUT"
               ;;
             draft)
@@ -1219,6 +1161,12 @@ jobs:
           GH_TOKEN: ${{ secrets.ACTION_RELEASE_TOKEN }}
         run: |
           set -euo pipefail
+          # Fresh shell: source the shared helpers and rebuild the intended asset map
+          # from the on-disk manifest the staging step persisted (P1 fix — this step
+          # previously called require_immutable/verify_final_assets which only
+          # existed in the earlier staging step's shell).
+          source scripts/lib/release-asset-verify.sh
+          load_want_assets
           # Both required provenance attestations (above) have already succeeded by
           # the time this step runs — GitHub Actions steps run sequentially and a
           # failure in either attestation step would have stopped the job before

@@ -34,8 +34,36 @@ export function jobCancellationSignal(): { signal: AbortSignal; dispose: () => v
   return { signal: controller.signal, dispose };
 }
 
+/**
+ * Deterministic, no-side-effect self-test used by the release smoke harness
+ * (`scripts/smoke-action-bundle.mjs`). It validates that the bundle's own
+ * wiring — host construction and the cancellation bridge — can be exercised
+ * WITHOUT touching the network, mutating anything, or reading a real ARM
+ * service connection. Any thrown error here is a genuine self-test failure.
+ */
+export async function runSmokeSelfTest(): Promise<void> {
+  // Constructing the host is side-effect-free (no I/O until a method is called).
+  azurePipelinesTaskHost();
+  // Exercise the cancellation bridge end-to-end (attach + dispose) to prove it
+  // does not throw and cleans up its listeners.
+  const { signal, dispose } = jobCancellationSignal();
+  if (typeof signal.aborted !== 'boolean') {
+    throw new Error('smoke self-test: cancellation bridge did not return a usable AbortSignal.');
+  }
+  dispose();
+}
+
 /** Compose the real host/credential/signal and run the task. */
 export async function main(): Promise<void> {
+  // Deterministic offline self-test path (release smoke harness only). Must
+  // exit 0 ONLY on genuine success. This intentionally bypasses reading a real
+  // ARM service connection (which does not exist in the harness's scrubbed
+  // environment and would otherwise be reported as a false task failure).
+  if (process.env.CHAOS_STUDIO_SMOKE_CHECK === '1') {
+    await runSmokeSelfTest();
+    process.stdout.write('chaos-studio smoke self-test: OK\n');
+    return;
+  }
   const host = azurePipelinesTaskHost();
   const { signal, dispose } = jobCancellationSignal();
   try {
@@ -48,6 +76,13 @@ export async function main(): Promise<void> {
     } catch (err) {
       const message = redact(err instanceof Error ? err.message : String(err));
       host.setResult(false, message || 'Azure Chaos Studio task failed.');
+      // CRITICAL: `host.setResult(false, ...)` only records a logical task
+      // failure (e.g. via `tl.setResult`); it does NOT make the Node process
+      // exit non-zero. Without this, the smoke harness (and any caller relying
+      // on the OS exit code, such as a CI step condition) would falsely see a
+      // successful (0) exit despite the task having failed. Set the exit code
+      // explicitly so failure is observable both ways.
+      process.exitCode = 1;
       return;
     }
     await runAzurePipelinesTask({ host, cred, signal });
@@ -62,6 +97,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   // is an unexpected adapter fault — fail the task rather than crash silently.
   void main().catch((err: unknown) => {
     const message = redact(err instanceof Error ? err.message : String(err));
+    if (process.env.CHAOS_STUDIO_SMOKE_CHECK === '1') {
+      process.stderr.write(`::error::chaos-studio smoke self-test failed: ${message}\n`);
+      process.exitCode = 1;
+      return;
+    }
     // Lazy import avoids loading the task library in the pure test paths.
     void import('azure-pipelines-task-lib/task.js').then((tl) =>
       tl.setResult(tl.TaskResult.Failed, message, true),
