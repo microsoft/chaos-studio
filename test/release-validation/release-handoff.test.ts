@@ -886,6 +886,36 @@ test('the public integration guide documents output presence, strict inputs, and
   assert.match(guide, /default is 5 minutes/);
   assert.match(guide, /does \*\*not\*\* promise[\s\S]*300 seconds/i);
   assert.doesNotMatch(guide, /Neither platform's cancellation grace period is anywhere close to 300 seconds/i);
+  assert.doesNotMatch(guide, /platform's own \(much shorter\)/i);
+  assert.match(guide, /missing variable[\s\S]*remains the literal text/i);
+  assert.match(guide, /variables\['chaos\.run-state'\]/);
+});
+
+test('the root preview fallback links a bounded local build and package inspection procedure', () => {
+  const root = readText('README.md');
+  assert.match(root, /CONTRIBUTING\.md#local-build-and-package-inspection/);
+
+  const contributing = readText('CONTRIBUTING.md');
+  const local = contributing.slice(
+    contributing.indexOf('### Local build and package inspection'),
+    contributing.indexOf('### Required external release controls'),
+  );
+  for (const command of [
+    'npm ci',
+    'npm run typecheck',
+    'npm test',
+    'npm run build',
+    'scripts/smoke-action-bundle.mjs dist/github-action/index.js',
+    'scripts/smoke-action-bundle.mjs dist/azure-pipelines-task/index.js',
+    'tfx-cli@0.17.0',
+    'extension create',
+    'vss-extension.dev.json',
+  ]) {
+    assert.ok(local.includes(command), `local inspection documents '${command}'`);
+  }
+  assert.match(local, /does \*\*not\*\* install the extension/i);
+  assert.match(local, /does \*\*not\*\*[\s\S]*exercise WIF/i);
+  assert.match(local, /does \*\*not\*\*[\s\S]*replace RV1–RV3/i);
 });
 
 test('the runbooks are discoverable from the integration docs and name the owning contact', () => {

@@ -39,8 +39,11 @@ not always equivalent:
 
 Outputs are emitted only when a non-empty value was actually observed. An
 absent GitHub Action output normally evaluates to an empty string; an absent
-Azure Pipelines output variable is not set and normally expands as empty. Do
-not use emptiness alone to infer success—always rely on the step/task result.
+Azure Pipelines output variable is not set. Azure Pipelines macro syntax does
+**not** coalesce a missing variable to empty: an unresolved
+`$(chaos.run-state)` remains the literal text `$(chaos.run-state)`. Do not use
+macro expansion to test presence and do not use emptiness alone to infer
+success—always rely on the step/task result.
 
 | Execution point | `validation-state` | `run-id` / `run-resource-id` | `run-state` / `started-at` | `completed-at` | correlation/request IDs |
 |---|---|---|---|---|---|
@@ -50,6 +53,23 @@ not use emptiness alone to infer success—always rely on the step/task result.
 | Execute accepted, waiting enabled | absent for `execute-only`; present for `validate-and-execute` | present | present after a run status is observed | present only when a terminal run response with `endTime` is normally observed | present when returned by ARM |
 | Execute accepted, waiting disabled | absent for `execute-only`; present for `validate-and-execute` | present | best effort from one non-fatal status GET; may be absent | absent | present when returned by the last relevant ARM response |
 | Timeout/cancellation after execute acceptance | mode-dependent as above | present | last observed or cleanup state when available | absent unless the forward wait had already observed a terminal response | IDs from the original forward failure when available; cleanup never replaces them |
+
+For an optional Azure Pipelines output, guard the consumer with a runtime
+condition before using the convenient macro form:
+
+```yaml
+- script: echo "Last observed state: $RUN_STATE"
+  displayName: Show the optional run state
+  condition: and(succeeded(), ne(variables['chaos.run-state'], ''))
+  env:
+    RUN_STATE: $(chaos.run-state)
+```
+
+Within the same job, `variables['chaos.run-state']` evaluates missing as null/empty
+for the condition, while the macro is expanded only for the step that is allowed
+to run. Across jobs or stages, first map the named task output with a `$[...]`
+runtime expression from `dependencies`/`stageDependencies`, then test the mapped
+variable the same way.
 
 ## Examples
 
@@ -175,8 +195,12 @@ If you lower `completion-timeout-seconds`/`completionTimeoutSeconds`, lower the
 job timeout proportionally but always keep the 300-second cleanup margin. A job
 timeout set at or below `completion-timeout-seconds` will routinely kill the job
 before cleanup can run — but, per above, this margin only helps the completion-timeout
-path; a manually cancelled job is bounded by the platform's own (much shorter)
-cancellation grace period regardless of this setting.
+path; a manually cancelled job is bounded by the platform's cancellation lifecycle
+regardless of this setting. On GitHub that lifecycle is
+the documented ~10-second process-termination sequence. On Azure Pipelines it is
+the agent/task cancellation behavior described above; the separate 5-minute
+`cancelTimeoutInMinutes` default is not a guaranteed grace period for this
+already-running Node task.
 
 ## Least privilege — the runner role
 

@@ -90,7 +90,12 @@ The task exposes stable **output variables** (set with `isOutput=true`), identic
 in name and value to the GitHub Action's outputs (cross-platform parity, G3):
 `validation-state`, `run-id`, `run-resource-id`, `run-state`, `started-at`,
 `completed-at`, `correlation-id`, `request-id`. Give the task a `name:` and read
-them as `$(<name>.<output>)`, e.g. `$(chaos.run-id)`. Which ones are set depends on
-the mode and wait setting. See the
+an output guaranteed by the successful mode as `$(<name>.<output>)`, e.g.
+`$(chaos.run-id)` after a successful execute mode. Which ones are set depends on
+the mode and wait setting. A missing Azure macro is **not empty**: it remains
+literal text such as `$(chaos.run-state)`. For an optional output, use a runtime
+condition such as
+`and(succeeded(), ne(variables['chaos.run-state'], ''))` before consuming the
+macro. See the
 [output presence matrix](../../docs/ci-cd-integrations.md#output-presence-matrix);
-an absent output variable is not set by the task and normally expands as empty.
+it also covers mapping named-task outputs across jobs and stages.

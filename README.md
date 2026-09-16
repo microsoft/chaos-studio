@@ -23,8 +23,10 @@ recovers.
 > `microsoft/chaos-studio@v1` ref does **not exist yet**. The workflow below is
 > the planned quickstart after the first preview release; it will return
 > "reference not found" if copied before that release. Until a release appears
-> on the repository's Releases page, use the local tests and packaging
-> instructions rather than guessing a branch SHA.
+> on the repository's Releases page, use the
+> [local build and package inspection](CONTRIBUTING.md#local-build-and-package-inspection)
+> procedure rather than guessing a branch SHA. Local inspection does not replace
+> a hosted GitHub Actions or Azure Pipelines run.
 
 ```yaml
 # Planned usage after the first public preview publishes v1.

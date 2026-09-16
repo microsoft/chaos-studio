@@ -23,7 +23,7 @@ pool:
 steps:
   - task: AzureChaosStudioScenario@1
     displayName: Start the scenario (fire-and-forget)
-    name: chaos   # reference $(chaos.run-id), $(chaos.run-resource-id)
+    name: chaos   # run identity is present after success; run-state is best effort
     inputs:
       azureSubscription: chaos-studio-wif   # ARM service connection (workload identity)
       subscriptionId: $(chaosSubscriptionId)
@@ -33,3 +33,11 @@ steps:
       scenarioConfigurationName: cfg-demo
       mode: execute-only
       waitForCompletion: false
+
+  # `run-state` is best effort in no-wait mode. A missing Azure macro remains
+  # literal text, so test presence with a runtime condition before expanding it.
+  - script: echo "Last observed state: $RUN_STATE"
+    displayName: Show the optional run state
+    condition: and(succeeded(), ne(variables['chaos.run-state'], ''))
+    env:
+      RUN_STATE: $(chaos.run-state)

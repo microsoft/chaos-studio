@@ -14,7 +14,7 @@ pool:
 steps:
   - task: AzureChaosStudioScenario@1
     displayName: Execute the scenario configuration
-    name: chaos   # reference outputs as $(chaos.run-id), $(chaos.run-state)
+    name: chaos   # run-id is present after success; guard optional outputs per README
     inputs:
       azureSubscription: chaos-studio-wif   # ARM service connection (workload identity)
       subscriptionId: $(chaosSubscriptionId)

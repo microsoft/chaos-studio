@@ -173,6 +173,17 @@ test('both platform manifests document the exact positive whole-number timeout c
   }
 });
 
+test('Azure examples document and demonstrate safe optional-output consumption', () => {
+  const readme = readText('examples/azure-pipelines/README.md');
+  assert.match(readme, /missing Azure macro is \*\*not empty\*\*/i);
+  assert.match(readme, /remains\s+literal text/i);
+  assert.match(readme, /variables\['chaos\.run-state'\]/);
+
+  const noWait = readText('examples/azure-pipelines/execute-only-no-wait.yml');
+  assert.match(noWait, /condition:\s*and\(succeeded\(\), ne\(variables\['chaos\.run-state'\], ''\)\)/);
+  assert.match(noWait, /RUN_STATE:\s*\$\(chaos\.run-state\)/);
+});
+
 
 
 interface Manifest {

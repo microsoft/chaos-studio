@@ -28,6 +28,41 @@ release `validate` job both rebuild into an empty directory and compare the
 complete file set and every git blob hash, so run `npm run build` and commit the
 output whenever the bundle sources change.
 
+### Local build and package inspection
+
+Before a public Action ref or private Dev extension is available, maintainers can
+inspect the exact artifacts locally without publishing anything:
+
+```bash
+npm ci
+npm run typecheck
+npm test
+npm run build
+node scripts/smoke-action-bundle.mjs dist/github-action/index.js
+node scripts/smoke-action-bundle.mjs dist/azure-pipelines-task/index.js
+
+stage="$(mktemp -d)"
+cp -R azure-pipelines-extension/. "$stage/"
+for task in "$stage"/tasks/*/; do
+  cp -R dist/azure-pipelines-task/. "$task"
+done
+mkdir -p artifacts
+npx --yes tfx-cli@0.17.0 extension create \
+  --manifest-globs vss-extension.dev.json \
+  --root "$stage" \
+  --output-path "$PWD/artifacts"
+unzip -l artifacts/AzureChaosStudio.ChaosStudioWorkspacesDev-1.0.0.vsix
+rm -rf "$stage"
+```
+
+This reproduces the PR pipeline's unsigned Dev packaging shape and proves that
+the committed adapters build, start in their deterministic smoke mode, and fit
+inside a structurally valid VSIX. It does **not** install the extension, resolve
+a public `microsoft/chaos-studio@v1` ref, exercise WIF, contact Chaos Studio, prove
+Marketplace/signing controls, or replace RV1–RV3. Those require the hosted
+private-preview and release-validation procedures in
+[`docs/runbooks/release-validation.md`](docs/runbooks/release-validation.md).
+
 ### Required external release controls (provision once, then verify)
 
 The release workflows depend on GitHub org/repo controls that live in **settings, not
