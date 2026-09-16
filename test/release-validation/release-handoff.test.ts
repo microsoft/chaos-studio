@@ -274,6 +274,13 @@ test('a receipt whose observations contradict the contract fails the CLI gate', 
   const result = runCli(['verify', writeReceipt(stamp(lying))]);
   assert.equal(result.status, 1);
   assert.match(result.stderr, /RV1/);
+  assert.match(result.stderr, /triage/i);
+  assert.match(result.stderr, /authoritative service evidence/i);
+  assert.doesNotMatch(
+    result.stderr,
+    /protocol mismatch opens a service defect.*rather than a client change/i,
+    'the gate must not assign ownership before evidence-based triage',
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -857,6 +864,9 @@ test('the operational runbooks cover failed release validation and an API-versio
   for (const marker of ['RV1', 'RV2', 'RV3', 'rv-receipt.mjs', 'service defect']) {
     assert.ok(validation.includes(marker), `the release-validation runbook covers ${marker}`);
   }
+  assert.match(validation, /does \*\*not\*\* identify which component caused it/i);
+  assert.match(validation, /original-failure precedence failure[\s\S]*client defect/i);
+  assert.match(validation, /open a service defect only after evidence attributes/i);
 
   const drift = readText('docs/runbooks/contract-drift.md');
   assert.ok(drift.includes(API_VERSION), 'the drift runbook names the pinned api-version');

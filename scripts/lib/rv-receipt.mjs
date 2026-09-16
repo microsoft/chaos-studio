@@ -97,7 +97,8 @@ if (!ok) {
   for (const failure of failures) console.error(`::error::rv-receipt: ${failure}`);
   console.error(
     `::error::rv-receipt: '${file}' is NOT valid release-validation evidence; the release is blocked. ` +
-      'A protocol mismatch opens a service defect (docs/runbooks/contract-drift.md) rather than a client change.',
+      'Triage the failure against raw observations, the client, and authoritative service evidence before attribution. ' +
+      'Only a confirmed service-side protocol mismatch opens a service defect (docs/runbooks/contract-drift.md).',
   );
   process.exit(1);
 }

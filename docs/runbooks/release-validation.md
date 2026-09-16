@@ -254,15 +254,20 @@ downgraded to `HEAD`. Its exit codes match the receipt CLI: `0` pass, `1` mismat
 ## Responding to a failed RV
 
 **Do not** edit the receipt, relax an evaluator, or set `MAX_AGE_DAYS` higher to get
-past a red gate. Triage by what failed:
+past a red gate. Every failed RV blocks the release, but a failed evaluator identifies
+a disagreement — it does **not** identify which component caused it. Preserve the raw
+observations and client logs, then compare them with the authoritative service source,
+the committed source-derived contract, and (where relevant) both adapters before
+assigning ownership:
 
 | Failure | Meaning | Action |
 |---|---|---|
-| `api-version`, `wire:`, `Location suffix`, `Retry-After`, or terminal-state failures in RV1 | The deployed service does not match the source-derived contract | **Open a service defect** with the Chaos Studio service team and stop the release. See [`contract-drift.md`](contract-drift.md). Do not change the client to match. |
-| RV2 role `missing`/`extraneous`/`unknown` | The shipped least-privilege role template is wrong, or the provider operation set moved | Fix `security/chaos-studio-runner.role-template.json` (missing/extraneous) or open a **service defect** (unknown operation), then re-run RV2. |
+| `api-version`, `wire:`, `Location suffix`, `Retry-After`, or terminal-state failures in RV1 | The observation disagrees with the source-derived contract; the service, client request/parsing, committed contract, or recorded evidence may be wrong | Keep the release blocked and triage using the raw HTTP transcript plus authoritative source. Fix a demonstrated client/repository defect here; open a service defect only after evidence attributes the mismatch to the deployed service. See [`contract-drift.md`](contract-drift.md). Never silently accommodate an unreviewed service change. |
+| RV2 role `missing`/`extraneous`/`unknown` | The role template, provider-operation snapshot, permission probe, or service operation set may disagree | Compare the generated provider-operation source, role template, and actual failed/succeeded calls. Fix a demonstrated repository/client defect; open a service defect only for an operation mismatch confirmed in the authoritative provider source or deployed service. |
 | RV2 identity failures | Federation is misconfigured | Fix the federated credential subject/audience and re-run; this is an environment fix, not a code change. |
-| RV3 duration over the cleanup deadline | The service's cancellation is slower than the client's bound | **Open a service defect**; a client timeout increase requires a reviewed change and a fresh RV pass. |
-| RV3 idempotency/precedence failures | Cancellation semantics regressed | **Open a service defect**. |
+| RV3 duration over the cleanup deadline | Cancellation exceeded the bound; service latency, network/platform behavior, or the client's timing/cleanup logic may be responsible | Preserve timestamps and request/response evidence, then attribute the delay. Open a service defect for confirmed service latency; fix confirmed client logic here. Any client timeout change is reviewed and requires a fresh RV pass. |
+| RV3 duplicate/terminal-run cancellation failures | The observed cancellation response disagrees with the expected service semantics, or the client invoked/interpreted it incorrectly | Compare the raw cancel exchanges with the authoritative contract and client logs before attribution. Fix demonstrated client behavior; open a service defect only for a confirmed service mismatch. |
+| RV3 original-failure precedence failure | The client allowed cleanup failure to mask the original operation failure | Treat as a client defect and fix the orchestrator/error mapping; the receipt alone is not evidence of a service defect. |
 | `digest:` mismatch | The receipt was edited after stamping | Re-run the affected checks and produce a fresh receipt. Never re-stamp an edited receipt. |
 | `unstamped` | The receipt was never stamped | Run `rv-receipt.mjs stamp` and commit the result. |
 | `in the future` / `after the receipt` | The timestamps are inconsistent or post-dated | Correct the recorded instants from the actual session; post-dating to defeat staleness is prohibited. |
@@ -270,9 +275,11 @@ past a red gate. Triage by what failed:
 | `older than N days` | The evidence is stale | Re-run RV1–RV3. |
 | `is not an ancestor` / `changes shipped code` | The release commit is not what was validated | Re-run RV1–RV3 against the actual release commit. |
 
-Every service defect must name the observed value, the expected contract value, the
-region, and the receipt path. Link the defect from the release issue and keep the
-release blocked until it is resolved or the contract is re-derived and re-reviewed.
+Do not file a service defect until the evidence attributes the failure to the service.
+Every confirmed service defect must name the observed value, expected authoritative
+contract value, region, raw transcript/log evidence, and receipt path. Link it from
+the release issue and keep the release blocked until it is resolved or the contract
+is deliberately re-derived, re-reviewed, and revalidated.
 
 ---
 

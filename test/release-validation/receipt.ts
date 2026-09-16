@@ -11,8 +11,9 @@
  *
  * The split matters operationally: the operator records WHAT the environment
  * did; this code decides whether that satisfies the contract. A protocol
- * mismatch therefore always surfaces as a receipt failure (→ a service defect),
- * never as a silently accommodating client change.
+ * mismatch therefore always surfaces as a receipt failure that blocks release;
+ * separate evidence-based triage determines whether the service, client,
+ * repository contract, or environment caused it.
  *
  * Not a `*.test.ts` file, so the runner treats it as a helper. It is also the
  * evaluator behind `scripts/lib/rv-receipt.mjs`, the release-gate CLI.
