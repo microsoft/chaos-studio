@@ -36,7 +36,8 @@ steps:
 
   # `run-state` is best effort in no-wait mode. A missing Azure macro remains
   # literal text, so test presence with a runtime condition before expanding it.
-  - script: echo "Last observed state: $RUN_STATE"
+  - script: |
+      echo "Last observed state: $RUN_STATE"
     displayName: Show the optional run state
     condition: and(succeeded(), ne(variables['chaos.run-state'], ''))
     env:

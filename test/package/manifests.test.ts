@@ -180,6 +180,12 @@ test('Azure examples document and demonstrate safe optional-output consumption',
   assert.match(readme, /variables\['chaos\.run-state'\]/);
 
   const noWait = readText('examples/azure-pipelines/execute-only-no-wait.yml');
+  assert.match(noWait, /- script:\s*\|\s*\n\s+echo "Last observed state: \$RUN_STATE"/);
+  assert.doesNotMatch(
+    noWait,
+    /^\s*-\s*script:\s+[^\n]*:\s/m,
+    'colon-bearing shell commands must use a YAML block scalar',
+  );
   assert.match(noWait, /condition:\s*and\(succeeded\(\), ne\(variables\['chaos\.run-state'\], ''\)\)/);
   assert.match(noWait, /RUN_STATE:\s*\$\(chaos\.run-state\)/);
 });

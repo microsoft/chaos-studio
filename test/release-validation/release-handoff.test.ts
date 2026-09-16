@@ -889,6 +889,12 @@ test('the public integration guide documents output presence, strict inputs, and
   assert.doesNotMatch(guide, /platform's own \(much shorter\)/i);
   assert.match(guide, /missing variable[\s\S]*remains the literal text/i);
   assert.match(guide, /variables\['chaos\.run-state'\]/);
+  assert.match(guide, /- script:\s*\|\s*\n\s+echo "Last observed state: \$RUN_STATE"/);
+  assert.doesNotMatch(
+    guide,
+    /^- script:\s+[^\n]*:\s/m,
+    'the documented Azure YAML must not use a colon-bearing plain script scalar',
+  );
 });
 
 test('the root preview fallback links a bounded local build and package inspection procedure', () => {

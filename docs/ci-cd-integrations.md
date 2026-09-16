@@ -58,7 +58,8 @@ For an optional Azure Pipelines output, guard the consumer with a runtime
 condition before using the convenient macro form:
 
 ```yaml
-- script: echo "Last observed state: $RUN_STATE"
+- script: |
+    echo "Last observed state: $RUN_STATE"
   displayName: Show the optional run state
   condition: and(succeeded(), ne(variables['chaos.run-state'], ''))
   env:
