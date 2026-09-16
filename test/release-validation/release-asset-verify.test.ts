@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { bashAvailable, toBashPath } from './bash-path.ts';
+
 /**
  * R2 — exercises the ACTUAL `verify_required_attestations` helper in
  * scripts/lib/release-asset-verify.sh (not a re-implementation of its logic),
@@ -23,11 +25,6 @@ const DEFAULT_BRANCH = 'main';
 const EXPECTED_SOURCE_REF = `refs/heads/${DEFAULT_BRANCH}`;
 const RELEASE_COMMIT = 'a'.repeat(40);
 
-function bashAvailable(): boolean {
-  const result = spawnSync('bash', ['-c', 'true'], { encoding: 'utf8' });
-  return result.status === 0;
-}
-
 /**
  * Writes a fake `gh` (and `jq`, used only to pretty-print in the real script's
  * error paths) onto a scratch PATH, and a driver script that sources the real
@@ -40,19 +37,6 @@ function bashAvailable(): boolean {
  * this is what lets each scenario below assert on the REAL script's call
  * shape, not merely on a mocked return value.
  */
-/**
- * Converts a Windows path to the corresponding WSL path
- * (`C:\foo\bar` -> `/mnt/c/foo/bar`) so scripts this test writes to a
- * Windows temp dir can be handed to WSL's `bash.exe` on a Windows dev
- * machine; a no-op on POSIX, where the same path is already bash-usable.
- */
-function toBashPath(p: string): string {
-  if (process.platform !== 'win32') return p;
-  const m = /^([A-Za-z]):[\\/](.*)$/.exec(p);
-  if (!m) return p.replace(/\\/g, '/');
-  return `/mnt/${m[1]!.toLowerCase()}/${m[2]!.replace(/\\/g, '/')}`;
-}
-
 function runBash(scriptPath: string): SpawnSyncReturns<string> {
   return spawnSync('bash', [toBashPath(scriptPath)], { encoding: 'utf8' });
 }
@@ -77,14 +61,16 @@ function runVerify(ghBehavior: string): SpawnSyncReturns<string> {
   );
   chmodSync(fakeGh, 0o755);
 
-  // A minimal `jq` shim (Python-backed) standing in for the real CLI, in case
-  // it is not installed on the machine running this test — it implements only
-  // the ONE query the real script issues
+  // A minimal `jq` shim standing in for the real CLI, in case it is not
+  // installed on the machine running this test — it implements only the ONE
+  // query the real script issues
   // (`jq -r '.[].verificationResult...' /tmp/attest-release-commit.json`): the
   // query is $1, the file to read is the LAST argument, matching how
   // release-asset-verify.sh actually invokes it (not via stdin). Emits ONE
   // line per array entry (mirroring `.[]`, not `.[0]`), so tests can exercise
-  // the real script's order-independent multi-entry scan (R4).
+  // the real script's order-independent multi-entry scan (R4). Keep the shim
+  // entirely in Bash so a POSIX path is never handed to a Windows-native
+  // Python executable when the test runs under Git for Windows.
   const fakeJq = join(binDir, 'jq');
   writeFileSync(
     fakeJq,
@@ -92,17 +78,8 @@ function runVerify(ghBehavior: string): SpawnSyncReturns<string> {
       '#!/usr/bin/env bash',
       'set -euo pipefail',
       'file="${@: -1}"',
-      'python3 -c \'',
-      'import json, sys',
-      'with open(sys.argv[1]) as f:',
-      '    data = json.load(f)',
-      'for entry in data:',
-      '    try:',
-      '        v = entry["verificationResult"]["statement"]["predicate"].get("releaseCommit", "")',
-      '    except (KeyError, TypeError):',
-      '        v = ""',
-      '    print(v)',
-      "' \"$file\"",
+      '{ grep -o \'"releaseCommit"[[:space:]]*:[[:space:]]*"[^"]*"\' "$file" || true; } |',
+      '  sed -E \'s/^.*"releaseCommit"[[:space:]]*:[[:space:]]*"([^"]*)".*$/\\1/\'',
       '',
     ].join('\n'),
   );

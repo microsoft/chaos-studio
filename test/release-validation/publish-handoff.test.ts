@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { bashAvailable, toBashPath } from './bash-path.ts';
+
 /**
  * R1 — the isolated `publish` job's staging/publication steps `source
  * scripts/lib/release-asset-verify.sh`, but that job intentionally runs no
@@ -30,17 +32,6 @@ function publishJobSlice(text: string): string {
   const start = text.search(/\n {2}publish:\n/);
   assert.ok(start >= 0, 'publish job not found in release-action.yml');
   return text.slice(start);
-}
-
-function bashAvailable(): boolean {
-  return spawnSync('bash', ['-c', 'true'], { encoding: 'utf8' }).status === 0;
-}
-
-function toBashPath(p: string): string {
-  if (process.platform !== 'win32') return p;
-  const m = /^([A-Za-z]):[\\/](.*)$/.exec(p);
-  if (!m) return p.replace(/\\/g, '/');
-  return `/mnt/${m[1]!.toLowerCase()}/${m[2]!.replace(/\\/g, '/')}`;
 }
 
 function shQuote(value: string): string {
@@ -121,6 +112,12 @@ test(
     const script = [
       '#!/usr/bin/env bash',
       'set -euo pipefail',
+      // Git for Windows defaults safe.bareRepository=explicit, unlike the
+      // Ubuntu release runner. Scope the compatibility override to this
+      // simulation without changing the user's Git configuration.
+      'export GIT_CONFIG_COUNT=1',
+      'export GIT_CONFIG_KEY_0=safe.bareRepository',
+      'export GIT_CONFIG_VALUE_0=all',
       `cd ${shQuote(toBashPath(seedDir))}`,
       'git init --quiet .',
       'git config user.email test@example.com',
