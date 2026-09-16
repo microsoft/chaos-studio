@@ -875,6 +875,19 @@ test('the operational runbooks cover failed release validation and an API-versio
   assert.match(drift, /never a customer input|no `api-version` input/i);
 });
 
+test('the public integration guide documents output presence, strict inputs, and Azure cancellation semantics', () => {
+  const guide = readText('docs/ci-cd-integrations.md');
+  assert.match(guide, /## Output presence matrix/);
+  assert.match(guide, /Input\/auth failure before an ARM response[\s\S]*absent/);
+  assert.match(guide, /waiting disabled[\s\S]*best effort/i);
+  assert.match(guide, /Explicitly empty[\s\S]*Fails closed before any ARM call/i);
+  assert.match(guide, /1` through `9007199254740991/);
+  assert.match(guide, /cancelTimeoutInMinutes/);
+  assert.match(guide, /default is 5 minutes/);
+  assert.match(guide, /does \*\*not\*\* promise[\s\S]*300 seconds/i);
+  assert.doesNotMatch(guide, /Neither platform's cancellation grace period is anywhere close to 300 seconds/i);
+});
+
 test('the runbooks are discoverable from the integration docs and name the owning contact', () => {
   const docs = readText('docs/ci-cd-integrations.md');
   assert.ok(docs.includes('docs/runbooks/') || docs.includes('runbooks/'), 'the docs link the runbooks');

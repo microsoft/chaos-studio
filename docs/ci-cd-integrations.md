@@ -23,6 +23,34 @@ Both platforms share one `mode` input:
 | `validate-only` | Pre-flight / PR gate. Passes iff validation reaches `Succeeded`; never starts a run. | — |
 | `execute-only` | Run a configuration a prior stage already validated. | yes (unless no-wait) |
 
+## Input omission, empty values, and timeout validation
+
+Platform metadata supplies the documented defaults when optional inputs are
+genuinely omitted. Values provided by expressions can resolve empty, which is
+not always equivalent:
+
+| Input | Omitted | Explicitly empty | Other invalid values |
+|---|---|---|---|
+| `mode` | Platform metadata supplies `validate-and-execute`. | Fails closed before any ARM call; an empty expression must never start chaos by silently selecting the default. | Anything outside the three documented modes fails before ARM calls. |
+| `wait-for-completion` / `cancel-on-timeout-or-cancellation` | Uses the documented boolean default. | Treated as absent and uses the default. | Only case-insensitive `true` or `false` is accepted; other text fails before ARM calls. |
+| `completion-timeout-seconds` | Uses `2700`. | Treated as absent and uses `2700`. | After surrounding whitespace is trimmed, the value must be a positive, base-10, JavaScript-safe whole number (`1` through `9007199254740991`). Zero, negatives, fractions, partial numbers such as `5m`, and larger values fail before ARM calls. |
+
+## Output presence matrix
+
+Outputs are emitted only when a non-empty value was actually observed. An
+absent GitHub Action output normally evaluates to an empty string; an absent
+Azure Pipelines output variable is not set and normally expands as empty. Do
+not use emptiness alone to infer success—always rely on the step/task result.
+
+| Execution point | `validation-state` | `run-id` / `run-resource-id` | `run-state` / `started-at` | `completed-at` | correlation/request IDs |
+|---|---|---|---|---|---|
+| Input/auth failure before an ARM response | absent | absent | absent | absent | absent |
+| `validate-only` after a terminal validation response | present | absent | absent | absent | present when returned by ARM |
+| Validation failure in `validate-and-execute` | present | absent | absent | absent | present when returned by ARM |
+| Execute accepted, waiting enabled | absent for `execute-only`; present for `validate-and-execute` | present | present after a run status is observed | present only when a terminal run response with `endTime` is normally observed | present when returned by ARM |
+| Execute accepted, waiting disabled | absent for `execute-only`; present for `validate-and-execute` | present | best effort from one non-fatal status GET; may be absent | absent | present when returned by the last relevant ARM response |
+| Timeout/cancellation after execute acceptance | mode-dependent as above | present | last observed or cleanup state when available | absent unless the forward wait had already observed a terminal response | IDs from the original forward failure when available; cleanup never replaces them |
+
 ## Examples
 
 Minimal, per-mode examples live next to this doc:
@@ -75,24 +103,26 @@ one of them:**
   after **7.5 seconds** if the process has not exited, then force-terminates the
   process tree after a further **2.5 seconds** (10 seconds total) — see
   [GitHub Actions: Canceling a workflow](https://docs.github.com/actions/how-tos/manage-workflow-runs/cancel-a-workflow-run).
-  Azure Pipelines applies its own agent-enforced cancellation timeout, independent
-  of the job's configured `timeoutInMinutes`. **Neither platform's cancellation
-  grace period is anywhere close to 300 seconds**, so a *manually cancelled* job
-  cannot rely on this integration's 300-second cleanup budget running to
-  completion — the platform will kill the process first. Job/step timeout
-  configuration has no effect on this: it only governs when the platform itself
-  decides to time the job out, not how long a job gets to react after being
-  cancelled.
+  Azure Pipelines has a separate
+  [`cancelTimeoutInMinutes`](https://learn.microsoft.com/azure/devops/pipelines/process/phases#timeouts)
+  setting whose default is 5 minutes, but that budget governs tasks explicitly
+  configured to keep running after cancellation (for example, always-run cleanup).
+  It does **not** promise that the already-running Node task receives a fresh,
+  uninterrupted 300 seconds after its cancellation signal, and it is distinct
+  from both `timeoutInMinutes` and this client's internal cleanup deadline.
+  Therefore a manually cancelled job cannot treat the numerical 5-minute default
+  as proof that this integration's 300-second cancel-and-poll sequence completed.
 
 Treat platform cancellation of the CI job as **best-effort** for the chaos run's
 own cleanup, not a guarantee:
 
 - The integration's `SIGINT`/`SIGTERM` handler (see `jobCancellationSignal` in each
   adapter's `index.ts`) starts best-effort cancellation immediately on the first
-  signal, so it has already begun before the platform's grace period elapses — but
-  whether the `cancel` call and the subsequent poll for `Canceled` complete within
-  ~10 seconds depends on the service's own response time, which is not bounded by
-  this integration.
+  signal. On GitHub, it must finish before the documented ~10-second process-tree
+  termination. On Azure Pipelines, the active task's remaining lifetime depends on
+  the agent's cancellation lifecycle and task/job configuration; the separate
+  5-minute always-run cleanup default is not a guarantee for this process. On either
+  platform, service response time is not bounded by this integration.
 - **Confirm whether a genuinely in-flight run survived a cancelled CI job** by
   checking the run's status directly, rather than assuming the platform's grace
   period was sufficient:

@@ -17,15 +17,17 @@ recovers.
 | **Scenarios** | [`scenarios/`](scenarios/) | Shareable custom Scenario definitions (Bicep/JSON) beyond the built-in templates. |
 | **Samples** | [`samples/`](samples/) | Sample apps and infrastructure you can deploy and break to practice. |
 
-## GitHub Action quickstart
+## GitHub Action preview status
 
-> The Action is in active development. Names and behavior are stabilizing under
-> the shared contract in [`packages/core`](packages/core/); the runtime bundle is
-> published with the first preview release.
+> The runnable Action bundle is committed in this repository, but the public
+> `microsoft/chaos-studio@v1` ref does **not exist yet**. The workflow below is
+> the planned quickstart after the first preview release; it will return
+> "reference not found" if copied before that release. Until a release appears
+> on the repository's Releases page, use the local tests and packaging
+> instructions rather than guessing a branch SHA.
 
 ```yaml
-# Validate a Chaos Studio v2 scenario configuration and run it, failing the job
-# unless the run reaches Succeeded. Uses workload identity (no long-lived secret).
+# Planned usage after the first public preview publishes v1.
 permissions:
   id-token: write   # required for OIDC sign-in
   contents: read

@@ -5,9 +5,10 @@
 # is NO long-lived secret (NFR3). The service connection referenced by
 # `azureSubscription` must be an ARM connection configured for workload identity.
 #
-# Prerequisite: install the "Azure Chaos Studio Workspaces" extension (or the
-# private dev build) in your Azure DevOps organization so the
-# AzureChaosStudioScenario@1 task is available.
+# Prerequisite: install the production "Azure Chaos Studio Workspaces"
+# extension so AzureChaosStudioScenario@1 is available. The private dev
+# extension instead contributes AzureChaosStudioScenarioDev@1; use that name
+# when testing the dev build.
 
 trigger: none
 

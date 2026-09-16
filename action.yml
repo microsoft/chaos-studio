@@ -2,7 +2,7 @@
 #
 # This is the single root action.yml GitHub Marketplace lists automatically
 # (VF16). It targets the node24 runtime (VF17, D19) and runs the reproducibly
-# built adapter bundle from packages/action-github (finalized in a later epic).
+# built adapter bundle from packages/action-github.
 #
 # The canonical inputs/outputs below are the shared contract defined in
 # packages/core/src/contract.ts; names and semantics are identical to the
@@ -42,7 +42,7 @@ inputs:
     required: false
     default: 'true'
   completion-timeout-seconds:
-    description: 'End-to-end deadline for validate + execute + run polling.'
+    description: 'Positive whole-number end-to-end deadline in seconds (1..9007199254740991) for validate + execute + run polling; zero, negative, fractional, and malformed values fail before ARM calls.'
     required: false
     default: '2700'
   cancel-on-timeout-or-cancellation:

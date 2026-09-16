@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
  */
 
 const examplesDir = fileURLToPath(new URL('../../../examples/github/', import.meta.url));
+const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
 
 /** Capture the action reference from a `uses:` step line. */
 const USES_RE = /^\s*(?:-\s*)?uses:\s*(\S+)/;
@@ -114,4 +115,31 @@ test('every example pins microsoft/chaos-studio itself to a full commit SHA', ()
       `${file}: the chaos-studio Action must be SHA-pinned, not a mutable @v* tag`,
     );
   }
+});
+
+test('pre-release examples use an unmistakable non-resolving sentinel and document publication as a prerequisite', () => {
+  const sentinel = 'microsoft/chaos-studio@0000000000000000000000000000000000000000';
+  for (const file of exampleFiles()) {
+    const yaml = readFileSync(join(examplesDir, file), 'utf8');
+    assert.ok(yaml.includes(sentinel), `${file} uses the non-resolving pre-release sentinel`);
+  }
+
+  const examplesReadme = readFileSync(join(examplesDir, 'README.md'), 'utf8');
+  assert.match(examplesReadme, /no public `microsoft\/chaos-studio@v1`/i);
+  assert.match(examplesReadme, /all-zero 40-character SHA/i);
+  assert.doesNotMatch(examplesReadme, /entry point is still the.*placeholder bundle/i);
+
+  const rootReadme = readFileSync(join(repoRoot, 'README.md'), 'utf8');
+  assert.match(rootReadme, /`microsoft\/chaos-studio@v1` ref does \*\*not exist yet\*\*/i);
+  assert.match(rootReadme, /planned quickstart after the first preview release/i);
+});
+
+test('the pull-request validation example excludes forks and requires an approval environment', () => {
+  const yaml = readFileSync(join(examplesDir, 'validate-only.yml'), 'utf8');
+  assert.match(yaml, /environment:\s*chaos-validation/);
+  assert.match(
+    yaml,
+    /if:\s*github\.event\.pull_request\.head\.repo\.full_name == github\.repository/,
+  );
+  assert.match(yaml, /required reviewers/i);
 });

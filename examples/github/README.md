@@ -3,13 +3,12 @@
 Minimal, per-mode workflow **templates** for the **Azure Chaos Studio** GitHub
 Action (root [`action.yml`](../../action.yml)), one per mode.
 
-> ⚠️ **These are templates, not yet copy-paste runnable.** Every action is pinned
-> to a full commit SHA for supply-chain hygiene, but the `microsoft/chaos-studio`
-> pin is a **pre-release placeholder**: that revision is not yet a published,
-> GitHub-resolvable release, and the Action's committed entry point is still the
-> pre-release placeholder bundle (the runnable bundle ships in E5/E6). Before
-> running, **replace the `microsoft/chaos-studio@<sha>` pin** with the published
-> preview release SHA — see [Supply-chain pinning](#supply-chain-pinning).
+> ⚠️ **These are templates, not yet copy-paste runnable.** The runnable bundles
+> are committed, but no public `microsoft/chaos-studio@v1` or preview commit ref
+> has been published. Each example therefore uses the all-zero 40-character SHA
+> as an unmistakable, non-resolving sentinel. Replace it with the full commit SHA
+> of an actual published preview release before running; do not guess a branch
+> commit. See [Supply-chain pinning](#supply-chain-pinning).
 
 | Example | Mode | Waits? | Purpose |
 |---|---|:---:|---|
@@ -77,18 +76,11 @@ a **full commit SHA**, with the human-readable release tag in a trailing comment
 e.g. `azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2`. No example uses a
 mutable `@v*` tag or branch.
 
-The `microsoft/chaos-studio` pin
-(`@0a3b126f0b723ed540c3c506b77afa9796fea327`) is a **placeholder**, for two reasons:
-
-1. it is not yet a **published, GitHub-resolvable release** — `microsoft/chaos-studio`
-   has no `v*` release tag yet (the preview `v*` tag is cut in E6); and
-2. the Action's committed entry point is still the **pre-release placeholder bundle**
-   (the reproducible runnable bundle ships in E5/E6).
-
-So these workflows are **non-runnable templates**: before running one, replace the
-`microsoft/chaos-studio@<sha>` reference with the **published preview release SHA**
-(keep a full SHA, not a mutable tag) once E5/E6 delivers it. The trailing `# v1`
-comment records the intended release tag.
+The `microsoft/chaos-studio` pin is the all-zero SHA sentinel. It is deliberately
+not resolvable and cannot accidentally execute an unrelated historical revision.
+These workflows become runnable only after a preview is published: resolve that
+release tag to its full commit SHA and replace the sentinel (keep the immutable
+SHA, not the mutable tag). The trailing `# v1` comment records the intended tag.
 
 ## ⚠️ No-wait warning
 
@@ -110,4 +102,7 @@ Prefer `wait-for-completion: true` unless you deliberately want fire-and-forget.
 The Action exposes stable scalar outputs (see [`action.yml`](../../action.yml)):
 `validation-state`, `run-id`, `run-resource-id`, `run-state`, `started-at`,
 `completed-at`, `correlation-id`, `request-id`. Which ones are set depends on the
-mode and wait setting; read them via `steps.<id>.outputs.<name>`.
+mode and wait setting; read them via `steps.<id>.outputs.<name>`. See the
+[output presence matrix](../../docs/ci-cd-integrations.md#output-presence-matrix);
+an output marked absent is not emitted, and a GitHub expression reading it
+normally evaluates to an empty string.

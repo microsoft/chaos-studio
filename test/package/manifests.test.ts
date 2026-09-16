@@ -149,6 +149,28 @@ test('the Azure Pipelines examples reference the production task name, and docum
     /WorkspacesDev[^\n]*(?:makes|contributes|resolves)[^\n]*AzureChaosStudioScenario@1/i,
     'must not imply the dev extension contributes the production task name',
   );
+
+  const validateAndExecute = readText('examples/azure-pipelines/validate-and-execute.yml');
+  assert.match(validateAndExecute, /private dev[\s\S]*AzureChaosStudioScenarioDev@1/i);
+  assert.doesNotMatch(
+    validateAndExecute,
+    /private dev build[\s\S]{0,120}AzureChaosStudioScenario@1 task is available/i,
+  );
+});
+
+test('both platform manifests document the exact positive whole-number timeout contract', () => {
+  const action = readText('action.yml');
+  assert.match(action, /completion-timeout-seconds:[\s\S]*positive whole-number/i);
+  assert.match(action, /1\.\.9007199254740991/);
+
+  for (const rel of [PROD_TASK, DEV_TASK]) {
+    const task = readJson(rel) as {
+      inputs: Array<{ name: string; helpMarkDown?: string }>;
+    };
+    const timeout = task.inputs.find((input) => input.name === 'completionTimeoutSeconds');
+    assert.match(timeout?.helpMarkDown ?? '', /positive whole-number/i);
+    assert.match(timeout?.helpMarkDown ?? '', /1\.\.9007199254740991/);
+  }
 });
 
 

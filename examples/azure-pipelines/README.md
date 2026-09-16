@@ -91,4 +91,6 @@ in name and value to the GitHub Action's outputs (cross-platform parity, G3):
 `validation-state`, `run-id`, `run-resource-id`, `run-state`, `started-at`,
 `completed-at`, `correlation-id`, `request-id`. Give the task a `name:` and read
 them as `$(<name>.<output>)`, e.g. `$(chaos.run-id)`. Which ones are set depends on
-the mode and wait setting.
+the mode and wait setting. See the
+[output presence matrix](../../docs/ci-cd-integrations.md#output-presence-matrix);
+an absent output variable is not set by the task and normally expands as empty.

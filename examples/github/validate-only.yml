@@ -7,9 +7,9 @@
 # Authenticates with workload identity federation (WIF) via azure/login — NO
 # long-lived secret (NFR3). Third-party actions are pinned to a full commit SHA.
 #
-# TEMPLATE — not yet copy-paste runnable: the microsoft/chaos-studio pin below is a
-# pre-release placeholder (the runnable Action bundle ships in E5/E6). Replace it
-# with the published preview release SHA before running. See ./README.md.
+# TEMPLATE — not yet copy-paste runnable: the all-zero microsoft/chaos-studio
+# SHA below is a non-resolving sentinel. Replace it with a published preview
+# release's full commit SHA before running. See ./README.md.
 name: Chaos Studio — validate only
 
 on:
@@ -21,6 +21,11 @@ permissions:
 
 jobs:
   validate:
+    # Configure this environment with required reviewers and scope the
+    # federated credential subject to the environment.
+    environment: chaos-validation
+    # Fork PRs must use a separate unprivileged validation workflow.
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - name: Azure login (workload identity)
@@ -31,7 +36,7 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Validate the scenario configuration
-        uses: microsoft/chaos-studio@0a3b126f0b723ed540c3c506b77afa9796fea327 # v1 — TEMPLATE pin (see note): replace with the published preview release SHA before running
+        uses: microsoft/chaos-studio@0000000000000000000000000000000000000000 # v1 — non-resolving template sentinel; replace after preview publication
         with:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           resource-group: rg-chaos

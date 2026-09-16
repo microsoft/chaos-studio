@@ -79,7 +79,8 @@
       "type": "int",
       "label": "Completion timeout (seconds)",
       "required": false,
-      "defaultValue": "2700"
+      "defaultValue": "2700",
+      "helpMarkDown": "Positive whole-number end-to-end deadline in seconds (1..9007199254740991). Zero, negative, fractional, and malformed values fail before ARM calls."
     },
     {
       "name": "cancelOnTimeoutOrCancellation",
