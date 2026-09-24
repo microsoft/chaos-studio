@@ -572,7 +572,8 @@ jobs:
           rulesets_arr="$(mktemp)"
           jq -s '.' "$details" > "$rulesets_arr"
           # Faithful GitHub fnmatch (FNM_PATHNAME) + bypass evaluation for the single
-          # concrete ref this job writes. No single quotes / no ${{ }} in this body.
+          # concrete ref this job writes. No single quotes or GitHub expression
+          # delimiters occur in this body.
           TAG_REF="refs/tags/${VERSION}" RID="$RELEASE_IDENTITY_ACTOR_ID" RULESETS_FILE="$rulesets_arr" NAMESPACE_PREFIX="mcp-v" \
           node -e '
             const fs = require("fs");

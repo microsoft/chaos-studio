@@ -312,6 +312,20 @@ test('the Action release gates on an RV receipt inside the non-secret validate j
   assert.doesNotMatch(publish, /rv-receipt\.mjs/);
 });
 
+test('release workflow files never contain an unclosed GitHub expression opener', () => {
+  for (const path of ['.github/workflows/release.yml', '.github/workflows/release-action.yml']) {
+    const workflow = readText(path);
+    let offset = 0;
+    while (true) {
+      const open = workflow.indexOf('${{', offset);
+      if (open < 0) break;
+      const close = workflow.indexOf('}}', open + 3);
+      assert.ok(close >= 0, `${path} has an unclosed GitHub expression opener at byte ${open}`);
+      offset = close + 2;
+    }
+  }
+});
+
 test('the OneBranch extension pipeline gates the VSIX publish on the same receipt', () => {
   const pipeline = readText('.pipelines/OneBranch.Official.yml');
   assert.match(pipeline, /- name: releaseTag/);

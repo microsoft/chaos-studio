@@ -582,7 +582,8 @@ jobs:
           jq -s '.' "$details" > "$rulesets_arr"
           # Evaluate applicability with a FAITHFUL GitHub fnmatch (FNM_PATHNAME) matcher
           # against BOTH concrete refs. The evaluator reads everything from env / the
-          # array file (no ${{ }} in this body) and contains NO single quotes.
+          # array file, contains no GitHub expression delimiters, and contains NO
+          # single quotes.
           EXACT_REF="refs/tags/${TAG}" FLOATING_REF="refs/tags/${MAJOR}" \
           RID="$RELEASE_IDENTITY_ACTOR_ID" RULESETS_FILE="$rulesets_arr" NAMESPACE_PREFIX="v" \
           node -e '
