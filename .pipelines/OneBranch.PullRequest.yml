@@ -99,6 +99,40 @@ extends:
                   done
                 displayName: Stage task runtime into every task folder
 
+              - script: |
+                  set -euo pipefail
+                  case "$(node --version)" in
+                    v24.*) : ;;
+                    *) echo "##vso[task.logissue type=error]Expected Node 24 for the preferred Node24 handler check, got $(node --version)."; exit 1 ;;
+                  esac
+                  for d in azure-pipelines-extension/tasks/*/ ; do
+                    node --check "${d}index.js"
+                  done
+                  node scripts/smoke-action-bundle.mjs "azure-pipelines-extension/tasks/AzureChaosStudioScenarioV1Dev/index.js"
+                displayName: Validate preferred Node24 task runtime
+
+              - task: NodeTool@0
+                displayName: Use Node 20 (Node20_1 Server fallback parity)
+                inputs:
+                  versionSpec: '20.x'
+
+              - script: |
+                  set -euo pipefail
+                  case "$(node --version)" in
+                    v20.*) : ;;
+                    *) echo "##vso[task.logissue type=error]Expected Node 20 for the Node20_1 fallback check, got $(node --version)."; exit 1 ;;
+                  esac
+                  for d in azure-pipelines-extension/tasks/*/ ; do
+                    node --check "${d}index.js"
+                  done
+                  node scripts/smoke-action-bundle.mjs "azure-pipelines-extension/tasks/AzureChaosStudioScenarioV1Dev/index.js"
+                displayName: Validate Node20_1 Server fallback runtime
+
+              - task: NodeTool@0
+                displayName: Restore Node 24 for packaging
+                inputs:
+                  versionSpec: '24.x'
+
               - task: TfxInstaller@4
                 displayName: Install tfx-cli
                 inputs:

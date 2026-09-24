@@ -8,7 +8,8 @@ canonical outputs, same pass/fail rule).
 - **GitHub Action:** root [`action.yml`](../action.yml) (`microsoft/chaos-studio`),
   `node24` runtime.
 - **Azure Pipelines task:** `AzureChaosStudioScenario@1`, shipped by the
-  **Azure Chaos Studio Workspaces** extension, `Node20_1` runtime.
+  **Azure Chaos Studio Workspaces** extension, preferred `Node24` runtime with
+  a `Node20_1` fallback for compatible Azure DevOps Server agents.
 
 > **Maintainers:** release, release-validation, rollback/deprecation, and
 > contract-drift procedures live in [`docs/runbooks/`](runbooks/README.md).

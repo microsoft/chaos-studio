@@ -14,7 +14,7 @@
   },
   "preview": true,
   "instanceNameFormat": "Azure Chaos Studio: $(mode)",
-  "minimumAgentVersion": "4.248.0",
+  "minimumAgentVersion": "2.214.1",
   "inputs": [
     {
       "name": "azureSubscription",
@@ -92,6 +92,9 @@
   ],
   "execution": {
     "Node20_1": {
+      "target": "index.js"
+    },
+    "Node24": {
       "target": "index.js"
     }
   }

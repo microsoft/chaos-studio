@@ -9,8 +9,14 @@ existing `AzureChaosStudio` publisher.
 |---|---|
 | `vss-extension.json` | Production manifest — `AzureChaosStudio.ChaosStudioWorkspaces` (public, Preview). |
 | `vss-extension.dev.json` | Private development manifest — `AzureChaosStudio.ChaosStudioWorkspacesDev`, shared only with test organizations. Packages the distinct-GUID dev task folder. |
-| `tasks/AzureChaosStudioScenarioV1/task.json` | The production `AzureChaosStudioScenario@1` task; `Node20_1` execution handler (VF15, D19). |
-| `tasks/AzureChaosStudioScenarioV1Dev/task.json` | The private-preview `AzureChaosStudioScenarioDev@1` task; a **distinct** permanent GUID so the dev extension installs side by side with production. |
+| `tasks/AzureChaosStudioScenarioV1/task.json` | The production `AzureChaosStudioScenario@1` task; preferred `Node24` execution handler with `Node20_1` fallback (VF15, D19). |
+| `tasks/AzureChaosStudioScenarioV1Dev/task.json` | The private-preview `AzureChaosStudioScenarioDev@1` task; the same dual runtime handlers and a **distinct** permanent GUID so the dev extension installs side by side with production. |
+
+Both task manifests require agent `2.214.1`, the first agent with the
+`Node20_1` fallback handler. Agents that support the `Node24` handler prefer it;
+older compatible Azure DevOps Server agents use `Node20_1`. Azure DevOps Server
+2022.2's documented agent `3.238.0` therefore satisfies this task metadata,
+while the task remains ready for current agents that carry Node24.
 
 ## Permanent task ID
 

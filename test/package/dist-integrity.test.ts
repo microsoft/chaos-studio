@@ -13,7 +13,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
  * valid JavaScript file. Scope: this is a structural file-set + syntax check
  * (deterministic, non-mutating). The stronger byte-for-byte reproducibility gate
  * (clean rebuild + git blob-hash comparison) runs in CI (`.github/workflows/test.yml`)
- * and the Node 20 runtime-parity smoke runs in the OneBranch pipeline; this test
+ * and the Node 24 primary + Node 20 fallback smoke checks run in the OneBranch pipelines; this test
  * does not duplicate those (it must not mutate the working tree).
  */
 
@@ -116,4 +116,3 @@ test('each committed dist entrypoint runs as an executable, self-contained Node 
     expect(result);
   }
 });
-

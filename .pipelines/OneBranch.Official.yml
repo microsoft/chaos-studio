@@ -362,35 +362,38 @@ extends:
                     echo "##vso[task.logissue type=error]Refusing to package the placeholder task bundle ('$BUNDLE'). Build the real bundle first."
                     exit 1
                   fi
+                  case "$(node --version)" in
+                    v24.*) : ;;
+                    *) echo "##vso[task.logissue type=error]Expected Node 24 for the preferred Node24 handler check, got $(node --version)."; exit 1 ;;
+                  esac
+                  for d in azure-pipelines-extension/tasks/*/ ; do
+                    node --check "${d}index.js"
+                  done
                   node scripts/smoke-action-bundle.mjs "$BUNDLE"
-                  echo "Task bundle passed the placeholder guard and deterministic smoke test."
-                displayName: Refuse to publish a placeholder bundle
+                  echo "Task bundle passed the placeholder guard and Node 24 deterministic smoke test."
+                displayName: Validate preferred Node24 task runtime
 
               - task: NodeTool@0
-                displayName: Use Node 20 (Node20_1 task-handler runtime parity)
+                displayName: Use Node 20 (Node20_1 Server fallback parity)
                 inputs:
                   versionSpec: '20.x'
 
               - script: |
                   set -euo pipefail
-                  # The Azure Pipelines task declares the `Node20_1` execution handler, so
-                  # the bundle RUNS on Node 20 on the agent — NOT the Node 24 used for the
-                  # build/typecheck/test above. Validate the built bundle under Node 20 to
-                  # catch Node-24-only syntax/APIs that would break at task runtime: confirm
-                  # the interpreter IS Node 20, `node --check` PARSES every staged task bundle
-                  # under the Node 20 engine (type/syntax gate), and the DETERMINISTIC smoke
-                  # harness RUNS the primary bundle under Node 20 (runtime gate, no `|| true`).
+                  # Node24 is preferred, but Azure DevOps Server agents can select the
+                  # retained Node20_1 handler. Confirm the same bundle parses and runs
+                  # under that oldest supported runtime.
                   node --version
                   case "$(node --version)" in
                     v20.*) : ;;
-                    *) echo "##vso[task.logissue type=error]Expected Node 20 for the Node20_1 runtime parity check, got $(node --version)."; exit 1 ;;
+                    *) echo "##vso[task.logissue type=error]Expected Node 20 for the Node20_1 fallback check, got $(node --version)."; exit 1 ;;
                   esac
                   for d in azure-pipelines-extension/tasks/*/ ; do
                     node --check "${d}index.js"
                   done
                   node scripts/smoke-action-bundle.mjs "azure-pipelines-extension/tasks/AzureChaosStudioScenarioV1/index.js"
-                  echo "Task bundle parses and runs under Node 20 (Node20_1 handler parity)."
-                displayName: Validate task bundle under Node 20 (Node20_1 parity)
+                  echo "Task bundle parses and runs under Node 20 (Node20_1 Server fallback parity)."
+                displayName: Validate Node20_1 Server fallback runtime
 
               - task: NodeTool@0
                 displayName: Restore Node 24 for packaging

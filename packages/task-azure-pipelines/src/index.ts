@@ -1,6 +1,7 @@
 /**
  * index.ts (E4-T1/T2) — the Azure Pipelines task entry point. It is the file the
- * task's `Node20_1` execution handler runs (via the committed
+ * task's preferred `Node24` execution handler runs, with `Node20_1` retained
+ * as the Azure DevOps Server compatibility fallback (via the committed
  * `dist/azure-pipelines-task/` bundle staged into the task folder). It performs
  * only composition: wire the real `azure-pipelines-task-lib` host, the ARM
  * service-connection (WIF) credential, and a cancellation → `AbortSignal` bridge,

@@ -9,7 +9,7 @@ import { INPUT_NAMES, OUTPUT_NAMES } from '../../packages/core/src/contract.ts';
  * internally consistent and matches the shared contract, and that the permanent
  * task GUIDs never drift (VF15): the root GitHub `action.yml` (node24 runtime +
  * canonical inputs/outputs), the two Azure Pipelines `task.json` manifests
- * (Node20_1 runtime, stable GUIDs), and the two extension manifests (publisher +
+ * (Node24 preferred, Node20_1 fallback, stable GUIDs), and the two extension manifests (publisher +
  * clean-room task resolution). Deterministic: reads committed files only.
  */
 
@@ -72,32 +72,38 @@ const STABLE_TASK_GUIDS = {
   dev: 'eb1d4fc5-61c2-4887-a9af-a649907eaf64',
 } as const;
 
-test('the production task manifest is AzureChaosStudioScenario@1 on Node20_1 with its stable GUID (VF15, D19)', () => {
+test('the production task manifest prefers Node24 with Node20_1 fallback and keeps its stable GUID (VF15, D19)', () => {
   const t = readJson(PROD_TASK) as {
     id: string;
     name: string;
     version: { Major: number };
+    minimumAgentVersion: string;
     execution: Record<string, { target?: string }>;
   };
   assert.equal(t.id, STABLE_TASK_GUIDS.production, 'the production task GUID is permanent and must not change');
   assert.equal(t.name, 'AzureChaosStudioScenario');
   assert.equal(t.version.Major, 1, 'AzureChaosStudioScenario@1');
-  assert.deepEqual(Object.keys(t.execution), ['Node20_1'], 'only the Node20_1 handler (VF15)');
+  assert.equal(t.minimumAgentVersion, '2.214.1');
+  assert.deepEqual(Object.keys(t.execution), ['Node20_1', 'Node24']);
   assert.equal(t.execution['Node20_1']!.target, 'index.js');
+  assert.equal(t.execution['Node24']!.target, 'index.js');
 });
 
-test('the dev task manifest is AzureChaosStudioScenarioDev@1 on Node20_1 with its own stable GUID (VF15)', () => {
+test('the dev task manifest prefers Node24 with Node20_1 fallback and keeps its stable GUID (VF15)', () => {
   const t = readJson(DEV_TASK) as {
     id: string;
     name: string;
     version: { Major: number };
+    minimumAgentVersion: string;
     execution: Record<string, { target?: string }>;
   };
   assert.equal(t.id, STABLE_TASK_GUIDS.dev, 'the dev task GUID is permanent and must not change');
   assert.equal(t.name, 'AzureChaosStudioScenarioDev');
   assert.equal(t.version.Major, 1);
-  assert.deepEqual(Object.keys(t.execution), ['Node20_1']);
+  assert.equal(t.minimumAgentVersion, '2.214.1');
+  assert.deepEqual(Object.keys(t.execution), ['Node20_1', 'Node24']);
   assert.equal(t.execution['Node20_1']!.target, 'index.js');
+  assert.equal(t.execution['Node24']!.target, 'index.js');
   assert.notEqual(STABLE_TASK_GUIDS.production, STABLE_TASK_GUIDS.dev, 'the two GUIDs differ (side-by-side install)');
 });
 

@@ -18,8 +18,9 @@
 // change vs. the ESM source).
 //
 // `target: 'node20'` keeps both bundles compatible with the OLDEST runtime
-// either surface declares (the Action's `node24` in `action.yml` and the task's
-// `Node20_1` handler in `task.json`) — Node24 runs Node20-targeted output fine.
+// either surface declares: the Azure Pipelines task retains `Node20_1` as its
+// Server-compatible fallback while preferring `Node24`; Node24 runs
+// Node20-targeted output fine.
 //
 // All content is LF-only with a single trailing newline (byte-stable across
 // platforms; `.gitattributes` also pins these paths to `eol=lf`).
@@ -94,8 +95,8 @@ const TASK_README =
   `\n` +
   `- **Source:** \`packages/task-azure-pipelines\` (thin \`azure-pipelines-task-lib\`\n` +
   `  adapter over the shared core in \`packages/core\`).\n` +
-  `- **Runtime:** the task uses the \`Node20_1\` execution handler (VF15, D19); a\n` +
-  `  Node24 handler is added when Azure Pipelines ships one.\n` +
+  `- **Runtime:** the task prefers the \`Node24\` execution handler and retains\n` +
+  `  \`Node20_1\` as a compatibility fallback for Azure DevOps Server agents.\n` +
   `- **Build:** produced by \`npm run build\` (\`scripts/build.mjs\`), which bundles\n` +
   `  \`packages/task-azure-pipelines/src/index.ts\` and its runtime dependencies\n` +
   `  (\`@azure/identity\`, \`azure-pipelines-task-lib\`) into this single\n` +

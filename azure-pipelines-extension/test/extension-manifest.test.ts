@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
  *    the V2 task);
  *  - the production and dev tasks carry DISTINCT permanent GUIDs, so both
  *    extensions can be installed side by side in a test organization (VF15);
- *  - both tasks use the `Node20_1` execution handler (VF15, D19);
+ *  - both tasks prefer `Node24` and retain the `Node20_1` fallback (VF15, D19);
  *  - neither manifest touches the pre-existing `AzureChaosStudio.ChaosStudioExtension`
  *    (its version + V1 task are a separate, published extension and stay unchanged).
  * Deterministic: reads the committed files only; no network/agent.
@@ -79,18 +79,20 @@ test('the dev Workspaces manifest is private and exposes exactly one task — th
   );
 });
 
-test('the production and dev tasks carry DISTINCT permanent GUIDs and both use Node20_1 (side-by-side install, VF15)', () => {
+test('the production and dev tasks carry DISTINCT permanent GUIDs and dual Node handlers (side-by-side install, VF15)', () => {
   const prod = readJson('tasks/AzureChaosStudioScenarioV1/task.json') as unknown as {
     id: string;
     name: string;
     execution: Record<string, unknown>;
     version: { Major: number };
+    minimumAgentVersion: string;
   };
   const dev = readJson('tasks/AzureChaosStudioScenarioV1Dev/task.json') as unknown as {
     id: string;
     name: string;
     execution: Record<string, unknown>;
     version: { Major: number };
+    minimumAgentVersion: string;
   };
 
   assert.equal(prod.name, 'AzureChaosStudioScenario');
@@ -101,8 +103,10 @@ test('the production and dev tasks carry DISTINCT permanent GUIDs and both use N
 
   for (const t of [prod, dev]) {
     const handlers = Object.keys(t.execution);
-    assert.deepEqual(handlers, ['Node20_1'], `only the Node20_1 handler is declared (got ${handlers.join(', ')})`);
+    assert.deepEqual(handlers, ['Node20_1', 'Node24'], `expected Node20 fallback + Node24 primary (got ${handlers.join(', ')})`);
     assert.equal((t.execution['Node20_1'] as { target?: string }).target, 'index.js');
+    assert.equal((t.execution['Node24'] as { target?: string }).target, 'index.js');
+    assert.equal(t.minimumAgentVersion, '2.214.1');
     assert.equal(t.version.Major, 1, 'the task is major version 1 (AzureChaosStudioScenario@1)');
   }
 });

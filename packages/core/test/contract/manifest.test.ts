@@ -60,18 +60,18 @@ test('Azure task inputs map 1:1 to the canonical contract inputs', () => {
   assert.deepEqual(extra, ['azureSubscription'], 'only the ARM connection is task-native');
 });
 
-test('Azure task uses the Node20_1 execution handler (VF15)', () => {
+test('Azure task prefers Node24 and retains the Node20_1 compatibility handler (VF15)', () => {
   const task = loadTaskJson();
+  assert.ok('Node24' in task.execution, 'task must declare the Node24 handler');
   assert.ok('Node20_1' in task.execution, 'task must run on the Node20_1 handler');
 });
 
-test('both Azure tasks declare minimumAgentVersion 4.248.0 for the Node20_1 handler (VF15)', () => {
-  // The Node20_1 execution handler is only available on agent 4.248.0+, so a
-  // Node20_1-only task MUST advertise that minimum or it will fail to schedule on
-  // older agents with an opaque error instead of a clear version requirement.
+test('both Azure tasks require the first agent version that carries the Node20 fallback (VF15)', () => {
+  // Agent 2.214.1 introduced the Node20 handler. Newer agents can select Node24;
+  // older compatible Server agents select Node20_1 from the same manifest.
   for (const folder of ['AzureChaosStudioScenarioV1', 'AzureChaosStudioScenarioV1Dev']) {
     const task = loadTaskJson(folder);
-    assert.equal(task.minimumAgentVersion, '4.248.0', `${folder} must require agent 4.248.0 for Node20_1`);
+    assert.equal(task.minimumAgentVersion, '2.214.1', `${folder} must require the Node20 handler floor`);
   }
 });
 
@@ -90,6 +90,7 @@ test('the dev task carries a DISTINCT permanent GUID and name for side-by-side i
   assert.notEqual(dev.id, prod.id, 'dev task GUID must differ from production');
   assert.equal(dev.id, 'eb1d4fc5-61c2-4887-a9af-a649907eaf64');
   assert.notEqual(dev.name, prod.name, 'dev task name must differ from production');
+  assert.ok('Node24' in dev.execution, 'dev task also prefers the Node24 handler (VF15)');
   assert.ok('Node20_1' in dev.execution, 'dev task also runs on the Node20_1 handler (VF15)');
 });
 

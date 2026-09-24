@@ -478,6 +478,23 @@ test('the OneBranch PR pipeline binds the REBUILT runtime to HEAD before it is s
   assert.doesNotMatch(equalityStep.slice(0, equalityStep.indexOf('displayName')), /continue-on-error|\|\| true/);
 });
 
+test('both OneBranch pipelines smoke the preferred Node24 and Node20_1 fallback runtimes before packaging', () => {
+  for (const path of ['.pipelines/OneBranch.Official.yml', '.pipelines/OneBranch.PullRequest.yml']) {
+    const pipeline = readText(path);
+    const packageIndex = pipeline.indexOf('PackageAzureDevOpsExtension@4');
+    const node24Index = pipeline.indexOf('Validate preferred Node24 task runtime');
+    const node20Index = pipeline.indexOf('Validate Node20_1 Server fallback runtime');
+    assert.ok(node24Index > 0 && node20Index > node24Index, `${path} validates Node24 before Node20 fallback`);
+    assert.ok(node20Index < packageIndex, `${path} validates both task runtimes before packaging`);
+    assert.match(pipeline, /v24\.\*/);
+    assert.match(pipeline, /v20\.\*/);
+    assert.ok(
+      (pipeline.match(/scripts\/smoke-action-bundle\.mjs/g) ?? []).length >= 2,
+      `${path} executes deterministic smoke checks under both runtimes`,
+    );
+  }
+});
+
 test('the GitHub Action release requires both attestations to succeed before either publish path runs', () => {
   // R1: an attestation failure must never leave a public release without its
   // required provenance. Both attestation steps must run BEFORE the step that
