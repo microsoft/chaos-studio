@@ -1,0 +1,49 @@
+# Separate native pipeline: task resolution occurs after bootstrap upload.
+trigger: none
+pr: none
+name: native-validate-$(Date:yyyyMMdd).$(Rev:r)
+variables:
+  system.debug: 'false'
+jobs:
+- job: NativeValidate
+  displayName: Unchanged candidate native task, validate only
+  condition: eq(variables['Build.Reason'], 'Manual')
+  timeoutInMinutes: 12
+  pool:
+    vmImage: ubuntu-24.04
+  steps:
+  - checkout: none
+  - bash: |
+      set -euo pipefail
+      python3 - <<'PY'
+      import os
+      for key in ("CHAOS_SUBSCRIPTION_ID", "CHAOS_RESOURCE_GROUP", "CHAOS_WORKSPACE",
+                  "CHAOS_SCENARIO", "CHAOS_CONFIGURATION"):
+          value = os.environ.get(key, "")
+          if not value or "$(" in value:
+              raise SystemExit("Missing reviewed target variable: " + key)
+          print("##vso[task.setsecret]" + value.replace("%", "%AZP25").replace("\r", "%0D").replace("\n", "%0A"))
+      print("Agent version: " + os.environ["AGENT_VERSION"])
+      print("Source version: " + os.environ["BUILD_SOURCEVERSION"])
+      PY
+    displayName: Check fixed target variables, record agent/source identity
+    env:
+      CHAOS_SUBSCRIPTION_ID: $(ChaosSubscriptionId)
+      CHAOS_RESOURCE_GROUP: $(ChaosResourceGroup)
+      CHAOS_WORKSPACE: $(ChaosWorkspace)
+      CHAOS_SCENARIO: $(ChaosScenario)
+      CHAOS_CONFIGURATION: $(ChaosConfiguration)
+  - task: AzureChaosStudioScenarioDev@0
+    name: chaos
+    displayName: Native validate-only task
+    inputs:
+      azureSubscription: $(GauntletChaosConnection)
+      subscriptionId: $(ChaosSubscriptionId)
+      resourceGroup: $(ChaosResourceGroup)
+      workspaceName: $(ChaosWorkspace)
+      scenarioName: $(ChaosScenario)
+      scenarioConfigurationName: $(ChaosConfiguration)
+      mode: validate-only
+      waitForCompletion: true
+      completionTimeoutSeconds: 300
+      cancelOnTimeoutOrCancellation: false

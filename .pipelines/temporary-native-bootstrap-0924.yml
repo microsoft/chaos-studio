@@ -1,0 +1,456 @@
+# Temporary setup harness. No task executes in this bootstrap pipeline.
+# Parent approval and external Azure/access readiness are prerequisites.
+trigger: none
+pr: none
+name: native-bootstrap-$(Date:yyyyMMdd).$(Rev:r)
+variables:
+  system.debug: 'false'
+jobs:
+- job: Bootstrap
+  displayName: Upload, queue separate native run, observe, clean owned task
+  condition: eq(variables['Build.Reason'], 'Manual')
+  timeoutInMinutes: 35
+  cancelTimeoutInMinutes: 10
+  pool:
+    vmImage: ubuntu-24.04
+  steps:
+  - checkout: self
+    fetchDepth: 0
+    clean: true
+    persistCredentials: false
+  - task: UseNode@1
+    inputs:
+      version: '24.x'
+  - bash: |
+      set -euo pipefail
+      root="$AGENT_TEMPDIRECTORY/chaos-native-$BUILD_BUILDID"
+      mkdir -p "$root/home"
+      cat > "$root/orchestrator.py" <<'PY'
+      import hashlib
+      import json
+      import os
+      import re
+      import subprocess
+      import sys
+      import time
+      import urllib.error
+      import urllib.parse
+      import urllib.request
+      from pathlib import Path
+      
+      CANDIDATE = "fc2067ee0b360f9718220d5d242be52a6ba6daaa"
+      GUID = "eb1d4fc5-61c2-4887-a9af-a649907eaf64"
+      TASK = "AzureChaosStudioScenarioDev"
+      RUNTIME_SHA = "d9064120db99b60c2ef5d42e119464825c2a374e586c4617e2677474b234a358"
+      MANIFEST_SHA = "22d89811f736b8017c22c7087043747327e03b368e717780eb2a7c4751ca9c34"
+      BRANCH = "refs/heads/cvelez/chaos-native-gauntlet-0924-0960f698"
+      BOOTSTRAP = ".pipelines/temporary-native-bootstrap-0924.yml"
+      DOWNSTREAM = ".pipelines/temporary-native-validate-0924.yml"
+      NAME = "ChaosStudio-Native-Gauntlet-Validate-0924"
+      RESOURCE = "499b84ac-1321-427f-aa17-267ca6975798"
+      ROOT = Path(os.environ["AGENT_TEMPDIRECTORY"]) / ("chaos-native-" + os.environ["BUILD_BUILDID"])
+      LEDGER = ROOT / "ledger.json"
+      
+      
+      class Failure(RuntimeError):
+          pass
+      
+      
+      class NoRedirect(urllib.request.HTTPRedirectHandler):
+          def redirect_request(self, *args):
+              return None
+      
+      
+      def required(name):
+          value = os.environ.get(name, "").strip()
+          if not value or "$(" in value or value.startswith("__"):
+              raise Failure("A required private pipeline variable is missing: " + name)
+          return value
+      
+      
+      def mask(value):
+          print("##vso[task.setsecret]" + value.replace("%", "%AZP25").replace("\r", "%0D").replace("\n", "%0A"), flush=True)
+      
+      
+      def run_command(arguments, environment=None, timeout=120):
+          try:
+              result = subprocess.run(arguments, capture_output=True, env=environment, timeout=timeout)
+          except (subprocess.SubprocessError, OSError):
+              raise Failure("A local prerequisite command failed or timed out; raw output withheld") from None
+          if result.returncode:
+              raise Failure("A prerequisite/tool command failed; raw output withheld")
+          return result.stdout
+      
+      
+      def save(state):
+          temporary = ROOT / "ledger.tmp"
+          temporary.write_text(json.dumps(state), encoding="utf-8")
+          temporary.replace(LEDGER)
+          visible = {key: state[key] for key in (
+              "bootstrapBuildId", "sourceVersion", "version", "definitionCreateIntent",
+              "createdDefinitionId", "downstreamDefinitionId", "uploadIntent", "uploadVerified",
+              "queueIntent", "runId", "downstreamTerminal", "downstreamResult", "cleanup",
+          ) if key in state}
+          print("Recovery receipt: " + json.dumps(visible, separators=(",", ":")), flush=True)
+      
+      
+      def load():
+          return json.loads(LEDGER.read_text(encoding="utf-8"))
+      
+      
+      def token():
+          value = run_command(["az", "account", "get-access-token", "--resource", RESOURCE,
+                               "--query", "accessToken", "--output", "tsv", "--only-show-errors"]).decode().strip()
+          if not value:
+              raise Failure("No uploader Azure DevOps token")
+          mask(value)
+          return value
+      
+      
+      def api(method, path, access_token, payload=None, absent_ok=False):
+          base = required("SYSTEM_COLLECTIONURI").rstrip("/")
+          parsed = urllib.parse.urlsplit(base)
+          if parsed.scheme != "https" or parsed.hostname != "dev.azure.com" or not parsed.path.strip("/") or parsed.query:
+              raise Failure("Expected Azure DevOps Services collection URL")
+          url = base + "/" + path.lstrip("/")
+          request = urllib.request.Request(url, method=method, headers={
+              "Authorization": "Bearer " + access_token, "Content-Type": "application/json",
+          }, data=json.dumps(payload).encode() if payload is not None else None)
+          try:
+              with urllib.request.build_opener(NoRedirect()).open(request, timeout=45) as response:
+                  raw = response.read()
+          except urllib.error.HTTPError as error:
+              code = error.code
+              error.close()
+              if code == 404 and absent_ok:
+                  return None
+              raise Failure("Azure DevOps request failed (HTTP " + str(code) + "); no mutation retry") from None
+          except (urllib.error.URLError, TimeoutError):
+              raise Failure("Azure DevOps outcome uncertain; no mutation retry") from None
+          return json.loads(raw) if raw else {}
+      
+      
+      def tasks(access_token):
+          value = api("GET", "_apis/distributedtask/tasks/" + GUID + "?api-version=7.1-preview.1", access_token, absent_ok=True)
+          if value is None:
+              return []
+          if isinstance(value, list):
+              return value
+          if isinstance(value, dict) and isinstance(value.get("value"), list):
+              return value["value"]
+          raise Failure("Unexpected task inventory shape")
+      
+      
+      def own_task(items, state):
+          return len(items) == 1 and all(
+              item.get("id", "").lower() == GUID and item.get("name") == TASK
+              and all(item.get("version", {}).get(k.lower()) == v for k, v in state["version"].items()) for item in items
+          )
+      
+      
+      def tfx(arguments, access_token):
+          environment = os.environ.copy()
+          environment.update({
+              "GAUNTLET_ADO_TOKEN": access_token,
+              "GAUNTLET_TFX_ARGS": json.dumps(arguments + ["--service-url", required("SYSTEM_COLLECTIONURI"),
+                  "--auth-type", "pat", "--no-prompt", "--no-color", "--trace-level", "none"]),
+              "GAUNTLET_TFX_ENTRY": str(ROOT / "tools" / "node_modules" / "tfx-cli" / "_build" / "tfx-cli.js"),
+              "HOME": str(ROOT / "home"), "USERPROFILE": str(ROOT / "home"), "TFX_TRACE": "0",
+          })
+          # Populate the supported CLI token argument only inside the child process.
+          # No tfx login/save, token in host command line, or credential cache.
+          bridge = (
+              "const a=JSON.parse(process.env.GAUNTLET_TFX_ARGS);"
+              "a.push('--token',process.env.GAUNTLET_ADO_TOKEN);"
+              "delete process.env.GAUNTLET_ADO_TOKEN;"
+              "process.argv=[process.execPath,process.env.GAUNTLET_TFX_ENTRY,...a];"
+              "require(process.env.GAUNTLET_TFX_ENTRY);"
+          )
+          try:
+              run_command(["node", "-e", bridge], environment, 180)
+          finally:
+              environment.pop("GAUNTLET_ADO_TOKEN", None)
+      
+      
+      def definition(system_token, state):
+          project = required("SYSTEM_TEAMPROJECTID")
+          source_connection = required("GAUNTLET_GITHUB_ENDPOINT_ID")
+          endpoint = api("GET", project + "/_apis/serviceendpoint/endpoints/" + source_connection + "?api-version=7.1", system_token)
+          if endpoint.get("authorization", {}).get("scheme") != "OAuth" or not endpoint.get("isReady"):
+              raise Failure("Source connection must be the reviewed ready temporary OAuth endpoint")
+          chaos_id = required("GAUNTLET_CHAOS_ENDPOINT_ID")
+          chaos = api("GET", project + "/_apis/serviceendpoint/endpoints/" + chaos_id + "?api-version=7.1", system_token)
+          if (chaos.get("authorization", {}).get("scheme") != "WorkloadIdentityFederation"
+                  or not chaos.get("isReady") or chaos.get("name") != required("GAUNTLET_CHAOS_CONNECTION")):
+              raise Failure("Runtime endpoint must be the reviewed ready Chaos WIF connection")
+          bootstrap = api("GET", project + "/_apis/build/definitions/" + required("SYSTEM_DEFINITIONID") + "?api-version=7.1", system_token)
+          repository = bootstrap["repository"]
+          if repository["type"].lower() != "github" or repository["name"].lower() != "microsoft/chaos-studio":
+              raise Failure("Bootstrap source is not the approved public repository")
+          if repository.get("properties", {}).get("connectedServiceId") != source_connection:
+              raise Failure("Bootstrap source connection differs from the reviewed connection")
+          variables = {name: {"value": required(environment), "isSecret": False, "allowOverride": False}
+                       for name, environment in (
+              ("GauntletChaosConnection", "GAUNTLET_CHAOS_CONNECTION"),
+              ("ChaosSubscriptionId", "CHAOS_SUBSCRIPTION_ID"), ("ChaosResourceGroup", "CHAOS_RESOURCE_GROUP"),
+              ("ChaosWorkspace", "CHAOS_WORKSPACE"), ("ChaosScenario", "CHAOS_SCENARIO"),
+              ("ChaosConfiguration", "CHAOS_CONFIGURATION"),
+          )}
+          target = {
+              "name": NAME, "path": required("GAUNTLET_PIPELINE_FOLDER"), "type": "build",
+              "queueStatus": "enabled", "jobAuthorizationScope": "project", "triggers": [],
+              "queue": {"id": int(required("GAUNTLET_QUEUE_ID"))}, "variables": variables,
+              "process": {"type": 2, "yamlFilename": DOWNSTREAM},
+              "repository": {**{k: repository[k] for k in ("id", "name", "type", "url")},
+                             "defaultBranch": BRANCH, "properties": {"connectedServiceId": source_connection}},
+              "description": "Disposable native gauntlet; candidate " + CANDIDATE + "; bootstrap " + required("SYSTEM_DEFINITIONID"),
+          }
+          configured = os.environ.get("GAUNTLET_DOWNSTREAM_PIPELINE_ID", "").strip()
+          if configured and "$(" not in configured and configured != "0":
+              if not configured.isdecimal():
+                  raise Failure("Downstream definition ID must be an integer")
+              current = api("GET", project + "/_apis/build/definitions/" + configured + "?api-version=7.1", system_token)
+          else:
+              found = api("GET", project + "/_apis/build/definitions?name=" + urllib.parse.quote(NAME) + "&api-version=7.1", system_token)
+              if found.get("count") or found.get("value"):
+                  raise Failure("Definition name already exists; supply its reviewed ID rather than overwrite")
+              state["definitionCreateIntent"] = True
+              save(state)
+              current = api("POST", project + "/_apis/build/definitions?api-version=7.1", system_token, target)
+              state["createdDefinitionId"] = current["id"]
+              save(state)
+          for key in ("name", "path", "type", "queueStatus", "jobAuthorizationScope", "triggers"):
+              if current.get(key) != target[key]:
+                  raise Failure("Downstream definition configuration differs: " + key)
+          if current.get("process") != target["process"] or current["queue"]["id"] != target["queue"]["id"]:
+              raise Failure("Downstream YAML or queue differs")
+          for key, value in variables.items():
+              if current.get("variables", {}).get(key, {}).get("value") != value["value"]:
+                  raise Failure("Downstream fixed target variables differ")
+          for key in ("id", "name", "type", "url", "defaultBranch"):
+              if current["repository"].get(key) != target["repository"][key]:
+                  raise Failure("Downstream repository configuration differs")
+          if current["repository"].get("properties", {}).get("connectedServiceId") != source_connection:
+              raise Failure("Downstream source connection differs")
+          for endpoint_id in (source_connection, chaos_id):
+              path = project + "/_apis/pipelines/pipelinepermissions/endpoint/" + endpoint_id + "?api-version=7.1-preview.1"
+              permissions = api("GET", path, system_token)
+              if (permissions.get("allPipelines") or {}).get("authorized") is True:
+                  raise Failure("Use a pipeline-scoped endpoint, not blanket authorization")
+              allowed = any(p.get("id") == current["id"] and p.get("authorized") is True
+                            for p in permissions.get("pipelines", []))
+              if not allowed:
+                  state.setdefault("pipelineAuthorizationIntents", []).append(endpoint_id)
+                  save(state)
+                  api("PATCH", path, system_token, {"pipelines": [{"id": current["id"], "authorized": True}]})
+                  verified = api("GET", path, system_token)
+                  if not any(p.get("id") == current["id"] and p.get("authorized") is True for p in verified.get("pipelines", [])):
+                      raise Failure("Exact downstream endpoint authorization not verified")
+          return current["id"]
+      
+      
+      def orchestrate():
+          if required("GAUNTLET_APPROVED") != "true" or required("BUILD_REASON") != "Manual":
+              raise Failure("Manual reviewed gauntlet approval required")
+          if required("BUILD_SOURCEBRANCH") != BRANCH or required("SYSTEM_DEBUG").lower() != "false":
+              raise Failure("Unexpected branch or debug setting")
+          if required("SYSTEM_JOBATTEMPT") != "1" or required("SYSTEM_STAGEATTEMPT") != "1":
+              raise Failure("Never retry an existing build/task version; queue a newly approved build")
+          if LEDGER.exists():
+              raise Failure("Existing run ledger; no repeated mutation")
+          source = Path(required("BUILD_SOURCESDIRECTORY"))
+          head = run_command(["git", "-C", str(source), "rev-parse", "HEAD"]).decode().strip()
+          if head != required("BUILD_SOURCEVERSION"):
+              raise Failure("Checkout not exact queued source")
+          delta = run_command(["git", "-C", str(source), "diff", "--name-status", CANDIDATE, head]).decode().splitlines()
+          if set(delta) != {"A\t" + BOOTSTRAP, "A\t" + DOWNSTREAM}:
+              raise Failure("Source differs beyond the two reviewed gauntlet files")
+          run_command(["git", "-C", str(source), "merge-base", "--is-ancestor", CANDIDATE, head])
+          runtime = (source / "dist" / "azure-pipelines-task" / "index.js").read_bytes()
+          metadata = (source / "azure-pipelines-extension" / "tasks" / "AzureChaosStudioScenarioV1Dev" / "task.json").read_bytes()
+          if hashlib.sha256(runtime).hexdigest() != RUNTIME_SHA or len(runtime) != 1249536 or hashlib.sha256(metadata).hexdigest() != MANIFEST_SHA:
+              raise Failure("Approved candidate task hashes changed")
+          task = json.loads(metadata)
+          if task["id"] != GUID or task["execution"] != {"Node20_1": {"target": "index.js"}, "Node24": {"target": "index.js"}} or task["minimumAgentVersion"] != "2.214.1":
+              raise Failure("Candidate handler/GUID/min-agent contract changed")
+          patch = int(required("BUILD_BUILDID"))
+          if patch <= 0 or patch > 2147483647:
+              raise Failure("Build ID outside task patch range")
+          version = {"Major": 0, "Minor": 999, "Patch": patch}
+          stage = ROOT / "task"
+          stage.mkdir()
+          task["version"] = version
+          (stage / "task.json").write_text(json.dumps(task, indent=2), encoding="utf-8")
+          (stage / "index.js").write_bytes(runtime)
+          state = {"schema": 1, "guid": GUID, "version": version, "sourceVersion": head,
+                   "bootstrapBuildId": required("BUILD_BUILDID"), "runId": None,
+                   "uploadIntent": False, "uploadVerified": False, "queueIntent": False, "cleanup": "not-started"}
+          save(state)
+          uploader = token()
+          permission = api("GET", "_apis/permissions/101eae8c-1709-47f9-b228-0e476c35b3ba/2?tokens=AgentPools&alwaysAllowAdministrators=true&api-version=7.1", uploader)
+          if permission.get("value") != [True]:
+              raise Failure("Uploader lacks verified collection AgentPools Manage")
+          if tasks(uploader):
+              raise Failure("Task GUID is not absent; no blind pre-delete or overwrite")
+          system_token = required("SYSTEM_ACCESSTOKEN")
+          mask(system_token)
+          for status in ("notStarted", "inProgress", "cancelling", "postponed"):
+              siblings = api("GET", required("SYSTEM_TEAMPROJECTID") + "/_apis/build/builds?definitions="
+                             + required("SYSTEM_DEFINITIONID") + "&statusFilter=" + status + "&$top=2&api-version=7.1",
+                             system_token)
+              if not isinstance(siblings.get("value"), list):
+                  raise Failure("Unable to establish exclusive bootstrap run")
+              if any(str(build.get("id")) != required("BUILD_BUILDID") for build in siblings["value"]):
+                  raise Failure("Another bootstrap is nonterminal; never overlap catalog ownership")
+          state["downstreamDefinitionId"] = definition(system_token, state)
+          save(state)
+          if tasks(uploader):
+              raise Failure("Task appeared concurrently; no overwrite")
+          state["uploadIntent"] = True
+          save(state)
+          tfx(["build", "tasks", "upload", "--task-path", str(stage)], uploader)
+          if not own_task(tasks(uploader), state):
+              raise Failure("Uploaded task version/inventory mismatch")
+          state["uploadVerified"] = True
+          save(state)
+          print("Task upload verified: version 0.999." + str(patch), flush=True)
+          state["queueIntent"] = True
+          save(state)
+          payload = {"definition": {"id": state["downstreamDefinitionId"]}, "sourceBranch": BRANCH, "sourceVersion": head}
+          queued = api("POST", required("SYSTEM_TEAMPROJECTID") + "/_apis/build/builds?api-version=7.1", system_token, payload)
+          state["runId"] = queued["id"]
+          save(state)
+          print("Separate native run queued: " + str(queued["id"]), flush=True)
+          deadline = time.monotonic() + 900
+          while time.monotonic() < deadline:
+              run = api("GET", required("SYSTEM_TEAMPROJECTID") + "/_apis/build/builds/" + str(state["runId"]) + "?api-version=7.1", system_token)
+              if run.get("sourceVersion") != head or run.get("definition", {}).get("id") != state["downstreamDefinitionId"]:
+                  raise Failure("Downstream run identity/source mismatch")
+              if run.get("status") == "completed":
+                  state["downstreamTerminal"] = True
+                  state["downstreamResult"] = run.get("result")
+                  save(state)
+                  print("Native run terminal result: " + str(run.get("result")), flush=True)
+                  if run.get("result") != "succeeded":
+                      raise Failure("Native run did not succeed")
+                  return
+              time.sleep(10)
+          raise Failure("Downstream not terminal within observation budget; retain task for parent recovery")
+      
+      
+      def cleanup():
+          if not LEDGER.exists():
+              print("No task mutation ledger; no task deletion.")
+              return
+          state = load()
+          if state.get("bootstrapBuildId") != required("BUILD_BUILDID") or state.get("guid") != GUID:
+              raise Failure("Cleanup ledger ownership mismatch")
+          if not state.get("uploadIntent"):
+              print("No upload attempted; no task deletion.")
+              return
+          if state.get("queueIntent"):
+              if not state.get("runId"):
+                  raise Failure("Queue outcome uncertain; retain task, parent must reconcile")
+              run = api("GET", required("SYSTEM_TEAMPROJECTID") + "/_apis/build/builds/" + str(state["runId"]) + "?api-version=7.1", required("SYSTEM_ACCESSTOKEN"))
+              if (run.get("status") != "completed" or run.get("sourceVersion") != state["sourceVersion"]
+                      or run.get("definition", {}).get("id") != state["downstreamDefinitionId"]):
+                  raise Failure("Downstream not verified terminal; no task deletion")
+          uploader = token()
+          current = tasks(uploader)
+          if current:
+              if not own_task(current, state):
+                  raise Failure("Task ownership/version collision; no task deletion")
+              tfx(["build", "tasks", "delete", "--task-id", GUID], uploader)
+          if tasks(uploader):
+              raise Failure("Task deletion not verified")
+          state["cleanup"] = "task-absent"
+          save(state)
+          print("Ledger-owned task cleanup verified.", flush=True)
+      
+      
+      if __name__ == "__main__":
+          try:
+              if len(sys.argv) != 2 or sys.argv[1] not in ("run", "cleanup"):
+                  raise Failure("Unsupported orchestrator operation")
+              for name in ("SYSTEM_COLLECTIONURI", "SYSTEM_TEAMPROJECTID", "GAUNTLET_GITHUB_ENDPOINT_ID", "GAUNTLET_CHAOS_ENDPOINT_ID",
+                           "CHAOS_SUBSCRIPTION_ID", "CHAOS_RESOURCE_GROUP", "CHAOS_WORKSPACE",
+                           "CHAOS_SCENARIO", "CHAOS_CONFIGURATION"):
+                  value = os.environ.get(name)
+                  if value and "$(" not in value:
+                      mask(value)
+              orchestrate() if sys.argv[1] == "run" else cleanup()
+          except (Failure, KeyError, ValueError, TypeError, OSError) as error:
+              message = str(error) if isinstance(error, Failure) else "Unexpected orchestration failure; inspect controlled state, not raw exceptions"
+              print("##vso[task.logissue type=error]" + message, flush=True)
+              raise SystemExit(1)
+      PY
+      python3 -m py_compile "$root/orchestrator.py"
+      npm install --prefix "$root/tools" --ignore-scripts --no-audit --no-fund tfx-cli@0.24.2
+    displayName: Prepare pinned uploader tooling and setup-only orchestrator
+  - task: AzureCLI@2
+    displayName: Upload reviewed task and queue one separate validate-only run
+    inputs:
+      azureSubscription: $(GauntletUploaderConnection)
+      scriptType: bash
+      scriptLocation: inlineScript
+      addSpnToEnvironment: false
+      visibleAzLogin: false
+      useGlobalConfig: false
+      inlineScript: |
+        set -euo pipefail
+        python3 "$AGENT_TEMPDIRECTORY/chaos-native-$BUILD_BUILDID/orchestrator.py" run
+    env:
+      GAUNTLET_APPROVED: $(GauntletPreparationApproved)
+      GAUNTLET_GITHUB_ENDPOINT_ID: $(GauntletGitHubEndpointId)
+      GAUNTLET_CHAOS_ENDPOINT_ID: $(GauntletChaosEndpointId)
+      GAUNTLET_CHAOS_CONNECTION: $(GauntletChaosConnection)
+      GAUNTLET_PIPELINE_FOLDER: $(GauntletPipelineFolder)
+      GAUNTLET_QUEUE_ID: $(GauntletQueueId)
+      GAUNTLET_DOWNSTREAM_PIPELINE_ID: $(GauntletDownstreamPipelineId)
+      CHAOS_SUBSCRIPTION_ID: $(ChaosSubscriptionId)
+      CHAOS_RESOURCE_GROUP: $(ChaosResourceGroup)
+      CHAOS_WORKSPACE: $(ChaosWorkspace)
+      CHAOS_SCENARIO: $(ChaosScenario)
+      CHAOS_CONFIGURATION: $(ChaosConfiguration)
+      SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+      SYSTEM_DEBUG: $(system.debug)
+  - task: AzureCLI@2
+    displayName: Delete only ledger-owned task after known terminal run
+    condition: always()
+    inputs:
+      azureSubscription: $(GauntletUploaderConnection)
+      scriptType: bash
+      scriptLocation: inlineScript
+      addSpnToEnvironment: false
+      visibleAzLogin: false
+      useGlobalConfig: false
+      inlineScript: |
+        set -euo pipefail
+        script="$AGENT_TEMPDIRECTORY/chaos-native-$BUILD_BUILDID/orchestrator.py"
+        if [ -f "$script" ]; then
+          python3 "$script" cleanup
+        else
+          echo 'Setup script absent; task upload step could not run.'
+        fi
+    env:
+      SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+  - bash: |
+      set -euo pipefail
+      python3 - <<'PY'
+      import json, os
+      from pathlib import Path
+      path = Path(os.environ["AGENT_TEMPDIRECTORY"]) / ("chaos-native-" + os.environ["BUILD_BUILDID"]) / "ledger.json"
+      if path.exists():
+          state = json.loads(path.read_text())
+          # Publish only opaque build IDs and public source/version facts in logs.
+          for key in ("sourceVersion", "version", "createdDefinitionId", "downstreamDefinitionId",
+                      "runId", "uploadIntent", "uploadVerified", "queueIntent",
+                      "downstreamTerminal", "downstreamResult", "cleanup"):
+              if key in state:
+                  print(key + "=" + json.dumps(state[key]))
+          if state.get("uploadIntent") and state.get("cleanup") != "task-absent":
+              print("##vso[task.logissue type=error]Task cleanup is not verified; parent recovery required; do not rerun upload.")
+              raise SystemExit(1)
+      PY
+    condition: always()
+    displayName: Emit redacted recovery receipt, retain native run histories
