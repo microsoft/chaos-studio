@@ -85,7 +85,9 @@ test('each committed dist entrypoint runs as an executable, self-contained Node 
   // GitHub Actions signals failure via a nonzero process exit; Azure Pipelines
   // tasks signal failure via the `##vso[task.complete result=Failed;...]`
   // logging command (the agent parses stdout, not the process exit code), so
-  // each platform is checked against its own actual failure signal.
+  // each platform is checked against its own actual failure signal. Some
+  // pre-adapter configuration failures also set a nonzero exit as defense in
+  // depth, but harnesses must not require that for normal task failures.
   const expectations: Record<string, (result: ReturnType<typeof spawnSync>) => void> = {
     'dist/github-action/index.js': (result) => {
       assert.notEqual(result.status, 0, 'the GitHub Action bundle must exit nonzero when required inputs are missing');

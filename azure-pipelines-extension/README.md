@@ -18,6 +18,20 @@ older compatible Azure DevOps Server agents use `Node20_1`. Azure DevOps Server
 2022.2's documented agent `3.238.0` therefore satisfies this task metadata,
 while the task remains ready for current agents that carry Node24.
 
+## Failure signaling
+
+In a registered Azure Pipelines task, `##vso[task.complete result=Failed]` is the
+authoritative failure signal. `azure-pipelines-task-lib` emits that command from
+`tl.setResult(TaskResult.Failed, ...)` and does not need to set a nonzero Node
+process exit code. This differs from GitHub Actions, where `core.setFailed`
+sets `process.exitCode`.
+
+A wrapper that runs the bundle as a child process must therefore judge failure
+from the ADO task result/logging command and the resulting job status, not from
+the child exit code alone. Configuration failures detected before normal adapter
+execution may additionally set a nonzero process exit for standalone diagnostics,
+but that is defense in depth rather than the registered-task contract.
+
 ## Permanent task ID
 
 The task `id` GUID in `task.json` is **permanent**: a published Azure DevOps task

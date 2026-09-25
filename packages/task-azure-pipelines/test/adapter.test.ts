@@ -142,14 +142,25 @@ test('runAzurePipelinesTask: a SUCCESS result completes the task Succeeded and d
 test('runAzurePipelinesTask: a FAILURE result completes the task Failed with the core failure reason (fail parity, D12)', async () => {
   const host = new FakeTaskHost();
   const orch = capturingOrchestrator({ success: false, outputs: {}, failureReason: 'run-failed: InternalExecutionError' });
-  await runAzurePipelinesTask({
-    host,
-    cred: new FakeTokenCredentialProvider(),
-    signal: new AbortController().signal,
-    orchestrate: orch.fn,
-  });
-  assert.equal(host.failed, true);
-  assert.equal(host.failureMessage, 'run-failed: InternalExecutionError', 'the task carries the core failure reason');
+  const previousExitCode = process.exitCode;
+  process.exitCode = undefined;
+  try {
+    await runAzurePipelinesTask({
+      host,
+      cred: new FakeTokenCredentialProvider(),
+      signal: new AbortController().signal,
+      orchestrate: orch.fn,
+    });
+    assert.equal(host.failed, true);
+    assert.equal(host.failureMessage, 'run-failed: InternalExecutionError', 'the task carries the core failure reason');
+    assert.equal(
+      process.exitCode,
+      undefined,
+      'normal Azure task failures are reported by task.complete; the agent result is authoritative, not the Node exit code',
+    );
+  } finally {
+    process.exitCode = previousExitCode;
+  }
 });
 
 test('runAzurePipelinesTask: a failure with no reason still fails the task with a default message', async () => {
