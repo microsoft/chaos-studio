@@ -6,7 +6,7 @@ body:
     id: problem
     attributes:
       label: What problem are you trying to solve?
-      placeholder: As a chaos engineer running scheduled experiments, I need ...
+      placeholder: As a chaos engineer running Scenarios in Chaos Studio Workspaces, I need ...
     validations:
       required: true
 

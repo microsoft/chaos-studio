@@ -1,6 +1,7 @@
-# Contributing to startchaos
+# Contributing to the Chaos Studio Workspaces plugin
 
-Thanks for your interest in improving the **startchaos** Copilot CLI plugin!
+Thanks for your interest in improving **startchaos**, the Copilot CLI plugin for
+Chaos Studio Workspaces!
 This doc covers the local dev loop, coding conventions, and the PR process.
 
 ## Quick start

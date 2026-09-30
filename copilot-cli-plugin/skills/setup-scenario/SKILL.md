@@ -1,9 +1,9 @@
 ---
 name: setup-scenario
-description: "Discover recommended scenarios, build and validate a ScenarioConfiguration, and auto-fix resource permissions."
+description: "Discover recommended Scenarios in Chaos Studio Workspaces, build and validate a ScenarioConfiguration, and auto-fix resource permissions."
 ---
 
-# SetupScenario — Scenario Discovery, Configuration & Validation
+# SetupScenario — configure and validate Scenarios in Chaos Studio Workspaces
 
 > ⛔ **ABSOLUTE RULE**: Do NOT improvise, skip, or substitute any step. On ANY error, STOP and wait for the user.
 
@@ -11,13 +11,14 @@ description: "Discover recommended scenarios, build and validate a ScenarioConfi
 
 This skill is the **human-interactive** path: it shares state with the rest of the pipeline, prompts via exit codes, and renders cards. Use it when there is a user in the loop.
 
-If you are an **autonomous agent** with no user to prompt, use the MCP tools directly: `chaos_refresh_recommendations`, `chaos_list_recommended_scenarios`, `chaos_create_scenario_configuration`, `chaos_validate_scenario_configuration`, `chaos_fix_resource_permissions`. See `mcp/README.md`.
+If you are an **autonomous agent** with no user to prompt, use the MCP tools directly: `chaos_refresh_recommendations`, `chaos_list_recommended_scenarios`, `chaos_create_scenario_configuration`, `chaos_validate_scenario_configuration`, `chaos_fix_resource_permissions`. See the [MCP server guide](../../mcp/README.md).
 
 Both surfaces target `Microsoft.Chaos` `2026-05-01-preview` and use the local `az login` session for auth.
+For supported outage patterns and Actions, see the [Scenario catalog](https://learn.microsoft.com/azure/chaos-studio/chaos-studio-scenarios).
 
 ## How It Works
 
-All discovery, configuration, validation, and permission-fix logic lives in `scripts/Invoke-SetupScenario.ps1`. The script drives the Chaos Studio operations through the `az chaos` CLI extension — workspace evaluation, recommendation listing, scenario selection routing, parameter resolution, configuration creation, and the validate→fix→re-validate loop.
+All discovery, configuration, validation, and permission-fix logic lives in `scripts/Invoke-SetupScenario.ps1`. The script drives the Chaos Studio operations through the `az chaos` CLI extension — Workspace evaluation, recommendation listing, Scenario selection routing, parameter resolution, configuration creation, and the validate→fix→re-validate loop.
 
 The AI orchestrator's **only** job is:
 
@@ -28,7 +29,7 @@ The AI orchestrator's **only** job is:
 
 ## Prerequisites
 
-- `state.workspace.status == "done"` (workspace must exist; the script refuses otherwise)
+- `state.workspace.status == "done"` (Workspace must exist; the script refuses otherwise)
 - `state.context.subscriptionId` populated
 
 ## Running the Script
@@ -64,7 +65,7 @@ When exit 2 is followed by exit 3 on re-run, combine both answers in the next in
 
 | Parameter | Description |
 |-----------|-------------|
-| `-ScenarioName` | Selected scenario (e.g. `ZoneDown-1.0`). Bypasses the selection prompt. Equivalent to `$env:STARTCHAOS_SCENARIO`. |
+| `-ScenarioName` | Selected Scenario (e.g. `ZoneDown-1.0`). Bypasses the selection prompt. Equivalent to `$env:STARTCHAOS_SCENARIO`. |
 | `-ParameterMode` | `autofill` (always use this — `manual` does not work in AI sessions). |
 | `-ParameterValues` | Hashtable of parameter overrides applied on top of defaults, e.g. `@{ duration = 'PT5M' }`. |
 
@@ -72,7 +73,7 @@ When exit 2 is followed by exit 3 on re-run, combine both answers in the next in
 
 - Workspace evaluation via `az chaos workspace refresh-recommendation` (CLI awaits the LRO) + `show-evaluation` summary
 - Scenario list (`az chaos scenario list`) filtered to `recommendation.recommendationStatus == "Recommended"`
-- Auto-select when exactly one scenario is recommended; pause-and-emit-exit-2 otherwise
+- Auto-select when exactly one Scenario is recommended; pause-and-emit-exit-2 otherwise
 - ScenarioConfiguration create (`az chaos scenario config create`, `--scenario-id` auto-derived) with parameter merge (defaults + overrides)
 - Validate (`az chaos scenario config validate`) → if not Succeeded → `az chaos scenario config fix-permissions` → re-validate
 - RBAC propagation retry loop (up to 5 minutes, 20s interval) gated to permission-related errors only

@@ -1,5 +1,5 @@
 name: 💡 Product feedback (preview)
-description: Share feedback, friction, or ideas about Azure Chaos Studio (Workspaces, Scenarios, reports).
+description: Share feedback, friction, or ideas about Chaos Studio Workspaces, Scenarios, Actions, and Scenario reports.
 title: "[Feedback]: "
 labels: ["feedback", "preview"]
 body:
@@ -14,7 +14,7 @@ body:
     id: area
     attributes:
       label: Area
-      placeholder: Workspaces / Scenarios / Reports / Scenario designer / API / Plugin
+      placeholder: Workspaces / Scenarios / Scenario runs / Actions / Scenario reports / Scenario designer / API / Plugin
   - type: textarea
     id: context
     attributes:

@@ -1,15 +1,18 @@
-# `/chaos-impact` — Walkthrough & Reference
+# Analyze Chaos Studio Workspaces Scenario runs with Azure Monitor
 
-> Customer-facing guide for the `chaos-impact` skill shipped in `startchaos@0.3.0`.
-> For the design rationale and implementation plan see [`impact-synthesis-skill.plan.md`](impact-synthesis-skill.plan.md).
+Customer-facing guide for the `chaos-impact` skill in the
+[startchaos Copilot CLI plugin](../README.md).
 
 ## Overview
 
-`/chaos-impact` is a post-experiment analysis skill. Given a Chaos Studio v2
+`/chaos-impact` analyzes a Scenario run in Chaos Studio Workspaces. Given its
 `scenarioRunId`, it queries Azure Monitor over the run window plus a configurable
-buffer, correlates each observed signal to the action that may have caused it, and
+buffer, correlates each observed signal to the Action that may have caused it, and
 emits a Markdown report card plus a schema-validated JSON sidecar suitable for
 diffing across runs.
+This tooling report complements the service's Scenario reports described in the
+[Workspaces overview](https://learn.microsoft.com/azure/chaos-studio/chaos-studio-workspaces-overview);
+use application health checks to assess resilience.
 
 ## Prerequisites
 
@@ -18,8 +21,8 @@ Same as the rest of the `startchaos` plugin:
 | Requirement | Minimum Version | Notes |
 |---|---|---|
 | PowerShell (`pwsh`) | 7.4+ | Cross-platform |
-| Azure CLI (`az`) | 2.61+ | Already signed in (`az login`) |
-| GitHub Copilot CLI | latest | `startchaos@0.3.0` installed |
+| Azure CLI (`az`) | 2.75+ | Already signed in (`az login`); matches the plugin prerequisites |
+| GitHub Copilot CLI | latest | [startchaos installed](../README.md#installation) |
 
 The caller's `az` identity must have **at least** `Reader` on each targeted resource
 group plus `Monitoring Reader` on the subscription (or per-resource-group). Without
@@ -35,8 +38,8 @@ impact skill without re-supplying any context:
 > /chaos-impact
 ```
 
-The skill reads the state file, picks up subscription / resource group / workspace
-/ scenario / run ID, runs the full pipeline, and writes the report artifacts to the
+The skill reads the state file, picks up subscription / resource group / Workspace
+/ Scenario / run ID, runs the full pipeline, and writes the report artifacts to the
 session directory.
 
 ## Standalone invocation
@@ -56,10 +59,10 @@ context parameters explicitly:
 
 | Parameter | Default | Description |
 |---|---|---|
-| `<ScenarioRunId>` *(positional)* | *(required)* | The chaos run to analyze |
-| `-SubscriptionId` | from state file | Subscription containing the workspace |
-| `-ResourceGroup` | from state file | Resource group containing the workspace |
-| `-WorkspaceName` | from state file | Chaos Studio v2 workspace name |
+| `<ScenarioRunId>` *(positional)* | *(required)* | The ScenarioRun to analyze |
+| `-SubscriptionId` | from state file | Subscription containing the Workspace |
+| `-ResourceGroup` | from state file | Resource group containing the Workspace |
+| `-WorkspaceName` | from state file | Chaos Studio Workspace name |
 | `-ScenarioName` | from state file | Scenario the run belongs to |
 | `-Buffer` | `PT5M` | ISO-8601 duration expanding both ends of the window |
 | `-MaxResources` | `50` | Per-run resource fan-out cap (cap prevents accidental N×Monitor calls) |
@@ -76,7 +79,7 @@ Two files are written, both named after the run ID:
 
 Sections in order:
 
-1. **Header** — scenario name, run ID, time window, workspace, resources targeted.
+1. **Header** — Scenario name, run ID, time window, Workspace, resources targeted.
 2. **⚠️ Partial report banner** *(when the run is still in flight)* — flags that
    the data is incomplete.
 3. **`## Summary`** — counts of actions, chaos-attributed signals (with unique
@@ -93,7 +96,7 @@ Sections in order:
    settings, MaxResources overflow.
 8. **`## Errors`** *(when present)* — per-call failures captured during fan-out.
 
-### `impact-<runId>.json` — JSON sidecar (schema v1)
+### `impact-<runId>.json` — JSON sidecar (schema version 1)
 
 Conforms to [`schema/impact-report.schema.json`](../skills/chaos-impact/schema/impact-report.schema.json).
 Key top-level fields:

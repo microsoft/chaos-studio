@@ -1,13 +1,13 @@
 ---
 name: start-chaos
-description: "Orchestrate the full Chaos Studio v2 workflow: auth → workspace → scenario → run. Trigger: 'start chaos', 'run chaos experiment', 'chaos studio', 'create workspace'."
+description: "Orchestrate the full Chaos Studio Workspaces workflow: authentication → Workspace → Scenario → Scenario run. Trigger: 'start chaos', 'run a Scenario', 'chaos studio', 'create workspace'."
 tools:
   - powershell     # Execute scripts
   - view           # Read files
   - ask_user       # Prompt for inputs
 ---
 
-# StartChaos Agent Instructions
+# StartChaos agent for Chaos Studio Workspaces
 
 ## CRITICAL — Role Definition
 
@@ -31,7 +31,7 @@ Invoke the `/start-chaos` skill. The agent runs the four-phase pipeline automati
 ### Phase 0 — Auth Pre-flight
 1. Dot-source and invoke `Ensure-AzLogin` from `scripts/Ensure-AzLogin.ps1`
 2. If auth fails, show the error and STOP
-3. Collect workspace inputs from user: resource group, workspace name, location, identity type, scopes
+3. Collect Workspace inputs from user: resource group, Workspace name, location, identity type, scopes
 
 ### Phase 1 — Create Workspace
 1. Run `skills/create-workspace/scripts/Invoke-CreateWorkspace.ps1` with collected inputs
@@ -39,7 +39,7 @@ Invoke the `/start-chaos` skill. The agent runs the four-phase pipeline automati
 
 ### Phase 2 — Setup Scenario
 1. Run `skills/setup-scenario/scripts/Invoke-SetupScenario.ps1`
-2. Present scenario list to user if multiple recommended
+2. Present Scenario list to user if multiple recommended
 3. Collect parameter mode choice (manual/autofill)
 4. If no recommendations: inform user, exit cleanly
 
@@ -68,4 +68,4 @@ Run `/chaos-impact <scenarioRunId>` to automatically correlate Azure Monitor sig
 
 The `scenarioRunId` is available in the state file at `state.run.scenarioRunId`. The
 `/chaos-impact` skill reads the same state file, so the user can omit subscription,
-resource group, workspace, and scenario parameters when invoked from the same session.
+resource group, Workspace, and Scenario parameters when invoked from the same session.

@@ -5,7 +5,7 @@ All notable changes to **startchaos** are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## Unreleased
 
 ### Added
 
@@ -17,7 +17,7 @@ the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 ### Changed
 
 - The PowerShell skills (`create-workspace`, `setup-scenario`, `run-scenario`)
-  now drive all Chaos Studio v2 control-plane operations through the first-party
+  now drive all Chaos Studio Workspaces control-plane operations through the first-party
   **`az chaos` CLI extension** instead of raw `az rest` calls, via a new shared
   `scripts/Invoke-AzChaos.ps1` wrapper. This keeps the plugin consistent with the
   supported CLI surface and gets LRO polling for free. Workspace creation now uses
@@ -46,7 +46,7 @@ the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 - Repository extracted from `azure-rest-api-specs` to its own home. No
   user-visible behavior change.
 
-## [0.3.0] — 2026-05-29
+## 0.3.0 — 2026-05-29
 
 ### Added
 
@@ -70,7 +70,7 @@ the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 - 13 pytest tests (MCP Monitor tools, including 429 retry and 403 structured
   error envelope).
 
-## [0.2.0] — 2026-05-12
+## 0.2.0 — 2026-05-12
 
 ### Added
 
@@ -78,14 +78,9 @@ the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
   as agent-callable tools, with LRO-aware blocking semantics.
 - Bootstrap, polling, and RBAC helpers under `skills/_shared/`.
 
-## [0.1.0] — 2026-04-30
+## 0.1.0 — 2026-04-30
 
 ### Added
 
 - Initial release: `start-chaos`, `create-workspace`, `setup-scenario`,
   `run-scenario` skills targeting `Microsoft.Chaos` `2026-05-01-preview`.
-
-[Unreleased]: https://github.com/microsoft/chaos-studio/compare/v0.3.0...HEAD
-[0.3.0]: https://github.com/microsoft/chaos-studio/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/microsoft/chaos-studio/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/microsoft/chaos-studio/releases/tag/v0.1.0

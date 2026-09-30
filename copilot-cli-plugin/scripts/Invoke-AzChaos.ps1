@@ -3,11 +3,11 @@
 
 <#
 .SYNOPSIS
-    Canonical wrapper around the `az chaos` CLI extension for all Chaos Studio v2
+    Canonical wrapper around the `az chaos` CLI extension for all Chaos Studio Workspaces
     control-plane calls in the startchaos plugin.
 
 .DESCRIPTION
-    Chaos Studio operations (workspace lifecycle, scenario discovery, scenario
+    Chaos Studio Workspaces operations (Workspace lifecycle, Scenario discovery, Scenario
     configuration, validation, permission remediation, and run execution) MUST go
     through this function rather than raw `az rest` calls. Using the first-party
     `az chaos` command group keeps the plugin consistent with the supported CLI

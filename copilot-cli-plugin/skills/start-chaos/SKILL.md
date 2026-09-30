@@ -1,9 +1,9 @@
 ---
 name: start-chaos
-description: "Orchestrate the full Chaos Studio v2 workflow: auth → workspace → scenario → run. Shares a single state file and supports resume."
+description: "Orchestrate the full Chaos Studio Workspaces workflow: authentication → Workspace → Scenario → Scenario run. Shares a single state file and supports resume."
 ---
 
-# StartChaos — Orchestrated Chaos Experiment Pipeline
+# StartChaos — Chaos Studio Workspaces workflow
 
 > ⛔ **ABSOLUTE RULE**: Do NOT improvise, skip, or substitute any step. On ANY error, STOP and wait for the user.
 
@@ -15,17 +15,18 @@ when there is a user in the loop.
 
 If you are an **autonomous agent** with no user to prompt — or you need
 typed, atomic operations to compose into your own workflow — use the
-**`chaos-studio` MCP server** instead (see `mcp/README.md`). The MCP exposes
-the same Chaos Studio v2 surface as discrete tools (`chaos_create_workspace`,
+**`chaos-studio` MCP server** instead (see the [MCP server guide](../../mcp/README.md)). The MCP exposes
+the same Chaos Studio Workspaces surface as discrete tools (`chaos_create_workspace`,
 `chaos_list_recommended_scenarios`, `chaos_execute_scenario`, …) without the
 state file, cards, or interactive prompts.
 
 Both surfaces target `Microsoft.Chaos` `2026-05-01-preview` and use the local
 `az login` session for auth.
+For the service model, see the [Workspaces overview](https://learn.microsoft.com/azure/chaos-studio/chaos-studio-workspaces-overview).
 
 ## How It Works
 
-All pipeline logic lives in `scripts/Invoke-StartChaos.ps1`. The script handles auth, workspace creation, scenario setup, execution, permission validation/fix, and the final summary card.
+All pipeline logic lives in `scripts/Invoke-StartChaos.ps1`. The script handles auth, Workspace creation, Scenario setup, execution, permission validation/fix, and the final summary card.
 
 The AI orchestrator's **only** job is:
 
@@ -49,8 +50,8 @@ On resume: the script reads state and skips completed phases automatically.
 |------|---------|-----------|
 | **0** | Pipeline complete | Done — summary card already rendered by script |
 | **1** | Error | STOP. Render the error from script output. Wait for user. |
-| **4** | Workspace inputs needed | `ask_user` for: resource group, workspace name, location, identity type, scopes. Re-run with `-ResourceGroup`, `-WorkspaceName`, `-Location`, `-IdentityType`, `-Scopes`. |
-| **2** | Scenario selection needed | Read `state.setup.recommendedScenarios` from state file. `ask_user` with scenario names+descriptions as choices. Re-run with `-ScenarioName <chosen>`. |
+| **4** | Workspace inputs needed | `ask_user` for: resource group, Workspace name, location, identity type, scopes. Re-run with `-ResourceGroup`, `-WorkspaceName`, `-Location`, `-IdentityType`, `-Scopes`. |
+| **2** | Scenario selection needed | Read `state.setup.recommendedScenarios` from state file. `ask_user` with Scenario names+descriptions as choices. Re-run with `-ScenarioName <chosen>`. |
 | **3** | Parameter mode needed | Show the parameter table from the script output. `ask_user` which parameters they want to customize (or accept all defaults). Re-run with `-ParameterMode autofill` and `-ParameterValues @{ key = 'value' }` for any overrides. |
 
 ### Important: Exit 2 → 3 chaining
@@ -75,8 +76,8 @@ When exit 3 fires, show the user the parameter table from the output, ask which 
 | `-Location` | 1 | Azure region (default: westus2) |
 | `-IdentityType` | 1 | SystemAssigned or UserAssigned |
 | `-UserAssignedIdentityResourceId` | 1 | Required when IdentityType=UserAssigned |
-| `-Scopes` | 1 | ARM resource ID(s) for workspace scope |
-| `-ScenarioName` | 2 | Selected scenario (e.g. `ZoneDown-1.0`) |
+| `-Scopes` | 1 | ARM resource ID(s) for Workspace scope |
+| `-ScenarioName` | 2 | Selected Scenario (e.g. `ZoneDown-1.0`) |
 | `-ParameterMode` | 2 | `autofill` (always use this — `manual` does not work in AI sessions) |
 | `-ParameterValues` | 2 | Hashtable of parameter overrides, e.g. `@{ duration = 'PT5M' }`. Applied on top of defaults during configuration creation. |
 | `-ForceReauth` | 0 | Force re-authentication |
@@ -88,6 +89,6 @@ When exit 3 fires, show the user the parameter table from the output, ask which 
 - Workspace creation, identity binding, RBAC grants
 - Scenario evaluation, recommendation discovery, configuration creation
 - Pre-run validation and `fixResourcePermissions` auto-remediation
-- Run execution, polling, action status tracking
+- Scenario run execution, polling, Action status tracking
 - Final summary card and HTML report generation
 - All error cards with remediation commands
