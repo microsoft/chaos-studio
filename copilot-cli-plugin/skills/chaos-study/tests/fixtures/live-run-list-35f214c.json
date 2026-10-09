@@ -1,0 +1,1134 @@
+{
+ "source": "Captured az chaos scenario run list responses before and after the live run start on 35f214c (subscription and principal ids redacted; otherwise unchanged).",
+ "configurationName": "preflight-20261006t004503z2a5cac01",
+ "startedRun": "02e10afe-d27e-4989-9ca3-1ec9bea87482",
+ "before": [
+  {
+   "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/chaos-demo-workspace/scenarios/ComputeZoneDown-1.1/runs/11b398c6-7d21-408b-b6d8-26a8a7b75f33",
+   "name": "11b398c6-7d21-408b-b6d8-26a8a7b75f33",
+   "properties": {
+    "endTime": "2026-09-24T20:09:57.7876121+00:00",
+    "errors": [],
+    "managedIdentityPrincipalId": "00000000-0000-0000-0000-000000000001",
+    "resources": [
+     {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+      "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+     }
+    ],
+    "scenarioConfigurationName": "xbox-live-demo",
+    "scenarioName": "ComputeZoneDown-1.1",
+    "scenarioRunJson": "{\"schemaVersion\":\"1.0\",\"scenarioId\":\"ComputeZoneDown-1.1\",\"maxTimeoutDuration\":\"03:00:00\",\"actions\":{\"vmssZoneShutdown\":{\"id\":\"vmssZoneShutdown\",\"displayName\":\"Shut down VMSS instances in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":[{\"metadata\":{\"locations\":[\"eastus2\"],\"zones\":[\"1\",\"2\",\"3\"],\"memberOfResourceId\":null},\"discoveredAt\":\"2026-08-25T16:28:24.7434398+00:00\",\"tags\":{\"platformsettings.host_environment.service.platform_optedin_for_rootcerts\":\"true\",\"azsecpack\":\"nonprod\",\"aks-managed-consolidated-additional-properties\":\"0b55a8e2-a00c-11f1-bd36-fa3a5f12f6ef\",\"aks-managed-networkisolated-outbound-type\":\"\",\"aks-managed-bootstrap-profile-acr-name\":\"\",\"aks-managed-kubeletIdentityClientID\":\"77661510-50d3-429b-b8b3-d209f2d62985\",\"aks-managed-enable-imds-restriction\":\"false\",\"aks-managed-saip-default-client-id\":\"\",\"aks-managed-resourceNameSuffix\":\"25871682\",\"aks-managed-createOperationID\":\"7a4b2955-7d5c-423d-bde0-0dabbeb264e7\",\"aks-managed-creationSource\":\"vmssclient-aks-nodepool1-10969888-vmss\",\"aks-managed-orchestrator\":\"Kubernetes:1.35.7\",\"compute.aks.billing\":\"linux\",\"aks-managed-ssh-access\":\"LocalUser\",\"aks-managed-poolName\":\"nodepool1\",\"aks-managed-azure-cni-overlay\":\"true\"},\"namespace\":\"Arm\",\"name\":\"aks-nodepool1-10969888-vmss\",\"resourceType\":\"microsoft.compute/virtualmachinescalesets\",\"fullyQualifiedIdentifier\":\"/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss\",\"parent\":null}],\"faultUrn\":\"urn:csci:microsoft:virtualMachineScaleSet:shutdown/1.0.0\",\"faultParameters\":{\"Zones\":[\"3\"]}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:05:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":false},\"vmZoneShutdown\":{\"id\":\"vmZoneShutdown\",\"displayName\":\"Shut down VMs in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":\"%%{resourceSelectors.virtualMachines}%%\",\"faultUrn\":\"urn:csci:microsoft:compute:shutdown/1.0.0\",\"faultParameters\":{}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:05:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":true}}}",
+    "scenarioRunSummary": [
+     {
+      "actionUrn": "vmssZoneShutdown",
+      "completedAt": "2026-09-24T20:09:57.7173756+00:00",
+      "resources": [
+       {
+        "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+        "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+       }
+      ],
+      "startedAt": "2026-09-24T20:04:50.8725716+00:00",
+      "state": "Succeeded"
+     }
+    ],
+    "startTime": "2026-09-24T20:04:48.7931856+00:00",
+    "status": "Succeeded",
+    "workspaceName": "chaos-demo-workspace",
+    "zoneResolution": {
+     "mode": "Logical",
+     "requestedPhysicalZones": [],
+     "subscriptionZoneMappings": []
+    }
+   },
+   "resourceGroup": "chaos-demo-rg",
+   "systemData": {
+    "createdBy": "Azure Chaos Studio",
+    "createdByType": "Application"
+   },
+   "type": "Microsoft.Chaos/workspaces/scenarios/runs"
+  },
+  {
+   "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/chaos-demo-workspace/scenarios/ComputeZoneDown-1.1/runs/6fa7a3d2-690b-4791-9492-31906e330a70",
+   "name": "6fa7a3d2-690b-4791-9492-31906e330a70",
+   "properties": {
+    "endTime": "2026-09-23T21:11:17.2987474+00:00",
+    "errors": [],
+    "managedIdentityPrincipalId": "00000000-0000-0000-0000-000000000001",
+    "resources": [
+     {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+      "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+     }
+    ],
+    "scenarioConfigurationName": "xbox-live-demo",
+    "scenarioName": "ComputeZoneDown-1.1",
+    "scenarioRunJson": "{\"schemaVersion\":\"1.0\",\"scenarioId\":\"ComputeZoneDown-1.1\",\"maxTimeoutDuration\":\"03:00:00\",\"actions\":{\"vmssZoneShutdown\":{\"id\":\"vmssZoneShutdown\",\"displayName\":\"Shut down VMSS instances in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":[{\"metadata\":{\"locations\":[\"eastus2\"],\"zones\":[\"1\",\"2\",\"3\"],\"memberOfResourceId\":null},\"discoveredAt\":\"2026-08-25T16:28:24.7434398+00:00\",\"tags\":{\"platformsettings.host_environment.service.platform_optedin_for_rootcerts\":\"true\",\"azsecpack\":\"nonprod\",\"aks-managed-consolidated-additional-properties\":\"0b55a8e2-a00c-11f1-bd36-fa3a5f12f6ef\",\"aks-managed-networkisolated-outbound-type\":\"\",\"aks-managed-bootstrap-profile-acr-name\":\"\",\"aks-managed-kubeletIdentityClientID\":\"77661510-50d3-429b-b8b3-d209f2d62985\",\"aks-managed-enable-imds-restriction\":\"false\",\"aks-managed-saip-default-client-id\":\"\",\"aks-managed-resourceNameSuffix\":\"25871682\",\"aks-managed-createOperationID\":\"7a4b2955-7d5c-423d-bde0-0dabbeb264e7\",\"aks-managed-creationSource\":\"vmssclient-aks-nodepool1-10969888-vmss\",\"aks-managed-orchestrator\":\"Kubernetes:1.35.7\",\"compute.aks.billing\":\"linux\",\"aks-managed-ssh-access\":\"LocalUser\",\"aks-managed-poolName\":\"nodepool1\",\"aks-managed-azure-cni-overlay\":\"true\"},\"namespace\":\"Arm\",\"name\":\"aks-nodepool1-10969888-vmss\",\"resourceType\":\"microsoft.compute/virtualmachinescalesets\",\"fullyQualifiedIdentifier\":\"/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss\",\"parent\":null}],\"faultUrn\":\"urn:csci:microsoft:virtualMachineScaleSet:shutdown/1.0.0\",\"faultParameters\":{\"Zones\":[\"3\"]}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:05:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":false},\"vmZoneShutdown\":{\"id\":\"vmZoneShutdown\",\"displayName\":\"Shut down VMs in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":\"%%{resourceSelectors.virtualMachines}%%\",\"faultUrn\":\"urn:csci:microsoft:compute:shutdown/1.0.0\",\"faultParameters\":{}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:05:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":true}}}",
+    "scenarioRunSummary": [
+     {
+      "actionUrn": "vmssZoneShutdown",
+      "completedAt": "2026-09-23T21:11:17.1215219+00:00",
+      "resources": [
+       {
+        "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+        "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+       }
+      ],
+      "startedAt": "2026-09-23T21:10:40.5467091+00:00",
+      "state": "Canceled"
+     }
+    ],
+    "startTime": "2026-09-23T21:10:37.5982331+00:00",
+    "status": "Canceled",
+    "workspaceName": "chaos-demo-workspace",
+    "zoneResolution": {
+     "mode": "Logical",
+     "requestedPhysicalZones": [],
+     "subscriptionZoneMappings": []
+    }
+   },
+   "resourceGroup": "chaos-demo-rg",
+   "systemData": {
+    "createdBy": "Azure Chaos Studio",
+    "createdByType": "Application"
+   },
+   "type": "Microsoft.Chaos/workspaces/scenarios/runs"
+  },
+  {
+   "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/chaos-demo-workspace/scenarios/ComputeZoneDown-1.1/runs/7114c5f0-2169-49e3-8e6a-6de2dbeb453d",
+   "name": "7114c5f0-2169-49e3-8e6a-6de2dbeb453d",
+   "properties": {
+    "endTime": "2026-09-15T17:24:40.6258744+00:00",
+    "errors": [],
+    "managedIdentityPrincipalId": "00000000-0000-0000-0000-000000000001",
+    "resources": [
+     {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+      "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+     }
+    ],
+    "scenarioConfigurationName": "study-20260915t165939z9dd3ef90",
+    "scenarioName": "ComputeZoneDown-1.1",
+    "scenarioRunJson": "{\"schemaVersion\":\"1.0\",\"scenarioId\":\"ComputeZoneDown-1.1\",\"maxTimeoutDuration\":\"03:00:00\",\"actions\":{\"vmssZoneShutdown\":{\"id\":\"vmssZoneShutdown\",\"displayName\":\"Shut down VMSS instances in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":[{\"metadata\":{\"locations\":[\"eastus2\"],\"zones\":[\"1\",\"2\",\"3\"],\"memberOfResourceId\":null},\"discoveredAt\":\"2026-08-25T16:28:24.7434398+00:00\",\"tags\":{\"platformsettings.host_environment.service.platform_optedin_for_rootcerts\":\"true\",\"azsecpack\":\"nonprod\",\"aks-managed-consolidated-additional-properties\":\"0b55a8e2-a00c-11f1-bd36-fa3a5f12f6ef\",\"aks-managed-networkisolated-outbound-type\":\"\",\"aks-managed-bootstrap-profile-acr-name\":\"\",\"aks-managed-kubeletIdentityClientID\":\"77661510-50d3-429b-b8b3-d209f2d62985\",\"aks-managed-enable-imds-restriction\":\"false\",\"aks-managed-saip-default-client-id\":\"\",\"aks-managed-resourceNameSuffix\":\"25871682\",\"aks-managed-createOperationID\":\"7a4b2955-7d5c-423d-bde0-0dabbeb264e7\",\"aks-managed-creationSource\":\"vmssclient-aks-nodepool1-10969888-vmss\",\"aks-managed-orchestrator\":\"Kubernetes:1.35.7\",\"compute.aks.billing\":\"linux\",\"aks-managed-ssh-access\":\"LocalUser\",\"aks-managed-poolName\":\"nodepool1\",\"aks-managed-azure-cni-overlay\":\"true\"},\"namespace\":\"Arm\",\"name\":\"aks-nodepool1-10969888-vmss\",\"resourceType\":\"microsoft.compute/virtualmachinescalesets\",\"fullyQualifiedIdentifier\":\"/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss\",\"parent\":null}],\"faultUrn\":\"urn:csci:microsoft:virtualMachineScaleSet:shutdown/1.0.0\",\"faultParameters\":{\"Zones\":[\"1\"]}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:05:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":false},\"vmZoneShutdown\":{\"id\":\"vmZoneShutdown\",\"displayName\":\"Shut down VMs in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":\"%%{resourceSelectors.virtualMachines}%%\",\"faultUrn\":\"urn:csci:microsoft:compute:shutdown/1.0.0\",\"faultParameters\":{}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:05:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":true}}}",
+    "scenarioRunSummary": [
+     {
+      "actionUrn": "vmssZoneShutdown",
+      "completedAt": "2026-09-15T17:24:40.5575343+00:00",
+      "resources": [
+       {
+        "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+        "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+       }
+      ],
+      "startedAt": "2026-09-15T17:19:33.7889088+00:00",
+      "state": "Succeeded"
+     }
+    ],
+    "startTime": "2026-09-15T17:19:29.5545959+00:00",
+    "status": "Succeeded",
+    "workspaceName": "chaos-demo-workspace",
+    "zoneResolution": {
+     "mode": "Logical",
+     "requestedPhysicalZones": [],
+     "subscriptionZoneMappings": []
+    }
+   },
+   "resourceGroup": "chaos-demo-rg",
+   "systemData": {
+    "createdBy": "Azure Chaos Studio",
+    "createdByType": "Application"
+   },
+   "type": "Microsoft.Chaos/workspaces/scenarios/runs"
+  },
+  {
+   "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/chaos-demo-workspace/scenarios/ComputeZoneDown-1.1/runs/1a3a2f65-ee7b-4a84-b93c-b7bd1f718897",
+   "name": "1a3a2f65-ee7b-4a84-b93c-b7bd1f718897",
+   "properties": {
+    "endTime": "2026-09-14T19:40:43.4465257+00:00",
+    "errors": [],
+    "managedIdentityPrincipalId": "00000000-0000-0000-0000-000000000001",
+    "resources": [
+     {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+      "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+     }
+    ],
+    "scenarioConfigurationName": "xbox-live-demo",
+    "scenarioName": "ComputeZoneDown-1.1",
+    "scenarioRunJson": "{\"schemaVersion\":\"1.0\",\"scenarioId\":\"ComputeZoneDown-1.1\",\"maxTimeoutDuration\":\"03:00:00\",\"actions\":{\"vmssZoneShutdown\":{\"id\":\"vmssZoneShutdown\",\"displayName\":\"Shut down VMSS instances in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":[{\"metadata\":{\"locations\":[\"eastus2\"],\"zones\":[\"1\",\"2\",\"3\"],\"memberOfResourceId\":null},\"discoveredAt\":\"2026-08-25T16:28:24.7434398+00:00\",\"tags\":{\"platformsettings.host_environment.service.platform_optedin_for_rootcerts\":\"true\",\"azsecpack\":\"nonprod\",\"aks-managed-consolidated-additional-properties\":\"0b55a8e2-a00c-11f1-bd36-fa3a5f12f6ef\",\"aks-managed-networkisolated-outbound-type\":\"\",\"aks-managed-bootstrap-profile-acr-name\":\"\",\"aks-managed-kubeletIdentityClientID\":\"77661510-50d3-429b-b8b3-d209f2d62985\",\"aks-managed-enable-imds-restriction\":\"false\",\"aks-managed-saip-default-client-id\":\"\",\"aks-managed-resourceNameSuffix\":\"25871682\",\"aks-managed-createOperationID\":\"7a4b2955-7d5c-423d-bde0-0dabbeb264e7\",\"aks-managed-creationSource\":\"vmssclient-aks-nodepool1-10969888-vmss\",\"aks-managed-orchestrator\":\"Kubernetes:1.35.7\",\"compute.aks.billing\":\"linux\",\"aks-managed-ssh-access\":\"LocalUser\",\"aks-managed-poolName\":\"nodepool1\",\"aks-managed-azure-cni-overlay\":\"true\"},\"namespace\":\"Arm\",\"name\":\"aks-nodepool1-10969888-vmss\",\"resourceType\":\"microsoft.compute/virtualmachinescalesets\",\"fullyQualifiedIdentifier\":\"/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss\",\"parent\":null}],\"faultUrn\":\"urn:csci:microsoft:virtualMachineScaleSet:shutdown/1.0.0\",\"faultParameters\":{\"Zones\":[\"3\"]}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:05:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":false},\"vmZoneShutdown\":{\"id\":\"vmZoneShutdown\",\"displayName\":\"Shut down VMs in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":\"%%{resourceSelectors.virtualMachines}%%\",\"faultUrn\":\"urn:csci:microsoft:compute:shutdown/1.0.0\",\"faultParameters\":{}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:05:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":true}}}",
+    "scenarioRunSummary": [
+     {
+      "actionUrn": "vmssZoneShutdown",
+      "completedAt": "2026-09-14T19:40:43.3727549+00:00",
+      "resources": [
+       {
+        "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+        "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+       }
+      ],
+      "startedAt": "2026-09-14T19:35:36.7442773+00:00",
+      "state": "Succeeded"
+     }
+    ],
+    "startTime": "2026-09-14T19:35:34.5137524+00:00",
+    "status": "Succeeded",
+    "workspaceName": "chaos-demo-workspace",
+    "zoneResolution": {
+     "mode": "Logical",
+     "requestedPhysicalZones": [],
+     "subscriptionZoneMappings": []
+    }
+   },
+   "resourceGroup": "chaos-demo-rg",
+   "systemData": {
+    "createdBy": "Azure Chaos Studio",
+    "createdByType": "Application"
+   },
+   "type": "Microsoft.Chaos/workspaces/scenarios/runs"
+  },
+  {
+   "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/chaos-demo-workspace/scenarios/ComputeZoneDown-1.1/runs/120c94dd-d616-48ff-bba7-73010e3b9585",
+   "name": "120c94dd-d616-48ff-bba7-73010e3b9585",
+   "properties": {
+    "endTime": "2026-09-13T21:35:12.2139549+00:00",
+    "errors": [],
+    "managedIdentityPrincipalId": "00000000-0000-0000-0000-000000000001",
+    "resources": [
+     {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+      "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+     }
+    ],
+    "scenarioConfigurationName": "study-20260913t211053z98c20750",
+    "scenarioName": "ComputeZoneDown-1.1",
+    "scenarioRunJson": "{\"schemaVersion\":\"1.0\",\"scenarioId\":\"ComputeZoneDown-1.1\",\"maxTimeoutDuration\":\"03:00:00\",\"actions\":{\"vmssZoneShutdown\":{\"id\":\"vmssZoneShutdown\",\"displayName\":\"Shut down VMSS instances in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":[{\"metadata\":{\"locations\":[\"eastus2\"],\"zones\":[\"1\",\"2\",\"3\"],\"memberOfResourceId\":null},\"discoveredAt\":\"2026-08-25T16:28:24.7434398+00:00\",\"tags\":{\"platformsettings.host_environment.service.platform_optedin_for_rootcerts\":\"true\",\"azsecpack\":\"nonprod\",\"aks-managed-consolidated-additional-properties\":\"0b55a8e2-a00c-11f1-bd36-fa3a5f12f6ef\",\"aks-managed-networkisolated-outbound-type\":\"\",\"aks-managed-bootstrap-profile-acr-name\":\"\",\"aks-managed-kubeletIdentityClientID\":\"77661510-50d3-429b-b8b3-d209f2d62985\",\"aks-managed-enable-imds-restriction\":\"false\",\"aks-managed-saip-default-client-id\":\"\",\"aks-managed-resourceNameSuffix\":\"25871682\",\"aks-managed-createOperationID\":\"7a4b2955-7d5c-423d-bde0-0dabbeb264e7\",\"aks-managed-creationSource\":\"vmssclient-aks-nodepool1-10969888-vmss\",\"aks-managed-orchestrator\":\"Kubernetes:1.35.7\",\"compute.aks.billing\":\"linux\",\"aks-managed-ssh-access\":\"LocalUser\",\"aks-managed-poolName\":\"nodepool1\",\"aks-managed-azure-cni-overlay\":\"true\"},\"namespace\":\"Arm\",\"name\":\"aks-nodepool1-10969888-vmss\",\"resourceType\":\"microsoft.compute/virtualmachinescalesets\",\"fullyQualifiedIdentifier\":\"/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss\",\"parent\":null}],\"faultUrn\":\"urn:csci:microsoft:virtualMachineScaleSet:shutdown/1.0.0\",\"faultParameters\":{\"Zones\":[\"1\"]}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:05:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":false},\"vmZoneShutdown\":{\"id\":\"vmZoneShutdown\",\"displayName\":\"Shut down VMs in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":\"%%{resourceSelectors.virtualMachines}%%\",\"faultUrn\":\"urn:csci:microsoft:compute:shutdown/1.0.0\",\"faultParameters\":{}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:05:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":true}}}",
+    "scenarioRunSummary": [
+     {
+      "actionUrn": "vmssZoneShutdown",
+      "completedAt": "2026-09-13T21:35:12.1435984+00:00",
+      "resources": [
+       {
+        "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+        "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+       }
+      ],
+      "startedAt": "2026-09-13T21:30:05.1571916+00:00",
+      "state": "Succeeded"
+     }
+    ],
+    "startTime": "2026-09-13T21:30:03.5018246+00:00",
+    "status": "Succeeded",
+    "workspaceName": "chaos-demo-workspace",
+    "zoneResolution": {
+     "mode": "Logical",
+     "requestedPhysicalZones": [],
+     "subscriptionZoneMappings": []
+    }
+   },
+   "resourceGroup": "chaos-demo-rg",
+   "systemData": {
+    "createdBy": "Azure Chaos Studio",
+    "createdByType": "Application"
+   },
+   "type": "Microsoft.Chaos/workspaces/scenarios/runs"
+  },
+  {
+   "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/chaos-demo-workspace/scenarios/ComputeZoneDown-1.1/runs/bb61ae81-1d34-4f33-bf6a-c93c44c22f62",
+   "name": "bb61ae81-1d34-4f33-bf6a-c93c44c22f62",
+   "properties": {
+    "endTime": "2026-08-25T16:44:44.6081505+00:00",
+    "errors": [],
+    "managedIdentityPrincipalId": "00000000-0000-0000-0000-000000000001",
+    "resources": [
+     {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+      "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+     }
+    ],
+    "scenarioConfigurationName": "xbox-live-demo",
+    "scenarioName": "ComputeZoneDown-1.1",
+    "scenarioRunJson": "{\"schemaVersion\":\"1.0\",\"scenarioId\":\"ComputeZoneDown-1.1\",\"maxTimeoutDuration\":\"03:00:00\",\"actions\":{\"vmssZoneShutdown\":{\"id\":\"vmssZoneShutdown\",\"displayName\":\"Shut down VMSS instances in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":[{\"metadata\":{\"locations\":[\"eastus2\"],\"zones\":[\"1\",\"2\",\"3\"],\"memberOfResourceId\":null},\"discoveredAt\":\"2026-08-25T16:28:24.7434398+00:00\",\"tags\":{\"platformsettings.host_environment.service.platform_optedin_for_rootcerts\":\"true\",\"azsecpack\":\"nonprod\",\"aks-managed-consolidated-additional-properties\":\"0b55a8e2-a00c-11f1-bd36-fa3a5f12f6ef\",\"aks-managed-networkisolated-outbound-type\":\"\",\"aks-managed-bootstrap-profile-acr-name\":\"\",\"aks-managed-kubeletIdentityClientID\":\"77661510-50d3-429b-b8b3-d209f2d62985\",\"aks-managed-enable-imds-restriction\":\"false\",\"aks-managed-saip-default-client-id\":\"\",\"aks-managed-resourceNameSuffix\":\"25871682\",\"aks-managed-createOperationID\":\"7a4b2955-7d5c-423d-bde0-0dabbeb264e7\",\"aks-managed-creationSource\":\"vmssclient-aks-nodepool1-10969888-vmss\",\"aks-managed-orchestrator\":\"Kubernetes:1.35.7\",\"compute.aks.billing\":\"linux\",\"aks-managed-ssh-access\":\"LocalUser\",\"aks-managed-poolName\":\"nodepool1\",\"aks-managed-azure-cni-overlay\":\"true\"},\"namespace\":\"Arm\",\"name\":\"aks-nodepool1-10969888-vmss\",\"resourceType\":\"microsoft.compute/virtualmachinescalesets\",\"fullyQualifiedIdentifier\":\"/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss\",\"parent\":null}],\"faultUrn\":\"urn:csci:microsoft:virtualMachineScaleSet:shutdown/1.0.0\",\"faultParameters\":{\"Zones\":[\"3\"]}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:05:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":false},\"vmZoneShutdown\":{\"id\":\"vmZoneShutdown\",\"displayName\":\"Shut down VMs in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":\"%%{resourceSelectors.virtualMachines}%%\",\"faultUrn\":\"urn:csci:microsoft:compute:shutdown/1.0.0\",\"faultParameters\":{}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:05:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":true}}}",
+    "scenarioRunSummary": [
+     {
+      "actionUrn": "vmssZoneShutdown",
+      "completedAt": "2026-08-25T16:44:44.5402227+00:00",
+      "resources": [
+       {
+        "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+        "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+       }
+      ],
+      "startedAt": "2026-08-25T16:39:37.8003253+00:00",
+      "state": "Succeeded"
+     }
+    ],
+    "startTime": "2026-08-25T16:39:34.8390617+00:00",
+    "status": "Succeeded",
+    "workspaceName": "chaos-demo-workspace",
+    "zoneResolution": {
+     "mode": "Logical",
+     "requestedPhysicalZones": [],
+     "subscriptionZoneMappings": []
+    }
+   },
+   "resourceGroup": "chaos-demo-rg",
+   "systemData": {
+    "createdBy": "Azure Chaos Studio",
+    "createdByType": "Application"
+   },
+   "type": "Microsoft.Chaos/workspaces/scenarios/runs"
+  },
+  {
+   "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/chaos-demo-workspace/scenarios/ComputeZoneDown-1.1/runs/6699b92d-1956-4a37-8ff3-1908754ae49e",
+   "name": "6699b92d-1956-4a37-8ff3-1908754ae49e",
+   "properties": {
+    "endTime": "2026-08-25T16:35:01.6284116+00:00",
+    "errors": [],
+    "managedIdentityPrincipalId": "00000000-0000-0000-0000-000000000001",
+    "resources": [
+     {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+      "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+     }
+    ],
+    "scenarioConfigurationName": "xbox-live-demo",
+    "scenarioName": "ComputeZoneDown-1.1",
+    "scenarioRunJson": "{\"schemaVersion\":\"1.0\",\"scenarioId\":\"ComputeZoneDown-1.1\",\"maxTimeoutDuration\":\"03:00:00\",\"actions\":{\"vmssZoneShutdown\":{\"id\":\"vmssZoneShutdown\",\"displayName\":\"Shut down VMSS instances in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":[{\"metadata\":{\"locations\":[\"eastus2\"],\"zones\":[\"1\",\"2\",\"3\"],\"memberOfResourceId\":null},\"discoveredAt\":\"2026-08-25T16:28:24.7434398+00:00\",\"tags\":{\"platformsettings.host_environment.service.platform_optedin_for_rootcerts\":\"true\",\"azsecpack\":\"nonprod\",\"aks-managed-consolidated-additional-properties\":\"0b55a8e2-a00c-11f1-bd36-fa3a5f12f6ef\",\"aks-managed-networkisolated-outbound-type\":\"\",\"aks-managed-bootstrap-profile-acr-name\":\"\",\"aks-managed-kubeletIdentityClientID\":\"77661510-50d3-429b-b8b3-d209f2d62985\",\"aks-managed-enable-imds-restriction\":\"false\",\"aks-managed-saip-default-client-id\":\"\",\"aks-managed-resourceNameSuffix\":\"25871682\",\"aks-managed-createOperationID\":\"7a4b2955-7d5c-423d-bde0-0dabbeb264e7\",\"aks-managed-creationSource\":\"vmssclient-aks-nodepool1-10969888-vmss\",\"aks-managed-orchestrator\":\"Kubernetes:1.35.7\",\"compute.aks.billing\":\"linux\",\"aks-managed-ssh-access\":\"LocalUser\",\"aks-managed-poolName\":\"nodepool1\",\"aks-managed-azure-cni-overlay\":\"true\"},\"namespace\":\"Arm\",\"name\":\"aks-nodepool1-10969888-vmss\",\"resourceType\":\"microsoft.compute/virtualmachinescalesets\",\"fullyQualifiedIdentifier\":\"/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss\",\"parent\":null}],\"faultUrn\":\"urn:csci:microsoft:virtualMachineScaleSet:shutdown/1.0.0\",\"faultParameters\":{\"Zones\":[\"3\"]}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:05:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":false},\"vmZoneShutdown\":{\"id\":\"vmZoneShutdown\",\"displayName\":\"Shut down VMs in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":\"%%{resourceSelectors.virtualMachines}%%\",\"faultUrn\":\"urn:csci:microsoft:compute:shutdown/1.0.0\",\"faultParameters\":{}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:05:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":true}}}",
+    "scenarioRunSummary": [
+     {
+      "actionUrn": "vmssZoneShutdown",
+      "completedAt": "2026-08-25T16:35:01.5271827+00:00",
+      "resources": [
+       {
+        "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+        "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+       }
+      ],
+      "startedAt": "2026-08-25T16:31:57.8142354+00:00",
+      "state": "Canceled"
+     }
+    ],
+    "startTime": "2026-08-25T16:31:56.0239431+00:00",
+    "status": "Canceled",
+    "workspaceName": "chaos-demo-workspace",
+    "zoneResolution": {
+     "mode": "Logical",
+     "requestedPhysicalZones": [],
+     "subscriptionZoneMappings": []
+    }
+   },
+   "resourceGroup": "chaos-demo-rg",
+   "systemData": {
+    "createdBy": "Azure Chaos Studio",
+    "createdByType": "Application"
+   },
+   "type": "Microsoft.Chaos/workspaces/scenarios/runs"
+  },
+  {
+   "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/chaos-demo-workspace/scenarios/ComputeZoneDown-1.1/runs/a7c08da3-0ffe-45ca-a225-943779e6ef40",
+   "name": "a7c08da3-0ffe-45ca-a225-943779e6ef40",
+   "properties": {
+    "endTime": "2026-08-25T15:59:25.5647907+00:00",
+    "errors": [],
+    "managedIdentityPrincipalId": "00000000-0000-0000-0000-000000000001",
+    "resources": [
+     {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+      "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+     }
+    ],
+    "scenarioConfigurationName": "xbox-live-demo",
+    "scenarioName": "ComputeZoneDown-1.1",
+    "scenarioRunJson": "{\"schemaVersion\":\"1.0\",\"scenarioId\":\"ComputeZoneDown-1.1\",\"maxTimeoutDuration\":\"03:00:00\",\"actions\":{\"vmssZoneShutdown\":{\"id\":\"vmssZoneShutdown\",\"displayName\":\"Shut down VMSS instances in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":[{\"metadata\":{\"locations\":[\"eastus2\"],\"zones\":[\"1\",\"2\",\"3\"],\"memberOfResourceId\":null},\"discoveredAt\":\"2026-08-25T06:49:09.3970755+00:00\",\"tags\":{\"platformsettings.host_environment.service.platform_optedin_for_rootcerts\":\"true\",\"azsecpack\":\"nonprod\",\"aks-managed-consolidated-additional-properties\":\"0b55a8e2-a00c-11f1-bd36-fa3a5f12f6ef\",\"aks-managed-networkisolated-outbound-type\":\"\",\"aks-managed-bootstrap-profile-acr-name\":\"\",\"aks-managed-kubeletIdentityClientID\":\"77661510-50d3-429b-b8b3-d209f2d62985\",\"aks-managed-enable-imds-restriction\":\"false\",\"aks-managed-saip-default-client-id\":\"\",\"aks-managed-resourceNameSuffix\":\"25871682\",\"aks-managed-createOperationID\":\"7a4b2955-7d5c-423d-bde0-0dabbeb264e7\",\"aks-managed-creationSource\":\"vmssclient-aks-nodepool1-10969888-vmss\",\"aks-managed-orchestrator\":\"Kubernetes:1.35.7\",\"compute.aks.billing\":\"linux\",\"aks-managed-ssh-access\":\"LocalUser\",\"aks-managed-poolName\":\"nodepool1\",\"aks-managed-azure-cni-overlay\":\"true\"},\"namespace\":\"Arm\",\"name\":\"aks-nodepool1-10969888-vmss\",\"resourceType\":\"microsoft.compute/virtualmachinescalesets\",\"fullyQualifiedIdentifier\":\"/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss\",\"parent\":null}],\"faultUrn\":\"urn:csci:microsoft:virtualMachineScaleSet:shutdown/1.0.0\",\"faultParameters\":{\"Zones\":[\"3\"]}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:05:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":false},\"vmZoneShutdown\":{\"id\":\"vmZoneShutdown\",\"displayName\":\"Shut down VMs in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":\"%%{resourceSelectors.virtualMachines}%%\",\"faultUrn\":\"urn:csci:microsoft:compute:shutdown/1.0.0\",\"faultParameters\":{}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:05:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":true}}}",
+    "scenarioRunSummary": [
+     {
+      "actionUrn": "vmssZoneShutdown",
+      "completedAt": "2026-08-25T15:59:25.3770537+00:00",
+      "resources": [
+       {
+        "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+        "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+       }
+      ],
+      "startedAt": "2026-08-25T15:57:53.0092685+00:00",
+      "state": "Canceled"
+     }
+    ],
+    "startTime": "2026-08-25T15:57:50.4008985+00:00",
+    "status": "Canceled",
+    "workspaceName": "chaos-demo-workspace",
+    "zoneResolution": {
+     "mode": "Logical",
+     "requestedPhysicalZones": [],
+     "subscriptionZoneMappings": []
+    }
+   },
+   "resourceGroup": "chaos-demo-rg",
+   "systemData": {
+    "createdBy": "Azure Chaos Studio",
+    "createdByType": "Application"
+   },
+   "type": "Microsoft.Chaos/workspaces/scenarios/runs"
+  },
+  {
+   "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/chaos-demo-workspace/scenarios/ComputeZoneDown-1.1/runs/293a5e5d-94ba-4ff6-aae6-10ef8e5dc9a1",
+   "name": "293a5e5d-94ba-4ff6-aae6-10ef8e5dc9a1",
+   "properties": {
+    "endTime": "2026-08-25T15:39:12.3428258+00:00",
+    "errors": [],
+    "managedIdentityPrincipalId": "00000000-0000-0000-0000-000000000001",
+    "resources": [
+     {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+      "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+     }
+    ],
+    "scenarioConfigurationName": "xbox-live-demo",
+    "scenarioName": "ComputeZoneDown-1.1",
+    "scenarioRunJson": "{\"schemaVersion\":\"1.0\",\"scenarioId\":\"ComputeZoneDown-1.1\",\"maxTimeoutDuration\":\"03:00:00\",\"actions\":{\"vmssZoneShutdown\":{\"id\":\"vmssZoneShutdown\",\"displayName\":\"Shut down VMSS instances in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":[{\"metadata\":{\"locations\":[\"eastus2\"],\"zones\":[\"1\",\"2\",\"3\"],\"memberOfResourceId\":null},\"discoveredAt\":\"2026-08-25T06:49:09.3970755+00:00\",\"tags\":{\"platformsettings.host_environment.service.platform_optedin_for_rootcerts\":\"true\",\"azsecpack\":\"nonprod\",\"aks-managed-consolidated-additional-properties\":\"0b55a8e2-a00c-11f1-bd36-fa3a5f12f6ef\",\"aks-managed-networkisolated-outbound-type\":\"\",\"aks-managed-bootstrap-profile-acr-name\":\"\",\"aks-managed-kubeletIdentityClientID\":\"77661510-50d3-429b-b8b3-d209f2d62985\",\"aks-managed-enable-imds-restriction\":\"false\",\"aks-managed-saip-default-client-id\":\"\",\"aks-managed-resourceNameSuffix\":\"25871682\",\"aks-managed-createOperationID\":\"7a4b2955-7d5c-423d-bde0-0dabbeb264e7\",\"aks-managed-creationSource\":\"vmssclient-aks-nodepool1-10969888-vmss\",\"aks-managed-orchestrator\":\"Kubernetes:1.35.7\",\"compute.aks.billing\":\"linux\",\"aks-managed-ssh-access\":\"LocalUser\",\"aks-managed-poolName\":\"nodepool1\",\"aks-managed-azure-cni-overlay\":\"true\"},\"namespace\":\"Arm\",\"name\":\"aks-nodepool1-10969888-vmss\",\"resourceType\":\"microsoft.compute/virtualmachinescalesets\",\"fullyQualifiedIdentifier\":\"/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss\",\"parent\":null}],\"faultUrn\":\"urn:csci:microsoft:virtualMachineScaleSet:shutdown/1.0.0\",\"faultParameters\":{\"Zones\":[\"3\"]}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:05:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":false},\"vmZoneShutdown\":{\"id\":\"vmZoneShutdown\",\"displayName\":\"Shut down VMs in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":\"%%{resourceSelectors.virtualMachines}%%\",\"faultUrn\":\"urn:csci:microsoft:compute:shutdown/1.0.0\",\"faultParameters\":{}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:05:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":true}}}",
+    "scenarioRunSummary": [
+     {
+      "actionUrn": "vmssZoneShutdown",
+      "completedAt": "2026-08-25T15:39:12.2782071+00:00",
+      "resources": [
+       {
+        "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+        "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+       }
+      ],
+      "startedAt": "2026-08-25T15:34:05.7641244+00:00",
+      "state": "Succeeded"
+     }
+    ],
+    "startTime": "2026-08-25T15:34:01.2907288+00:00",
+    "status": "Succeeded",
+    "workspaceName": "chaos-demo-workspace",
+    "zoneResolution": {
+     "mode": "Logical",
+     "requestedPhysicalZones": [],
+     "subscriptionZoneMappings": []
+    }
+   },
+   "resourceGroup": "chaos-demo-rg",
+   "systemData": {
+    "createdBy": "Azure Chaos Studio",
+    "createdByType": "Application"
+   },
+   "type": "Microsoft.Chaos/workspaces/scenarios/runs"
+  },
+  {
+   "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/chaos-demo-workspace/scenarios/ComputeZoneDown-1.1/runs/aa795138-5d89-4187-8cdb-13a18204b5b3",
+   "name": "aa795138-5d89-4187-8cdb-13a18204b5b3",
+   "properties": {
+    "endTime": "2026-08-25T06:37:47.3649186+00:00",
+    "errors": [],
+    "managedIdentityPrincipalId": "00000000-0000-0000-0000-000000000001",
+    "resources": [
+     {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+      "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+     }
+    ],
+    "scenarioConfigurationName": "xbox-live-demo",
+    "scenarioName": "ComputeZoneDown-1.1",
+    "scenarioRunJson": "{\"schemaVersion\":\"1.0\",\"scenarioId\":\"ComputeZoneDown-1.1\",\"maxTimeoutDuration\":\"03:00:00\",\"actions\":{\"vmssZoneShutdown\":{\"id\":\"vmssZoneShutdown\",\"displayName\":\"Shut down VMSS instances in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":[{\"metadata\":{\"locations\":[\"eastus2\"],\"zones\":[\"1\",\"2\",\"3\"],\"memberOfResourceId\":null},\"discoveredAt\":\"2026-08-24T22:44:02.3412222+00:00\",\"tags\":{\"platformsettings.host_environment.service.platform_optedin_for_rootcerts\":\"true\",\"azsecpack\":\"nonprod\",\"aks-managed-consolidated-additional-properties\":\"0b55a8e2-a00c-11f1-bd36-fa3a5f12f6ef\",\"aks-managed-networkisolated-outbound-type\":\"\",\"aks-managed-bootstrap-profile-acr-name\":\"\",\"aks-managed-enable-imds-restriction\":\"false\",\"aks-managed-kubeletIdentityClientID\":\"77661510-50d3-429b-b8b3-d209f2d62985\",\"aks-managed-saip-default-client-id\":\"\",\"aks-managed-resourceNameSuffix\":\"25871682\",\"aks-managed-createOperationID\":\"7a4b2955-7d5c-423d-bde0-0dabbeb264e7\",\"aks-managed-creationSource\":\"vmssclient-aks-nodepool1-10969888-vmss\",\"aks-managed-orchestrator\":\"Kubernetes:1.35.7\",\"compute.aks.billing\":\"linux\",\"aks-managed-ssh-access\":\"LocalUser\",\"aks-managed-poolName\":\"nodepool1\",\"aks-managed-azure-cni-overlay\":\"true\",\"aks-managed-coordination\":\"true\"},\"namespace\":\"Arm\",\"name\":\"aks-nodepool1-10969888-vmss\",\"resourceType\":\"microsoft.compute/virtualmachinescalesets\",\"fullyQualifiedIdentifier\":\"/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss\",\"parent\":null}],\"faultUrn\":\"urn:csci:microsoft:virtualMachineScaleSet:shutdown/1.0.0\",\"faultParameters\":{\"Zones\":[\"2\"]}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:10:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":false},\"vmZoneShutdown\":{\"id\":\"vmZoneShutdown\",\"displayName\":\"Shut down VMs in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":\"%%{resourceSelectors.virtualMachines}%%\",\"faultUrn\":\"urn:csci:microsoft:compute:shutdown/1.0.0\",\"faultParameters\":{}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:10:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":true}}}",
+    "scenarioRunSummary": [
+     {
+      "actionUrn": "vmssZoneShutdown",
+      "completedAt": "2026-08-25T06:37:47.2623484+00:00",
+      "resources": [
+       {
+        "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+        "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+       }
+      ],
+      "startedAt": "2026-08-25T06:31:56.1225539+00:00",
+      "state": "Canceled"
+     }
+    ],
+    "startTime": "2026-08-25T06:31:54.7021227+00:00",
+    "status": "Canceled",
+    "workspaceName": "chaos-demo-workspace",
+    "zoneResolution": {
+     "mode": "Logical",
+     "requestedPhysicalZones": [],
+     "subscriptionZoneMappings": []
+    }
+   },
+   "resourceGroup": "chaos-demo-rg",
+   "systemData": {
+    "createdBy": "Azure Chaos Studio",
+    "createdByType": "Application"
+   },
+   "type": "Microsoft.Chaos/workspaces/scenarios/runs"
+  },
+  {
+   "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/chaos-demo-workspace/scenarios/ComputeZoneDown-1.1/runs/a78b9285-9571-4903-b489-e193a983178c",
+   "name": "a78b9285-9571-4903-b489-e193a983178c",
+   "properties": {
+    "endTime": "2026-08-24T23:29:00.6688965+00:00",
+    "errors": [],
+    "managedIdentityPrincipalId": "00000000-0000-0000-0000-000000000001",
+    "resources": [
+     {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+      "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+     }
+    ],
+    "scenarioConfigurationName": "xbox-zone2-demo",
+    "scenarioName": "ComputeZoneDown-1.1",
+    "scenarioRunJson": "{\"schemaVersion\":\"1.0\",\"scenarioId\":\"ComputeZoneDown-1.1\",\"maxTimeoutDuration\":\"03:00:00\",\"actions\":{\"vmssZoneShutdown\":{\"id\":\"vmssZoneShutdown\",\"displayName\":\"Shut down VMSS instances in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":[{\"metadata\":{\"locations\":[\"eastus2\"],\"zones\":[\"1\",\"2\",\"3\"],\"memberOfResourceId\":null},\"discoveredAt\":\"2026-08-24T22:44:02.3412222+00:00\",\"tags\":{\"platformsettings.host_environment.service.platform_optedin_for_rootcerts\":\"true\",\"azsecpack\":\"nonprod\",\"aks-managed-consolidated-additional-properties\":\"0b55a8e2-a00c-11f1-bd36-fa3a5f12f6ef\",\"aks-managed-networkisolated-outbound-type\":\"\",\"aks-managed-bootstrap-profile-acr-name\":\"\",\"aks-managed-enable-imds-restriction\":\"false\",\"aks-managed-kubeletIdentityClientID\":\"77661510-50d3-429b-b8b3-d209f2d62985\",\"aks-managed-saip-default-client-id\":\"\",\"aks-managed-resourceNameSuffix\":\"25871682\",\"aks-managed-createOperationID\":\"7a4b2955-7d5c-423d-bde0-0dabbeb264e7\",\"aks-managed-creationSource\":\"vmssclient-aks-nodepool1-10969888-vmss\",\"aks-managed-orchestrator\":\"Kubernetes:1.35.7\",\"compute.aks.billing\":\"linux\",\"aks-managed-ssh-access\":\"LocalUser\",\"aks-managed-poolName\":\"nodepool1\",\"aks-managed-azure-cni-overlay\":\"true\",\"aks-managed-coordination\":\"true\"},\"namespace\":\"Arm\",\"name\":\"aks-nodepool1-10969888-vmss\",\"resourceType\":\"microsoft.compute/virtualmachinescalesets\",\"fullyQualifiedIdentifier\":\"/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss\",\"parent\":null}],\"faultUrn\":\"urn:csci:microsoft:virtualMachineScaleSet:shutdown/1.0.0\",\"faultParameters\":{\"Zones\":[\"2\"]}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:10:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":false},\"vmZoneShutdown\":{\"id\":\"vmZoneShutdown\",\"displayName\":\"Shut down VMs in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":\"%%{resourceSelectors.virtualMachines}%%\",\"faultUrn\":\"urn:csci:microsoft:compute:shutdown/1.0.0\",\"faultParameters\":{}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:10:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":true}}}",
+    "scenarioRunSummary": [
+     {
+      "actionUrn": "vmssZoneShutdown",
+      "completedAt": "2026-08-24T23:29:00.5690566+00:00",
+      "resources": [
+       {
+        "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+        "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+       }
+      ],
+      "startedAt": "2026-08-24T23:18:53.7159442+00:00",
+      "state": "Succeeded"
+     }
+    ],
+    "startTime": "2026-08-24T23:18:51.1892227+00:00",
+    "status": "Succeeded",
+    "workspaceName": "chaos-demo-workspace",
+    "zoneResolution": {
+     "mode": "Logical",
+     "requestedPhysicalZones": [],
+     "subscriptionZoneMappings": []
+    }
+   },
+   "resourceGroup": "chaos-demo-rg",
+   "systemData": {
+    "createdBy": "Azure Chaos Studio",
+    "createdByType": "Application"
+   },
+   "type": "Microsoft.Chaos/workspaces/scenarios/runs"
+  },
+  {
+   "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/chaos-demo-workspace/scenarios/ComputeZoneDown-1.1/runs/d88703a8-eb7a-4a0e-93c0-6b3dcbeb6f6b",
+   "name": "d88703a8-eb7a-4a0e-93c0-6b3dcbeb6f6b",
+   "properties": {
+    "endTime": "2026-08-24T23:16:49.8227404+00:00",
+    "errors": [],
+    "managedIdentityPrincipalId": "00000000-0000-0000-0000-000000000001",
+    "resources": [
+     {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+      "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+     }
+    ],
+    "scenarioConfigurationName": "xbox-zone2-demo",
+    "scenarioName": "ComputeZoneDown-1.1",
+    "scenarioRunJson": "{\"schemaVersion\":\"1.0\",\"scenarioId\":\"ComputeZoneDown-1.1\",\"maxTimeoutDuration\":\"03:00:00\",\"actions\":{\"vmssZoneShutdown\":{\"id\":\"vmssZoneShutdown\",\"displayName\":\"Shut down VMSS instances in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":[{\"metadata\":{\"locations\":[\"eastus2\"],\"zones\":[\"1\",\"2\",\"3\"],\"memberOfResourceId\":null},\"discoveredAt\":\"2026-08-24T22:44:02.3412222+00:00\",\"tags\":{\"platformsettings.host_environment.service.platform_optedin_for_rootcerts\":\"true\",\"azsecpack\":\"nonprod\",\"aks-managed-consolidated-additional-properties\":\"0b55a8e2-a00c-11f1-bd36-fa3a5f12f6ef\",\"aks-managed-networkisolated-outbound-type\":\"\",\"aks-managed-bootstrap-profile-acr-name\":\"\",\"aks-managed-enable-imds-restriction\":\"false\",\"aks-managed-kubeletIdentityClientID\":\"77661510-50d3-429b-b8b3-d209f2d62985\",\"aks-managed-saip-default-client-id\":\"\",\"aks-managed-resourceNameSuffix\":\"25871682\",\"aks-managed-createOperationID\":\"7a4b2955-7d5c-423d-bde0-0dabbeb264e7\",\"aks-managed-creationSource\":\"vmssclient-aks-nodepool1-10969888-vmss\",\"aks-managed-orchestrator\":\"Kubernetes:1.35.7\",\"compute.aks.billing\":\"linux\",\"aks-managed-ssh-access\":\"LocalUser\",\"aks-managed-poolName\":\"nodepool1\",\"aks-managed-azure-cni-overlay\":\"true\",\"aks-managed-coordination\":\"true\"},\"namespace\":\"Arm\",\"name\":\"aks-nodepool1-10969888-vmss\",\"resourceType\":\"microsoft.compute/virtualmachinescalesets\",\"fullyQualifiedIdentifier\":\"/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss\",\"parent\":null}],\"faultUrn\":\"urn:csci:microsoft:virtualMachineScaleSet:shutdown/1.0.0\",\"faultParameters\":{\"Zones\":[\"2\"]}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:10:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":false},\"vmZoneShutdown\":{\"id\":\"vmZoneShutdown\",\"displayName\":\"Shut down VMs in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":\"%%{resourceSelectors.virtualMachines}%%\",\"faultUrn\":\"urn:csci:microsoft:compute:shutdown/1.0.0\",\"faultParameters\":{}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:10:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":true}}}",
+    "scenarioRunSummary": [
+     {
+      "actionUrn": "vmssZoneShutdown",
+      "completedAt": "2026-08-24T23:16:49.6869082+00:00",
+      "resources": [
+       {
+        "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+        "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+       }
+      ],
+      "startedAt": "2026-08-24T23:06:40.7766+00:00",
+      "state": "Succeeded"
+     }
+    ],
+    "startTime": "2026-08-24T23:06:35.8652165+00:00",
+    "status": "Succeeded",
+    "workspaceName": "chaos-demo-workspace",
+    "zoneResolution": {
+     "mode": "Logical",
+     "requestedPhysicalZones": [],
+     "subscriptionZoneMappings": []
+    }
+   },
+   "resourceGroup": "chaos-demo-rg",
+   "systemData": {
+    "createdBy": "Azure Chaos Studio",
+    "createdByType": "Application"
+   },
+   "type": "Microsoft.Chaos/workspaces/scenarios/runs"
+  }
+ ],
+ "after": [
+  {
+   "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/chaos-demo-workspace/scenarios/ComputeZoneDown-1.1/runs/02e10afe-d27e-4989-9ca3-1ec9bea87482",
+   "name": "02e10afe-d27e-4989-9ca3-1ec9bea87482",
+   "properties": {
+    "errors": [],
+    "managedIdentityPrincipalId": "00000000-0000-0000-0000-000000000001",
+    "resources": [],
+    "scenarioConfigurationName": "preflight-20261006t004503z2a5cac01",
+    "scenarioName": "ComputeZoneDown-1.1",
+    "scenarioRunSummary": [],
+    "startTime": "2026-10-06T00:51:23.4349986+00:00",
+    "status": "Queued",
+    "workspaceName": "chaos-demo-workspace"
+   },
+   "resourceGroup": "chaos-demo-rg",
+   "systemData": {
+    "createdBy": "Azure Chaos Studio",
+    "createdByType": "Application"
+   },
+   "type": "Microsoft.Chaos/workspaces/scenarios/runs"
+  },
+  {
+   "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/chaos-demo-workspace/scenarios/ComputeZoneDown-1.1/runs/11b398c6-7d21-408b-b6d8-26a8a7b75f33",
+   "name": "11b398c6-7d21-408b-b6d8-26a8a7b75f33",
+   "properties": {
+    "endTime": "2026-09-24T20:09:57.7876121+00:00",
+    "errors": [],
+    "managedIdentityPrincipalId": "00000000-0000-0000-0000-000000000001",
+    "resources": [
+     {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+      "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+     }
+    ],
+    "scenarioConfigurationName": "xbox-live-demo",
+    "scenarioName": "ComputeZoneDown-1.1",
+    "scenarioRunJson": "{\"schemaVersion\":\"1.0\",\"scenarioId\":\"ComputeZoneDown-1.1\",\"maxTimeoutDuration\":\"03:00:00\",\"actions\":{\"vmssZoneShutdown\":{\"id\":\"vmssZoneShutdown\",\"displayName\":\"Shut down VMSS instances in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":[{\"metadata\":{\"locations\":[\"eastus2\"],\"zones\":[\"1\",\"2\",\"3\"],\"memberOfResourceId\":null},\"discoveredAt\":\"2026-08-25T16:28:24.7434398+00:00\",\"tags\":{\"platformsettings.host_environment.service.platform_optedin_for_rootcerts\":\"true\",\"azsecpack\":\"nonprod\",\"aks-managed-consolidated-additional-properties\":\"0b55a8e2-a00c-11f1-bd36-fa3a5f12f6ef\",\"aks-managed-networkisolated-outbound-type\":\"\",\"aks-managed-bootstrap-profile-acr-name\":\"\",\"aks-managed-kubeletIdentityClientID\":\"77661510-50d3-429b-b8b3-d209f2d62985\",\"aks-managed-enable-imds-restriction\":\"false\",\"aks-managed-saip-default-client-id\":\"\",\"aks-managed-resourceNameSuffix\":\"25871682\",\"aks-managed-createOperationID\":\"7a4b2955-7d5c-423d-bde0-0dabbeb264e7\",\"aks-managed-creationSource\":\"vmssclient-aks-nodepool1-10969888-vmss\",\"aks-managed-orchestrator\":\"Kubernetes:1.35.7\",\"compute.aks.billing\":\"linux\",\"aks-managed-ssh-access\":\"LocalUser\",\"aks-managed-poolName\":\"nodepool1\",\"aks-managed-azure-cni-overlay\":\"true\"},\"namespace\":\"Arm\",\"name\":\"aks-nodepool1-10969888-vmss\",\"resourceType\":\"microsoft.compute/virtualmachinescalesets\",\"fullyQualifiedIdentifier\":\"/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss\",\"parent\":null}],\"faultUrn\":\"urn:csci:microsoft:virtualMachineScaleSet:shutdown/1.0.0\",\"faultParameters\":{\"Zones\":[\"3\"]}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:05:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":false},\"vmZoneShutdown\":{\"id\":\"vmZoneShutdown\",\"displayName\":\"Shut down VMs in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":\"%%{resourceSelectors.virtualMachines}%%\",\"faultUrn\":\"urn:csci:microsoft:compute:shutdown/1.0.0\",\"faultParameters\":{}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:05:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":true}}}",
+    "scenarioRunSummary": [
+     {
+      "actionUrn": "vmssZoneShutdown",
+      "completedAt": "2026-09-24T20:09:57.7173756+00:00",
+      "resources": [
+       {
+        "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+        "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+       }
+      ],
+      "startedAt": "2026-09-24T20:04:50.8725716+00:00",
+      "state": "Succeeded"
+     }
+    ],
+    "startTime": "2026-09-24T20:04:48.7931856+00:00",
+    "status": "Succeeded",
+    "workspaceName": "chaos-demo-workspace",
+    "zoneResolution": {
+     "mode": "Logical",
+     "requestedPhysicalZones": [],
+     "subscriptionZoneMappings": []
+    }
+   },
+   "resourceGroup": "chaos-demo-rg",
+   "systemData": {
+    "createdBy": "Azure Chaos Studio",
+    "createdByType": "Application"
+   },
+   "type": "Microsoft.Chaos/workspaces/scenarios/runs"
+  },
+  {
+   "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/chaos-demo-workspace/scenarios/ComputeZoneDown-1.1/runs/6fa7a3d2-690b-4791-9492-31906e330a70",
+   "name": "6fa7a3d2-690b-4791-9492-31906e330a70",
+   "properties": {
+    "endTime": "2026-09-23T21:11:17.2987474+00:00",
+    "errors": [],
+    "managedIdentityPrincipalId": "00000000-0000-0000-0000-000000000001",
+    "resources": [
+     {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+      "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+     }
+    ],
+    "scenarioConfigurationName": "xbox-live-demo",
+    "scenarioName": "ComputeZoneDown-1.1",
+    "scenarioRunJson": "{\"schemaVersion\":\"1.0\",\"scenarioId\":\"ComputeZoneDown-1.1\",\"maxTimeoutDuration\":\"03:00:00\",\"actions\":{\"vmssZoneShutdown\":{\"id\":\"vmssZoneShutdown\",\"displayName\":\"Shut down VMSS instances in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":[{\"metadata\":{\"locations\":[\"eastus2\"],\"zones\":[\"1\",\"2\",\"3\"],\"memberOfResourceId\":null},\"discoveredAt\":\"2026-08-25T16:28:24.7434398+00:00\",\"tags\":{\"platformsettings.host_environment.service.platform_optedin_for_rootcerts\":\"true\",\"azsecpack\":\"nonprod\",\"aks-managed-consolidated-additional-properties\":\"0b55a8e2-a00c-11f1-bd36-fa3a5f12f6ef\",\"aks-managed-networkisolated-outbound-type\":\"\",\"aks-managed-bootstrap-profile-acr-name\":\"\",\"aks-managed-kubeletIdentityClientID\":\"77661510-50d3-429b-b8b3-d209f2d62985\",\"aks-managed-enable-imds-restriction\":\"false\",\"aks-managed-saip-default-client-id\":\"\",\"aks-managed-resourceNameSuffix\":\"25871682\",\"aks-managed-createOperationID\":\"7a4b2955-7d5c-423d-bde0-0dabbeb264e7\",\"aks-managed-creationSource\":\"vmssclient-aks-nodepool1-10969888-vmss\",\"aks-managed-orchestrator\":\"Kubernetes:1.35.7\",\"compute.aks.billing\":\"linux\",\"aks-managed-ssh-access\":\"LocalUser\",\"aks-managed-poolName\":\"nodepool1\",\"aks-managed-azure-cni-overlay\":\"true\"},\"namespace\":\"Arm\",\"name\":\"aks-nodepool1-10969888-vmss\",\"resourceType\":\"microsoft.compute/virtualmachinescalesets\",\"fullyQualifiedIdentifier\":\"/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss\",\"parent\":null}],\"faultUrn\":\"urn:csci:microsoft:virtualMachineScaleSet:shutdown/1.0.0\",\"faultParameters\":{\"Zones\":[\"3\"]}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:05:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":false},\"vmZoneShutdown\":{\"id\":\"vmZoneShutdown\",\"displayName\":\"Shut down VMs in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":\"%%{resourceSelectors.virtualMachines}%%\",\"faultUrn\":\"urn:csci:microsoft:compute:shutdown/1.0.0\",\"faultParameters\":{}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:05:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":true}}}",
+    "scenarioRunSummary": [
+     {
+      "actionUrn": "vmssZoneShutdown",
+      "completedAt": "2026-09-23T21:11:17.1215219+00:00",
+      "resources": [
+       {
+        "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+        "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+       }
+      ],
+      "startedAt": "2026-09-23T21:10:40.5467091+00:00",
+      "state": "Canceled"
+     }
+    ],
+    "startTime": "2026-09-23T21:10:37.5982331+00:00",
+    "status": "Canceled",
+    "workspaceName": "chaos-demo-workspace",
+    "zoneResolution": {
+     "mode": "Logical",
+     "requestedPhysicalZones": [],
+     "subscriptionZoneMappings": []
+    }
+   },
+   "resourceGroup": "chaos-demo-rg",
+   "systemData": {
+    "createdBy": "Azure Chaos Studio",
+    "createdByType": "Application"
+   },
+   "type": "Microsoft.Chaos/workspaces/scenarios/runs"
+  },
+  {
+   "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/chaos-demo-workspace/scenarios/ComputeZoneDown-1.1/runs/7114c5f0-2169-49e3-8e6a-6de2dbeb453d",
+   "name": "7114c5f0-2169-49e3-8e6a-6de2dbeb453d",
+   "properties": {
+    "endTime": "2026-09-15T17:24:40.6258744+00:00",
+    "errors": [],
+    "managedIdentityPrincipalId": "00000000-0000-0000-0000-000000000001",
+    "resources": [
+     {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+      "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+     }
+    ],
+    "scenarioConfigurationName": "study-20260915t165939z9dd3ef90",
+    "scenarioName": "ComputeZoneDown-1.1",
+    "scenarioRunJson": "{\"schemaVersion\":\"1.0\",\"scenarioId\":\"ComputeZoneDown-1.1\",\"maxTimeoutDuration\":\"03:00:00\",\"actions\":{\"vmssZoneShutdown\":{\"id\":\"vmssZoneShutdown\",\"displayName\":\"Shut down VMSS instances in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":[{\"metadata\":{\"locations\":[\"eastus2\"],\"zones\":[\"1\",\"2\",\"3\"],\"memberOfResourceId\":null},\"discoveredAt\":\"2026-08-25T16:28:24.7434398+00:00\",\"tags\":{\"platformsettings.host_environment.service.platform_optedin_for_rootcerts\":\"true\",\"azsecpack\":\"nonprod\",\"aks-managed-consolidated-additional-properties\":\"0b55a8e2-a00c-11f1-bd36-fa3a5f12f6ef\",\"aks-managed-networkisolated-outbound-type\":\"\",\"aks-managed-bootstrap-profile-acr-name\":\"\",\"aks-managed-kubeletIdentityClientID\":\"77661510-50d3-429b-b8b3-d209f2d62985\",\"aks-managed-enable-imds-restriction\":\"false\",\"aks-managed-saip-default-client-id\":\"\",\"aks-managed-resourceNameSuffix\":\"25871682\",\"aks-managed-createOperationID\":\"7a4b2955-7d5c-423d-bde0-0dabbeb264e7\",\"aks-managed-creationSource\":\"vmssclient-aks-nodepool1-10969888-vmss\",\"aks-managed-orchestrator\":\"Kubernetes:1.35.7\",\"compute.aks.billing\":\"linux\",\"aks-managed-ssh-access\":\"LocalUser\",\"aks-managed-poolName\":\"nodepool1\",\"aks-managed-azure-cni-overlay\":\"true\"},\"namespace\":\"Arm\",\"name\":\"aks-nodepool1-10969888-vmss\",\"resourceType\":\"microsoft.compute/virtualmachinescalesets\",\"fullyQualifiedIdentifier\":\"/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss\",\"parent\":null}],\"faultUrn\":\"urn:csci:microsoft:virtualMachineScaleSet:shutdown/1.0.0\",\"faultParameters\":{\"Zones\":[\"1\"]}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:05:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":false},\"vmZoneShutdown\":{\"id\":\"vmZoneShutdown\",\"displayName\":\"Shut down VMs in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":\"%%{resourceSelectors.virtualMachines}%%\",\"faultUrn\":\"urn:csci:microsoft:compute:shutdown/1.0.0\",\"faultParameters\":{}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:05:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":true}}}",
+    "scenarioRunSummary": [
+     {
+      "actionUrn": "vmssZoneShutdown",
+      "completedAt": "2026-09-15T17:24:40.5575343+00:00",
+      "resources": [
+       {
+        "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+        "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+       }
+      ],
+      "startedAt": "2026-09-15T17:19:33.7889088+00:00",
+      "state": "Succeeded"
+     }
+    ],
+    "startTime": "2026-09-15T17:19:29.5545959+00:00",
+    "status": "Succeeded",
+    "workspaceName": "chaos-demo-workspace",
+    "zoneResolution": {
+     "mode": "Logical",
+     "requestedPhysicalZones": [],
+     "subscriptionZoneMappings": []
+    }
+   },
+   "resourceGroup": "chaos-demo-rg",
+   "systemData": {
+    "createdBy": "Azure Chaos Studio",
+    "createdByType": "Application"
+   },
+   "type": "Microsoft.Chaos/workspaces/scenarios/runs"
+  },
+  {
+   "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/chaos-demo-workspace/scenarios/ComputeZoneDown-1.1/runs/1a3a2f65-ee7b-4a84-b93c-b7bd1f718897",
+   "name": "1a3a2f65-ee7b-4a84-b93c-b7bd1f718897",
+   "properties": {
+    "endTime": "2026-09-14T19:40:43.4465257+00:00",
+    "errors": [],
+    "managedIdentityPrincipalId": "00000000-0000-0000-0000-000000000001",
+    "resources": [
+     {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+      "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+     }
+    ],
+    "scenarioConfigurationName": "xbox-live-demo",
+    "scenarioName": "ComputeZoneDown-1.1",
+    "scenarioRunJson": "{\"schemaVersion\":\"1.0\",\"scenarioId\":\"ComputeZoneDown-1.1\",\"maxTimeoutDuration\":\"03:00:00\",\"actions\":{\"vmssZoneShutdown\":{\"id\":\"vmssZoneShutdown\",\"displayName\":\"Shut down VMSS instances in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":[{\"metadata\":{\"locations\":[\"eastus2\"],\"zones\":[\"1\",\"2\",\"3\"],\"memberOfResourceId\":null},\"discoveredAt\":\"2026-08-25T16:28:24.7434398+00:00\",\"tags\":{\"platformsettings.host_environment.service.platform_optedin_for_rootcerts\":\"true\",\"azsecpack\":\"nonprod\",\"aks-managed-consolidated-additional-properties\":\"0b55a8e2-a00c-11f1-bd36-fa3a5f12f6ef\",\"aks-managed-networkisolated-outbound-type\":\"\",\"aks-managed-bootstrap-profile-acr-name\":\"\",\"aks-managed-kubeletIdentityClientID\":\"77661510-50d3-429b-b8b3-d209f2d62985\",\"aks-managed-enable-imds-restriction\":\"false\",\"aks-managed-saip-default-client-id\":\"\",\"aks-managed-resourceNameSuffix\":\"25871682\",\"aks-managed-createOperationID\":\"7a4b2955-7d5c-423d-bde0-0dabbeb264e7\",\"aks-managed-creationSource\":\"vmssclient-aks-nodepool1-10969888-vmss\",\"aks-managed-orchestrator\":\"Kubernetes:1.35.7\",\"compute.aks.billing\":\"linux\",\"aks-managed-ssh-access\":\"LocalUser\",\"aks-managed-poolName\":\"nodepool1\",\"aks-managed-azure-cni-overlay\":\"true\"},\"namespace\":\"Arm\",\"name\":\"aks-nodepool1-10969888-vmss\",\"resourceType\":\"microsoft.compute/virtualmachinescalesets\",\"fullyQualifiedIdentifier\":\"/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss\",\"parent\":null}],\"faultUrn\":\"urn:csci:microsoft:virtualMachineScaleSet:shutdown/1.0.0\",\"faultParameters\":{\"Zones\":[\"3\"]}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:05:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":false},\"vmZoneShutdown\":{\"id\":\"vmZoneShutdown\",\"displayName\":\"Shut down VMs in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":\"%%{resourceSelectors.virtualMachines}%%\",\"faultUrn\":\"urn:csci:microsoft:compute:shutdown/1.0.0\",\"faultParameters\":{}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:05:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":true}}}",
+    "scenarioRunSummary": [
+     {
+      "actionUrn": "vmssZoneShutdown",
+      "completedAt": "2026-09-14T19:40:43.3727549+00:00",
+      "resources": [
+       {
+        "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+        "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+       }
+      ],
+      "startedAt": "2026-09-14T19:35:36.7442773+00:00",
+      "state": "Succeeded"
+     }
+    ],
+    "startTime": "2026-09-14T19:35:34.5137524+00:00",
+    "status": "Succeeded",
+    "workspaceName": "chaos-demo-workspace",
+    "zoneResolution": {
+     "mode": "Logical",
+     "requestedPhysicalZones": [],
+     "subscriptionZoneMappings": []
+    }
+   },
+   "resourceGroup": "chaos-demo-rg",
+   "systemData": {
+    "createdBy": "Azure Chaos Studio",
+    "createdByType": "Application"
+   },
+   "type": "Microsoft.Chaos/workspaces/scenarios/runs"
+  },
+  {
+   "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/chaos-demo-workspace/scenarios/ComputeZoneDown-1.1/runs/120c94dd-d616-48ff-bba7-73010e3b9585",
+   "name": "120c94dd-d616-48ff-bba7-73010e3b9585",
+   "properties": {
+    "endTime": "2026-09-13T21:35:12.2139549+00:00",
+    "errors": [],
+    "managedIdentityPrincipalId": "00000000-0000-0000-0000-000000000001",
+    "resources": [
+     {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+      "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+     }
+    ],
+    "scenarioConfigurationName": "study-20260913t211053z98c20750",
+    "scenarioName": "ComputeZoneDown-1.1",
+    "scenarioRunJson": "{\"schemaVersion\":\"1.0\",\"scenarioId\":\"ComputeZoneDown-1.1\",\"maxTimeoutDuration\":\"03:00:00\",\"actions\":{\"vmssZoneShutdown\":{\"id\":\"vmssZoneShutdown\",\"displayName\":\"Shut down VMSS instances in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":[{\"metadata\":{\"locations\":[\"eastus2\"],\"zones\":[\"1\",\"2\",\"3\"],\"memberOfResourceId\":null},\"discoveredAt\":\"2026-08-25T16:28:24.7434398+00:00\",\"tags\":{\"platformsettings.host_environment.service.platform_optedin_for_rootcerts\":\"true\",\"azsecpack\":\"nonprod\",\"aks-managed-consolidated-additional-properties\":\"0b55a8e2-a00c-11f1-bd36-fa3a5f12f6ef\",\"aks-managed-networkisolated-outbound-type\":\"\",\"aks-managed-bootstrap-profile-acr-name\":\"\",\"aks-managed-kubeletIdentityClientID\":\"77661510-50d3-429b-b8b3-d209f2d62985\",\"aks-managed-enable-imds-restriction\":\"false\",\"aks-managed-saip-default-client-id\":\"\",\"aks-managed-resourceNameSuffix\":\"25871682\",\"aks-managed-createOperationID\":\"7a4b2955-7d5c-423d-bde0-0dabbeb264e7\",\"aks-managed-creationSource\":\"vmssclient-aks-nodepool1-10969888-vmss\",\"aks-managed-orchestrator\":\"Kubernetes:1.35.7\",\"compute.aks.billing\":\"linux\",\"aks-managed-ssh-access\":\"LocalUser\",\"aks-managed-poolName\":\"nodepool1\",\"aks-managed-azure-cni-overlay\":\"true\"},\"namespace\":\"Arm\",\"name\":\"aks-nodepool1-10969888-vmss\",\"resourceType\":\"microsoft.compute/virtualmachinescalesets\",\"fullyQualifiedIdentifier\":\"/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss\",\"parent\":null}],\"faultUrn\":\"urn:csci:microsoft:virtualMachineScaleSet:shutdown/1.0.0\",\"faultParameters\":{\"Zones\":[\"1\"]}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:05:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":false},\"vmZoneShutdown\":{\"id\":\"vmZoneShutdown\",\"displayName\":\"Shut down VMs in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":\"%%{resourceSelectors.virtualMachines}%%\",\"faultUrn\":\"urn:csci:microsoft:compute:shutdown/1.0.0\",\"faultParameters\":{}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:05:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":true}}}",
+    "scenarioRunSummary": [
+     {
+      "actionUrn": "vmssZoneShutdown",
+      "completedAt": "2026-09-13T21:35:12.1435984+00:00",
+      "resources": [
+       {
+        "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+        "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+       }
+      ],
+      "startedAt": "2026-09-13T21:30:05.1571916+00:00",
+      "state": "Succeeded"
+     }
+    ],
+    "startTime": "2026-09-13T21:30:03.5018246+00:00",
+    "status": "Succeeded",
+    "workspaceName": "chaos-demo-workspace",
+    "zoneResolution": {
+     "mode": "Logical",
+     "requestedPhysicalZones": [],
+     "subscriptionZoneMappings": []
+    }
+   },
+   "resourceGroup": "chaos-demo-rg",
+   "systemData": {
+    "createdBy": "Azure Chaos Studio",
+    "createdByType": "Application"
+   },
+   "type": "Microsoft.Chaos/workspaces/scenarios/runs"
+  },
+  {
+   "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/chaos-demo-workspace/scenarios/ComputeZoneDown-1.1/runs/bb61ae81-1d34-4f33-bf6a-c93c44c22f62",
+   "name": "bb61ae81-1d34-4f33-bf6a-c93c44c22f62",
+   "properties": {
+    "endTime": "2026-08-25T16:44:44.6081505+00:00",
+    "errors": [],
+    "managedIdentityPrincipalId": "00000000-0000-0000-0000-000000000001",
+    "resources": [
+     {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+      "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+     }
+    ],
+    "scenarioConfigurationName": "xbox-live-demo",
+    "scenarioName": "ComputeZoneDown-1.1",
+    "scenarioRunJson": "{\"schemaVersion\":\"1.0\",\"scenarioId\":\"ComputeZoneDown-1.1\",\"maxTimeoutDuration\":\"03:00:00\",\"actions\":{\"vmssZoneShutdown\":{\"id\":\"vmssZoneShutdown\",\"displayName\":\"Shut down VMSS instances in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":[{\"metadata\":{\"locations\":[\"eastus2\"],\"zones\":[\"1\",\"2\",\"3\"],\"memberOfResourceId\":null},\"discoveredAt\":\"2026-08-25T16:28:24.7434398+00:00\",\"tags\":{\"platformsettings.host_environment.service.platform_optedin_for_rootcerts\":\"true\",\"azsecpack\":\"nonprod\",\"aks-managed-consolidated-additional-properties\":\"0b55a8e2-a00c-11f1-bd36-fa3a5f12f6ef\",\"aks-managed-networkisolated-outbound-type\":\"\",\"aks-managed-bootstrap-profile-acr-name\":\"\",\"aks-managed-kubeletIdentityClientID\":\"77661510-50d3-429b-b8b3-d209f2d62985\",\"aks-managed-enable-imds-restriction\":\"false\",\"aks-managed-saip-default-client-id\":\"\",\"aks-managed-resourceNameSuffix\":\"25871682\",\"aks-managed-createOperationID\":\"7a4b2955-7d5c-423d-bde0-0dabbeb264e7\",\"aks-managed-creationSource\":\"vmssclient-aks-nodepool1-10969888-vmss\",\"aks-managed-orchestrator\":\"Kubernetes:1.35.7\",\"compute.aks.billing\":\"linux\",\"aks-managed-ssh-access\":\"LocalUser\",\"aks-managed-poolName\":\"nodepool1\",\"aks-managed-azure-cni-overlay\":\"true\"},\"namespace\":\"Arm\",\"name\":\"aks-nodepool1-10969888-vmss\",\"resourceType\":\"microsoft.compute/virtualmachinescalesets\",\"fullyQualifiedIdentifier\":\"/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss\",\"parent\":null}],\"faultUrn\":\"urn:csci:microsoft:virtualMachineScaleSet:shutdown/1.0.0\",\"faultParameters\":{\"Zones\":[\"3\"]}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:05:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":false},\"vmZoneShutdown\":{\"id\":\"vmZoneShutdown\",\"displayName\":\"Shut down VMs in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":\"%%{resourceSelectors.virtualMachines}%%\",\"faultUrn\":\"urn:csci:microsoft:compute:shutdown/1.0.0\",\"faultParameters\":{}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:05:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":true}}}",
+    "scenarioRunSummary": [
+     {
+      "actionUrn": "vmssZoneShutdown",
+      "completedAt": "2026-08-25T16:44:44.5402227+00:00",
+      "resources": [
+       {
+        "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+        "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+       }
+      ],
+      "startedAt": "2026-08-25T16:39:37.8003253+00:00",
+      "state": "Succeeded"
+     }
+    ],
+    "startTime": "2026-08-25T16:39:34.8390617+00:00",
+    "status": "Succeeded",
+    "workspaceName": "chaos-demo-workspace",
+    "zoneResolution": {
+     "mode": "Logical",
+     "requestedPhysicalZones": [],
+     "subscriptionZoneMappings": []
+    }
+   },
+   "resourceGroup": "chaos-demo-rg",
+   "systemData": {
+    "createdBy": "Azure Chaos Studio",
+    "createdByType": "Application"
+   },
+   "type": "Microsoft.Chaos/workspaces/scenarios/runs"
+  },
+  {
+   "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/chaos-demo-workspace/scenarios/ComputeZoneDown-1.1/runs/6699b92d-1956-4a37-8ff3-1908754ae49e",
+   "name": "6699b92d-1956-4a37-8ff3-1908754ae49e",
+   "properties": {
+    "endTime": "2026-08-25T16:35:01.6284116+00:00",
+    "errors": [],
+    "managedIdentityPrincipalId": "00000000-0000-0000-0000-000000000001",
+    "resources": [
+     {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+      "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+     }
+    ],
+    "scenarioConfigurationName": "xbox-live-demo",
+    "scenarioName": "ComputeZoneDown-1.1",
+    "scenarioRunJson": "{\"schemaVersion\":\"1.0\",\"scenarioId\":\"ComputeZoneDown-1.1\",\"maxTimeoutDuration\":\"03:00:00\",\"actions\":{\"vmssZoneShutdown\":{\"id\":\"vmssZoneShutdown\",\"displayName\":\"Shut down VMSS instances in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":[{\"metadata\":{\"locations\":[\"eastus2\"],\"zones\":[\"1\",\"2\",\"3\"],\"memberOfResourceId\":null},\"discoveredAt\":\"2026-08-25T16:28:24.7434398+00:00\",\"tags\":{\"platformsettings.host_environment.service.platform_optedin_for_rootcerts\":\"true\",\"azsecpack\":\"nonprod\",\"aks-managed-consolidated-additional-properties\":\"0b55a8e2-a00c-11f1-bd36-fa3a5f12f6ef\",\"aks-managed-networkisolated-outbound-type\":\"\",\"aks-managed-bootstrap-profile-acr-name\":\"\",\"aks-managed-kubeletIdentityClientID\":\"77661510-50d3-429b-b8b3-d209f2d62985\",\"aks-managed-enable-imds-restriction\":\"false\",\"aks-managed-saip-default-client-id\":\"\",\"aks-managed-resourceNameSuffix\":\"25871682\",\"aks-managed-createOperationID\":\"7a4b2955-7d5c-423d-bde0-0dabbeb264e7\",\"aks-managed-creationSource\":\"vmssclient-aks-nodepool1-10969888-vmss\",\"aks-managed-orchestrator\":\"Kubernetes:1.35.7\",\"compute.aks.billing\":\"linux\",\"aks-managed-ssh-access\":\"LocalUser\",\"aks-managed-poolName\":\"nodepool1\",\"aks-managed-azure-cni-overlay\":\"true\"},\"namespace\":\"Arm\",\"name\":\"aks-nodepool1-10969888-vmss\",\"resourceType\":\"microsoft.compute/virtualmachinescalesets\",\"fullyQualifiedIdentifier\":\"/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss\",\"parent\":null}],\"faultUrn\":\"urn:csci:microsoft:virtualMachineScaleSet:shutdown/1.0.0\",\"faultParameters\":{\"Zones\":[\"3\"]}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:05:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":false},\"vmZoneShutdown\":{\"id\":\"vmZoneShutdown\",\"displayName\":\"Shut down VMs in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":\"%%{resourceSelectors.virtualMachines}%%\",\"faultUrn\":\"urn:csci:microsoft:compute:shutdown/1.0.0\",\"faultParameters\":{}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:05:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":true}}}",
+    "scenarioRunSummary": [
+     {
+      "actionUrn": "vmssZoneShutdown",
+      "completedAt": "2026-08-25T16:35:01.5271827+00:00",
+      "resources": [
+       {
+        "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+        "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+       }
+      ],
+      "startedAt": "2026-08-25T16:31:57.8142354+00:00",
+      "state": "Canceled"
+     }
+    ],
+    "startTime": "2026-08-25T16:31:56.0239431+00:00",
+    "status": "Canceled",
+    "workspaceName": "chaos-demo-workspace",
+    "zoneResolution": {
+     "mode": "Logical",
+     "requestedPhysicalZones": [],
+     "subscriptionZoneMappings": []
+    }
+   },
+   "resourceGroup": "chaos-demo-rg",
+   "systemData": {
+    "createdBy": "Azure Chaos Studio",
+    "createdByType": "Application"
+   },
+   "type": "Microsoft.Chaos/workspaces/scenarios/runs"
+  },
+  {
+   "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/chaos-demo-workspace/scenarios/ComputeZoneDown-1.1/runs/a7c08da3-0ffe-45ca-a225-943779e6ef40",
+   "name": "a7c08da3-0ffe-45ca-a225-943779e6ef40",
+   "properties": {
+    "endTime": "2026-08-25T15:59:25.5647907+00:00",
+    "errors": [],
+    "managedIdentityPrincipalId": "00000000-0000-0000-0000-000000000001",
+    "resources": [
+     {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+      "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+     }
+    ],
+    "scenarioConfigurationName": "xbox-live-demo",
+    "scenarioName": "ComputeZoneDown-1.1",
+    "scenarioRunJson": "{\"schemaVersion\":\"1.0\",\"scenarioId\":\"ComputeZoneDown-1.1\",\"maxTimeoutDuration\":\"03:00:00\",\"actions\":{\"vmssZoneShutdown\":{\"id\":\"vmssZoneShutdown\",\"displayName\":\"Shut down VMSS instances in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":[{\"metadata\":{\"locations\":[\"eastus2\"],\"zones\":[\"1\",\"2\",\"3\"],\"memberOfResourceId\":null},\"discoveredAt\":\"2026-08-25T06:49:09.3970755+00:00\",\"tags\":{\"platformsettings.host_environment.service.platform_optedin_for_rootcerts\":\"true\",\"azsecpack\":\"nonprod\",\"aks-managed-consolidated-additional-properties\":\"0b55a8e2-a00c-11f1-bd36-fa3a5f12f6ef\",\"aks-managed-networkisolated-outbound-type\":\"\",\"aks-managed-bootstrap-profile-acr-name\":\"\",\"aks-managed-kubeletIdentityClientID\":\"77661510-50d3-429b-b8b3-d209f2d62985\",\"aks-managed-enable-imds-restriction\":\"false\",\"aks-managed-saip-default-client-id\":\"\",\"aks-managed-resourceNameSuffix\":\"25871682\",\"aks-managed-createOperationID\":\"7a4b2955-7d5c-423d-bde0-0dabbeb264e7\",\"aks-managed-creationSource\":\"vmssclient-aks-nodepool1-10969888-vmss\",\"aks-managed-orchestrator\":\"Kubernetes:1.35.7\",\"compute.aks.billing\":\"linux\",\"aks-managed-ssh-access\":\"LocalUser\",\"aks-managed-poolName\":\"nodepool1\",\"aks-managed-azure-cni-overlay\":\"true\"},\"namespace\":\"Arm\",\"name\":\"aks-nodepool1-10969888-vmss\",\"resourceType\":\"microsoft.compute/virtualmachinescalesets\",\"fullyQualifiedIdentifier\":\"/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss\",\"parent\":null}],\"faultUrn\":\"urn:csci:microsoft:virtualMachineScaleSet:shutdown/1.0.0\",\"faultParameters\":{\"Zones\":[\"3\"]}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:05:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":false},\"vmZoneShutdown\":{\"id\":\"vmZoneShutdown\",\"displayName\":\"Shut down VMs in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":\"%%{resourceSelectors.virtualMachines}%%\",\"faultUrn\":\"urn:csci:microsoft:compute:shutdown/1.0.0\",\"faultParameters\":{}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:05:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":true}}}",
+    "scenarioRunSummary": [
+     {
+      "actionUrn": "vmssZoneShutdown",
+      "completedAt": "2026-08-25T15:59:25.3770537+00:00",
+      "resources": [
+       {
+        "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+        "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+       }
+      ],
+      "startedAt": "2026-08-25T15:57:53.0092685+00:00",
+      "state": "Canceled"
+     }
+    ],
+    "startTime": "2026-08-25T15:57:50.4008985+00:00",
+    "status": "Canceled",
+    "workspaceName": "chaos-demo-workspace",
+    "zoneResolution": {
+     "mode": "Logical",
+     "requestedPhysicalZones": [],
+     "subscriptionZoneMappings": []
+    }
+   },
+   "resourceGroup": "chaos-demo-rg",
+   "systemData": {
+    "createdBy": "Azure Chaos Studio",
+    "createdByType": "Application"
+   },
+   "type": "Microsoft.Chaos/workspaces/scenarios/runs"
+  },
+  {
+   "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/chaos-demo-workspace/scenarios/ComputeZoneDown-1.1/runs/293a5e5d-94ba-4ff6-aae6-10ef8e5dc9a1",
+   "name": "293a5e5d-94ba-4ff6-aae6-10ef8e5dc9a1",
+   "properties": {
+    "endTime": "2026-08-25T15:39:12.3428258+00:00",
+    "errors": [],
+    "managedIdentityPrincipalId": "00000000-0000-0000-0000-000000000001",
+    "resources": [
+     {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+      "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+     }
+    ],
+    "scenarioConfigurationName": "xbox-live-demo",
+    "scenarioName": "ComputeZoneDown-1.1",
+    "scenarioRunJson": "{\"schemaVersion\":\"1.0\",\"scenarioId\":\"ComputeZoneDown-1.1\",\"maxTimeoutDuration\":\"03:00:00\",\"actions\":{\"vmssZoneShutdown\":{\"id\":\"vmssZoneShutdown\",\"displayName\":\"Shut down VMSS instances in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":[{\"metadata\":{\"locations\":[\"eastus2\"],\"zones\":[\"1\",\"2\",\"3\"],\"memberOfResourceId\":null},\"discoveredAt\":\"2026-08-25T06:49:09.3970755+00:00\",\"tags\":{\"platformsettings.host_environment.service.platform_optedin_for_rootcerts\":\"true\",\"azsecpack\":\"nonprod\",\"aks-managed-consolidated-additional-properties\":\"0b55a8e2-a00c-11f1-bd36-fa3a5f12f6ef\",\"aks-managed-networkisolated-outbound-type\":\"\",\"aks-managed-bootstrap-profile-acr-name\":\"\",\"aks-managed-kubeletIdentityClientID\":\"77661510-50d3-429b-b8b3-d209f2d62985\",\"aks-managed-enable-imds-restriction\":\"false\",\"aks-managed-saip-default-client-id\":\"\",\"aks-managed-resourceNameSuffix\":\"25871682\",\"aks-managed-createOperationID\":\"7a4b2955-7d5c-423d-bde0-0dabbeb264e7\",\"aks-managed-creationSource\":\"vmssclient-aks-nodepool1-10969888-vmss\",\"aks-managed-orchestrator\":\"Kubernetes:1.35.7\",\"compute.aks.billing\":\"linux\",\"aks-managed-ssh-access\":\"LocalUser\",\"aks-managed-poolName\":\"nodepool1\",\"aks-managed-azure-cni-overlay\":\"true\"},\"namespace\":\"Arm\",\"name\":\"aks-nodepool1-10969888-vmss\",\"resourceType\":\"microsoft.compute/virtualmachinescalesets\",\"fullyQualifiedIdentifier\":\"/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss\",\"parent\":null}],\"faultUrn\":\"urn:csci:microsoft:virtualMachineScaleSet:shutdown/1.0.0\",\"faultParameters\":{\"Zones\":[\"3\"]}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:05:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":false},\"vmZoneShutdown\":{\"id\":\"vmZoneShutdown\",\"displayName\":\"Shut down VMs in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":\"%%{resourceSelectors.virtualMachines}%%\",\"faultUrn\":\"urn:csci:microsoft:compute:shutdown/1.0.0\",\"faultParameters\":{}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:05:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":true}}}",
+    "scenarioRunSummary": [
+     {
+      "actionUrn": "vmssZoneShutdown",
+      "completedAt": "2026-08-25T15:39:12.2782071+00:00",
+      "resources": [
+       {
+        "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+        "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+       }
+      ],
+      "startedAt": "2026-08-25T15:34:05.7641244+00:00",
+      "state": "Succeeded"
+     }
+    ],
+    "startTime": "2026-08-25T15:34:01.2907288+00:00",
+    "status": "Succeeded",
+    "workspaceName": "chaos-demo-workspace",
+    "zoneResolution": {
+     "mode": "Logical",
+     "requestedPhysicalZones": [],
+     "subscriptionZoneMappings": []
+    }
+   },
+   "resourceGroup": "chaos-demo-rg",
+   "systemData": {
+    "createdBy": "Azure Chaos Studio",
+    "createdByType": "Application"
+   },
+   "type": "Microsoft.Chaos/workspaces/scenarios/runs"
+  },
+  {
+   "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/chaos-demo-workspace/scenarios/ComputeZoneDown-1.1/runs/aa795138-5d89-4187-8cdb-13a18204b5b3",
+   "name": "aa795138-5d89-4187-8cdb-13a18204b5b3",
+   "properties": {
+    "endTime": "2026-08-25T06:37:47.3649186+00:00",
+    "errors": [],
+    "managedIdentityPrincipalId": "00000000-0000-0000-0000-000000000001",
+    "resources": [
+     {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+      "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+     }
+    ],
+    "scenarioConfigurationName": "xbox-live-demo",
+    "scenarioName": "ComputeZoneDown-1.1",
+    "scenarioRunJson": "{\"schemaVersion\":\"1.0\",\"scenarioId\":\"ComputeZoneDown-1.1\",\"maxTimeoutDuration\":\"03:00:00\",\"actions\":{\"vmssZoneShutdown\":{\"id\":\"vmssZoneShutdown\",\"displayName\":\"Shut down VMSS instances in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":[{\"metadata\":{\"locations\":[\"eastus2\"],\"zones\":[\"1\",\"2\",\"3\"],\"memberOfResourceId\":null},\"discoveredAt\":\"2026-08-24T22:44:02.3412222+00:00\",\"tags\":{\"platformsettings.host_environment.service.platform_optedin_for_rootcerts\":\"true\",\"azsecpack\":\"nonprod\",\"aks-managed-consolidated-additional-properties\":\"0b55a8e2-a00c-11f1-bd36-fa3a5f12f6ef\",\"aks-managed-networkisolated-outbound-type\":\"\",\"aks-managed-bootstrap-profile-acr-name\":\"\",\"aks-managed-enable-imds-restriction\":\"false\",\"aks-managed-kubeletIdentityClientID\":\"77661510-50d3-429b-b8b3-d209f2d62985\",\"aks-managed-saip-default-client-id\":\"\",\"aks-managed-resourceNameSuffix\":\"25871682\",\"aks-managed-createOperationID\":\"7a4b2955-7d5c-423d-bde0-0dabbeb264e7\",\"aks-managed-creationSource\":\"vmssclient-aks-nodepool1-10969888-vmss\",\"aks-managed-orchestrator\":\"Kubernetes:1.35.7\",\"compute.aks.billing\":\"linux\",\"aks-managed-ssh-access\":\"LocalUser\",\"aks-managed-poolName\":\"nodepool1\",\"aks-managed-azure-cni-overlay\":\"true\",\"aks-managed-coordination\":\"true\"},\"namespace\":\"Arm\",\"name\":\"aks-nodepool1-10969888-vmss\",\"resourceType\":\"microsoft.compute/virtualmachinescalesets\",\"fullyQualifiedIdentifier\":\"/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss\",\"parent\":null}],\"faultUrn\":\"urn:csci:microsoft:virtualMachineScaleSet:shutdown/1.0.0\",\"faultParameters\":{\"Zones\":[\"2\"]}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:10:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":false},\"vmZoneShutdown\":{\"id\":\"vmZoneShutdown\",\"displayName\":\"Shut down VMs in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":\"%%{resourceSelectors.virtualMachines}%%\",\"faultUrn\":\"urn:csci:microsoft:compute:shutdown/1.0.0\",\"faultParameters\":{}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:10:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":true}}}",
+    "scenarioRunSummary": [
+     {
+      "actionUrn": "vmssZoneShutdown",
+      "completedAt": "2026-08-25T06:37:47.2623484+00:00",
+      "resources": [
+       {
+        "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+        "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+       }
+      ],
+      "startedAt": "2026-08-25T06:31:56.1225539+00:00",
+      "state": "Canceled"
+     }
+    ],
+    "startTime": "2026-08-25T06:31:54.7021227+00:00",
+    "status": "Canceled",
+    "workspaceName": "chaos-demo-workspace",
+    "zoneResolution": {
+     "mode": "Logical",
+     "requestedPhysicalZones": [],
+     "subscriptionZoneMappings": []
+    }
+   },
+   "resourceGroup": "chaos-demo-rg",
+   "systemData": {
+    "createdBy": "Azure Chaos Studio",
+    "createdByType": "Application"
+   },
+   "type": "Microsoft.Chaos/workspaces/scenarios/runs"
+  },
+  {
+   "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/chaos-demo-workspace/scenarios/ComputeZoneDown-1.1/runs/a78b9285-9571-4903-b489-e193a983178c",
+   "name": "a78b9285-9571-4903-b489-e193a983178c",
+   "properties": {
+    "endTime": "2026-08-24T23:29:00.6688965+00:00",
+    "errors": [],
+    "managedIdentityPrincipalId": "00000000-0000-0000-0000-000000000001",
+    "resources": [
+     {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+      "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+     }
+    ],
+    "scenarioConfigurationName": "xbox-zone2-demo",
+    "scenarioName": "ComputeZoneDown-1.1",
+    "scenarioRunJson": "{\"schemaVersion\":\"1.0\",\"scenarioId\":\"ComputeZoneDown-1.1\",\"maxTimeoutDuration\":\"03:00:00\",\"actions\":{\"vmssZoneShutdown\":{\"id\":\"vmssZoneShutdown\",\"displayName\":\"Shut down VMSS instances in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":[{\"metadata\":{\"locations\":[\"eastus2\"],\"zones\":[\"1\",\"2\",\"3\"],\"memberOfResourceId\":null},\"discoveredAt\":\"2026-08-24T22:44:02.3412222+00:00\",\"tags\":{\"platformsettings.host_environment.service.platform_optedin_for_rootcerts\":\"true\",\"azsecpack\":\"nonprod\",\"aks-managed-consolidated-additional-properties\":\"0b55a8e2-a00c-11f1-bd36-fa3a5f12f6ef\",\"aks-managed-networkisolated-outbound-type\":\"\",\"aks-managed-bootstrap-profile-acr-name\":\"\",\"aks-managed-enable-imds-restriction\":\"false\",\"aks-managed-kubeletIdentityClientID\":\"77661510-50d3-429b-b8b3-d209f2d62985\",\"aks-managed-saip-default-client-id\":\"\",\"aks-managed-resourceNameSuffix\":\"25871682\",\"aks-managed-createOperationID\":\"7a4b2955-7d5c-423d-bde0-0dabbeb264e7\",\"aks-managed-creationSource\":\"vmssclient-aks-nodepool1-10969888-vmss\",\"aks-managed-orchestrator\":\"Kubernetes:1.35.7\",\"compute.aks.billing\":\"linux\",\"aks-managed-ssh-access\":\"LocalUser\",\"aks-managed-poolName\":\"nodepool1\",\"aks-managed-azure-cni-overlay\":\"true\",\"aks-managed-coordination\":\"true\"},\"namespace\":\"Arm\",\"name\":\"aks-nodepool1-10969888-vmss\",\"resourceType\":\"microsoft.compute/virtualmachinescalesets\",\"fullyQualifiedIdentifier\":\"/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss\",\"parent\":null}],\"faultUrn\":\"urn:csci:microsoft:virtualMachineScaleSet:shutdown/1.0.0\",\"faultParameters\":{\"Zones\":[\"2\"]}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:10:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":false},\"vmZoneShutdown\":{\"id\":\"vmZoneShutdown\",\"displayName\":\"Shut down VMs in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":\"%%{resourceSelectors.virtualMachines}%%\",\"faultUrn\":\"urn:csci:microsoft:compute:shutdown/1.0.0\",\"faultParameters\":{}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:10:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":true}}}",
+    "scenarioRunSummary": [
+     {
+      "actionUrn": "vmssZoneShutdown",
+      "completedAt": "2026-08-24T23:29:00.5690566+00:00",
+      "resources": [
+       {
+        "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+        "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+       }
+      ],
+      "startedAt": "2026-08-24T23:18:53.7159442+00:00",
+      "state": "Succeeded"
+     }
+    ],
+    "startTime": "2026-08-24T23:18:51.1892227+00:00",
+    "status": "Succeeded",
+    "workspaceName": "chaos-demo-workspace",
+    "zoneResolution": {
+     "mode": "Logical",
+     "requestedPhysicalZones": [],
+     "subscriptionZoneMappings": []
+    }
+   },
+   "resourceGroup": "chaos-demo-rg",
+   "systemData": {
+    "createdBy": "Azure Chaos Studio",
+    "createdByType": "Application"
+   },
+   "type": "Microsoft.Chaos/workspaces/scenarios/runs"
+  },
+  {
+   "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/chaos-demo-workspace/scenarios/ComputeZoneDown-1.1/runs/d88703a8-eb7a-4a0e-93c0-6b3dcbeb6f6b",
+   "name": "d88703a8-eb7a-4a0e-93c0-6b3dcbeb6f6b",
+   "properties": {
+    "endTime": "2026-08-24T23:16:49.8227404+00:00",
+    "errors": [],
+    "managedIdentityPrincipalId": "00000000-0000-0000-0000-000000000001",
+    "resources": [
+     {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+      "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+     }
+    ],
+    "scenarioConfigurationName": "xbox-zone2-demo",
+    "scenarioName": "ComputeZoneDown-1.1",
+    "scenarioRunJson": "{\"schemaVersion\":\"1.0\",\"scenarioId\":\"ComputeZoneDown-1.1\",\"maxTimeoutDuration\":\"03:00:00\",\"actions\":{\"vmssZoneShutdown\":{\"id\":\"vmssZoneShutdown\",\"displayName\":\"Shut down VMSS instances in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":[{\"metadata\":{\"locations\":[\"eastus2\"],\"zones\":[\"1\",\"2\",\"3\"],\"memberOfResourceId\":null},\"discoveredAt\":\"2026-08-24T22:44:02.3412222+00:00\",\"tags\":{\"platformsettings.host_environment.service.platform_optedin_for_rootcerts\":\"true\",\"azsecpack\":\"nonprod\",\"aks-managed-consolidated-additional-properties\":\"0b55a8e2-a00c-11f1-bd36-fa3a5f12f6ef\",\"aks-managed-networkisolated-outbound-type\":\"\",\"aks-managed-bootstrap-profile-acr-name\":\"\",\"aks-managed-enable-imds-restriction\":\"false\",\"aks-managed-kubeletIdentityClientID\":\"77661510-50d3-429b-b8b3-d209f2d62985\",\"aks-managed-saip-default-client-id\":\"\",\"aks-managed-resourceNameSuffix\":\"25871682\",\"aks-managed-createOperationID\":\"7a4b2955-7d5c-423d-bde0-0dabbeb264e7\",\"aks-managed-creationSource\":\"vmssclient-aks-nodepool1-10969888-vmss\",\"aks-managed-orchestrator\":\"Kubernetes:1.35.7\",\"compute.aks.billing\":\"linux\",\"aks-managed-ssh-access\":\"LocalUser\",\"aks-managed-poolName\":\"nodepool1\",\"aks-managed-azure-cni-overlay\":\"true\",\"aks-managed-coordination\":\"true\"},\"namespace\":\"Arm\",\"name\":\"aks-nodepool1-10969888-vmss\",\"resourceType\":\"microsoft.compute/virtualmachinescalesets\",\"fullyQualifiedIdentifier\":\"/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss\",\"parent\":null}],\"faultUrn\":\"urn:csci:microsoft:virtualMachineScaleSet:shutdown/1.0.0\",\"faultParameters\":{\"Zones\":[\"2\"]}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:10:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":false},\"vmZoneShutdown\":{\"id\":\"vmZoneShutdown\",\"displayName\":\"Shut down VMs in target zone\",\"type\":\"Fault\",\"properties\":{\"targetResources\":\"%%{resourceSelectors.virtualMachines}%%\",\"faultUrn\":\"urn:csci:microsoft:compute:shutdown/1.0.0\",\"faultParameters\":{}},\"startCondition\":{\"delay\":null,\"runsAfter\":null},\"stopCondition\":{\"duration\":\"00:10:00\",\"runsAfter\":null},\"externalResource\":null,\"skip\":true}}}",
+    "scenarioRunSummary": [
+     {
+      "actionUrn": "vmssZoneShutdown",
+      "completedAt": "2026-08-24T23:16:49.6869082+00:00",
+      "resources": [
+       {
+        "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/MC_chaos-demo-rg_chaos-demo-aks_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-10969888-vmss",
+        "resourceGroup": "MC_chaos-demo-rg_chaos-demo-aks_eastus2"
+       }
+      ],
+      "startedAt": "2026-08-24T23:06:40.7766+00:00",
+      "state": "Succeeded"
+     }
+    ],
+    "startTime": "2026-08-24T23:06:35.8652165+00:00",
+    "status": "Succeeded",
+    "workspaceName": "chaos-demo-workspace",
+    "zoneResolution": {
+     "mode": "Logical",
+     "requestedPhysicalZones": [],
+     "subscriptionZoneMappings": []
+    }
+   },
+   "resourceGroup": "chaos-demo-rg",
+   "systemData": {
+    "createdBy": "Azure Chaos Studio",
+    "createdByType": "Application"
+   },
+   "type": "Microsoft.Chaos/workspaces/scenarios/runs"
+  }
+ ]
+}

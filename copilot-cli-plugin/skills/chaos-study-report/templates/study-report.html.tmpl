@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{TITLE}}</title>
+<style>
+  :root {
+    --ink: #1b1f23;
+    --muted: #57606a;
+    --line: #d8dee4;
+    --panel: #f6f8fa;
+    --critical: #b3261e;
+    --high: #bc4c00;
+    --medium: #9a6700;
+    --low: #57606a;
+    --good: #1a7f37;
+    --unknown: #6639ba;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 0 0 4rem;
+    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    color: var(--ink);
+    background: #fff;
+  }
+  main { max-width: 60rem; margin: 0 auto; padding: 0 1.5rem; }
+  header.masthead { border-bottom: 3px solid var(--ink); padding: 2.5rem 0 1.5rem; margin-bottom: 2rem; }
+  header.masthead h1 { margin: 0 0 .25rem; font-size: 1.65rem; letter-spacing: -.01em; }
+  header.masthead p.sub { margin: 0; color: var(--muted); font-size: .9rem; }
+  .verdict { display: flex; align-items: center; gap: .75rem; margin: 1.5rem 0 1rem; padding: 1rem 1.25rem; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); }
+  .verdict strong { font-size: 1.15rem; }
+  .verdict.held { border-left: 6px solid var(--good); }
+  .verdict.degraded { border-left: 6px solid var(--medium); }
+  .verdict.breached { border-left: 6px solid var(--critical); }
+  .verdict.inconclusive { border-left: 6px solid var(--unknown); }
+  h2 { font-size: 1.15rem; margin: 2.75rem 0 .75rem; padding-bottom: .35rem; border-bottom: 1px solid var(--line); }
+  h3 { font-size: 1rem; margin: 1.5rem 0 .5rem; }
+  table { width: 100%; border-collapse: collapse; margin: .75rem 0 1.25rem; font-size: .9rem; }
+  th, td { text-align: left; padding: .5rem .6rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: var(--panel); font-weight: 600; white-space: nowrap; }
+  td.num { font-variant-numeric: tabular-nums; }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; font-size: .85em; }
+  .pill { display: inline-block; padding: .1rem .5rem; border-radius: 999px; font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: #fff; }
+  .pill.critical { background: var(--critical); }
+  .pill.high { background: var(--high); }
+  .pill.medium { background: var(--medium); }
+  .pill.low { background: var(--low); }
+  .pill.ghost { background: none; color: var(--muted); border: 1px solid var(--line); }
+  .finding { border: 1px solid var(--line); border-radius: 8px; padding: 1rem 1.25rem; margin: 1rem 0; }
+  .finding > h3 { margin-top: 0; display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap; }
+  .finding dl { margin: .5rem 0 0; display: grid; grid-template-columns: 8.5rem 1fr; gap: .35rem .75rem; }
+  .finding dt { color: var(--muted); font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; padding-top: .15rem; }
+  .finding dd { margin: 0; }
+  .notmeasured { color: var(--muted); font-style: italic; }
+  ul.tight { margin: .4rem 0; padding-left: 1.2rem; }
+  ul.tight li { margin: .2rem 0; }
+  footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line); color: var(--muted); font-size: .8rem; }
+  .kv { display: grid; grid-template-columns: 12rem 1fr; gap: .3rem .75rem; font-size: .9rem; margin: .5rem 0 1rem; }
+  .kv dt { color: var(--muted); }
+  .kv dd { margin: 0; }
+  @media print { body { font-size: 12pt; } .finding { break-inside: avoid; } }
+</style>
+</head>
+<body>
+<main>
+
+<header class="masthead">
+  <h1>{{TITLE}}</h1>
+  <p class="sub">Chaos reliability study &middot; {{STUDY_ID}}</p>
+</header>
+
+<div class="verdict {{VERDICT_CLASS}}">
+  {{VERDICT_ICON}}
+  <div><strong>{{VERDICT}}</strong><br><span class="sub">{{VERDICT_DETAIL}}</span></div>
+</div>
+
+<dl class="kv">{{HEADER_FACTS}}</dl>
+
+<h2>2. Executive summary</h2>
+{{SUMMARY}}
+
+<h2>3. What we tested</h2>
+{{TESTED}}
+
+<h2>4. What happened</h2>
+{{HAPPENED}}
+
+<h2>5. Findings</h2>
+{{FINDINGS}}
+
+<h2>6. Limitations</h2>
+<p>Every study is bounded. These bounds are part of the result, not a disclaimer
+appended to it &mdash; a conclusion drawn outside them is not supported by this
+evidence.</p>
+{{LIMITATIONS}}
+
+<h2>7. Remediation</h2>
+<p>Advisory only. Nothing in this suite applies changes to your service.</p>
+{{REMEDIATION}}
+
+<h2>8. Appendix &mdash; reproducibility</h2>
+{{APPENDIX}}
+
+<footer>
+Generated {{GENERATED_AT}} by the chaos-study skill suite. This report is
+self-contained: it makes no network requests and runs no scripts.
+</footer>
+
+</main>
+</body>
+</html>

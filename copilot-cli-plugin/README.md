@@ -4,16 +4,38 @@ A GitHub Copilot CLI plugin that guides Azure customers through the end-to-end
 **Chaos Studio v2 Workspace** experience: provision a workspace, configure
 scenarios, and execute chaos experiments — all from a single conversation.
 
+It also ships the **chaos-study** skill suite: a way to make chaos more
+accessible — accessible to your SRE, accessible to your engineers, and maybe
+most importantly, accessible to your agent. It gives guided, conversational
+help for planning and running targeted Chaos Studio experiments without
+hand-authoring them — it frames the question with you, previews the plan, runs
+it only with your typed consent, collects the signals you chose, and writes a
+report you can review.
+
+> Outputs (plans, verdict labels, findings, reports) are aids for your own
+> review and judgment.
+
+### Where to use the skills
+
+**Recommended: [Azure SRE Agent](https://learn.microsoft.com/azure/sre-agent/).**
+Load the skills from [`skills/`](skills/) into Azure SRE Agent. Other
+skill-capable agents — GitHub Copilot CLI, Claude Code, Codex, and so on — can
+also load them. For GitHub Copilot CLI, install this folder as a plugin (see
+[Installation](#installation)).
+
 ## Prerequisites
 
 | Requirement | Minimum Version | Notes |
 |---|---|---|
 | **PowerShell** (`pwsh`) | 7.4+ | Cross-platform; `winget install Microsoft.PowerShell` |
 | **Azure CLI** (`az`) | 2.75+ | `winget install Microsoft.AzureCLI`. The `chaos` extension is auto-installed on first use. |
-| **GitHub Copilot CLI** | latest | Must support plugin marketplaces |
+| **Agent host** | latest | Azure SRE Agent (recommended), or another skill-capable agent. For the plugin install path, GitHub Copilot CLI with plugin marketplace support. |
 | `jq` *(optional)* | any | Fallback to `ConvertFrom-Json` if absent |
 
 ## Installation
+
+These steps install the plugin into GitHub Copilot CLI — the alternative to
+loading the skills into Azure SRE Agent.
 
 **Quickest — install directly from this repo:**
 
@@ -44,7 +66,7 @@ plugins:
 
 | Surface | Folder | For |
 |---|---|---|
-| **Skill** (interactive) | `skills/start-chaos` | Humans driving Chaos Studio from a conversation |
+| **Skills** (interactive) | `skills/` (`start-chaos`, `chaos-study`, …) | Humans driving Chaos Studio from a conversation in Azure SRE Agent (recommended) or another skill-capable agent |
 | **MCP server** | `mcp/` | Autonomous agents that need typed Chaos Studio tools |
 
 Both target `Microsoft.Chaos` `2026-05-01-preview` and use the local `az login`
@@ -59,6 +81,12 @@ session for auth.
 | `setup-scenario` | Discover, configure, validate scenarios |
 | `run-scenario` | Execute and stream experiment results |
 | `chaos-impact` | Analyze run impact — correlate Azure Monitor signals to targeted resources |
+| `chaos-study` | Front door for a targeted chaos study — scope → run → report |
+| `chaos-study-design` | Read the system, interview you, and suggest scenario candidates |
+| `chaos-study-scope` | Frame the steady-state question and freeze a reviewable plan |
+| `chaos-study-run` | Execute the frozen plan — dry-run by default, typed consent to arm, always cleans up |
+| `chaos-study-report` | Render the collected evidence as an HTML report for your review |
+| `chaos-study-history` | List, compare, and re-run past studies |
 
 ## MCP tools (for agents)
 
@@ -122,6 +150,13 @@ errors. This keeps continuity in the service rather than in one model context.
 #   Phase 1 — Create a Chaos Studio workspace
 #   Phase 2 — Set up a scenario configuration
 #   Phase 3 — Run the chaos experiment
+```
+
+```text
+> /chaos-study
+
+# Guided, targeted study: frame the question, preview the plan (dry-run),
+# run only after you type the consent phrase, then write a report you can review.
 ```
 
 ## Impact Report
