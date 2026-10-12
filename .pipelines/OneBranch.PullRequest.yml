@@ -37,7 +37,6 @@ resources:
       ref: refs/heads/main
 
 variables:
-  - group: ADO-plugin-variable-group
   - name: system.debug
     value: false
   - name: ExtensionRoot
@@ -133,22 +132,32 @@ extends:
                 inputs:
                   versionSpec: '24.x'
 
-              - task: TfxInstaller@4
+              - task: TfxInstaller@5
                 displayName: Install tfx-cli
                 inputs:
-                  # R2 fix: pin the EXACT reviewed tfx-cli version (not the mutable
-                  # 'v0.x' range) so identical repository commits always package/
-                  # publish with identical, checked-in tooling across PR, packaging,
-                  # and publication stages. Keep this pin identical to the other
-                  # TfxInstaller@4 uses in OneBranch.Official.yml.
-                  version: '0.17.0'
+                  # Use the CLI bundled with this reviewed task major. Do not
+                  # query npm for a mutable latest version.
+                  version: builtin
+                  checkLatest: false
 
-              - task: PackageAzureDevOpsExtension@4
+              - task: PackageAzureDevOpsExtension@5
                 displayName: Package development VSIX
                 inputs:
                   rootFolder: '$(ExtensionRoot)'
                   patternManifest: 'vss-extension.dev.json'
                   extensionVersion: '$(Build.BuildNumber)'
                   updateTasksVersion: false
-                  extensionVisibility: private
                   outputPath: '$(ob_outputDirectory)/ChaosStudioWorkspacesDev.vsix'
+
+              - script: |
+                  set -euo pipefail
+                  vsix='$(ob_outputDirectory)/ChaosStudioWorkspacesDev.vsix'
+                  test -f "$vsix"
+                  unzip -t "$vsix"
+                  size="$(stat -c%s "$vsix")"
+                  if [ "$size" -gt 52428800 ]; then
+                    echo "##vso[task.logissue type=error]VSIX is ${size} bytes; Marketplace packages must not exceed 50 MB."
+                    exit 1
+                  fi
+                  echo "Validated VSIX: ${size} bytes"
+                displayName: Validate VSIX structure and Marketplace size limit

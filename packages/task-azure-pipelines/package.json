@@ -12,6 +12,6 @@
   },
   "dependencies": {
     "@azure/identity": "^4.0.0",
-    "azure-pipelines-task-lib": "^5.0.0"
+    "azure-pipelines-task-lib": "^5.281.1"
   }
 }

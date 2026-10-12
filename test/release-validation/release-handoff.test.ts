@@ -423,7 +423,7 @@ test('the OneBranch publication is bound to the SAME release commit as the GitHu
   // The binding is part of the publishing gate, so it runs before anything is
   // packaged, signed, or published.
   assert.ok(
-    build.indexOf('node scripts/lib/release-commit.mjs') < build.indexOf('PackageAzureDevOpsExtension@4'),
+    build.indexOf('node scripts/lib/release-commit.mjs') < build.indexOf('PackageAzureDevOpsExtension@5'),
     'the commit binding precedes packaging',
   );
 });
@@ -440,7 +440,7 @@ test('the OneBranch pipeline binds the REBUILT runtime to the validated commit b
 
   const rebuild = build.indexOf('- script: npm run build');
   const stage = build.indexOf('Stage task runtime into every task folder');
-  const packageVsix = build.indexOf('PackageAzureDevOpsExtension@4');
+  const packageVsix = build.indexOf('PackageAzureDevOpsExtension@5');
   assert.ok(rebuild > 0 && stage > 0 && packageVsix > 0, 'the build/stage/package steps exist');
   assert.ok(equality > rebuild, 'the equality check runs AFTER the rebuild');
   assert.ok(equality < stage, 'the equality check runs BEFORE the rebuilt runtime is staged');
@@ -468,7 +468,7 @@ test('the OneBranch PR pipeline binds the REBUILT runtime to HEAD before it is s
 
   const rebuild = pipeline.indexOf('- script: npm run build');
   const stage = pipeline.indexOf('Stage task runtime into every task folder');
-  const packageVsix = pipeline.indexOf('PackageAzureDevOpsExtension@4');
+  const packageVsix = pipeline.indexOf('PackageAzureDevOpsExtension@5');
   assert.ok(rebuild > 0 && stage > 0 && packageVsix > 0, 'the build/stage/package steps exist');
   assert.ok(equality > rebuild, 'the equality check runs AFTER the rebuild');
   assert.ok(equality < stage, 'the equality check runs BEFORE the rebuilt runtime is staged');
@@ -481,7 +481,7 @@ test('the OneBranch PR pipeline binds the REBUILT runtime to HEAD before it is s
 test('both OneBranch pipelines smoke the preferred Node24 and Node20_1 fallback runtimes before packaging', () => {
   for (const path of ['.pipelines/OneBranch.Official.yml', '.pipelines/OneBranch.PullRequest.yml']) {
     const pipeline = readText(path);
-    const packageIndex = pipeline.indexOf('PackageAzureDevOpsExtension@4');
+    const packageIndex = pipeline.indexOf('PackageAzureDevOpsExtension@5');
     const node24Index = pipeline.indexOf('Validate preferred Node24 task runtime');
     const node20Index = pipeline.indexOf('Validate Node20_1 Server fallback runtime');
     assert.ok(node24Index > 0 && node20Index > node24Index, `${path} validates Node24 before Node20 fallback`);
@@ -492,6 +492,17 @@ test('both OneBranch pipelines smoke the preferred Node24 and Node20_1 fallback 
       (pipeline.match(/scripts\/smoke-action-bundle\.mjs/g) ?? []).length >= 2,
       `${path} executes deterministic smoke checks under both runtimes`,
     );
+  }
+});
+
+test('both OneBranch pipelines validate the packaged VSIX and enforce the Marketplace size limit', () => {
+  for (const path of ['.pipelines/OneBranch.Official.yml', '.pipelines/OneBranch.PullRequest.yml']) {
+    const pipeline = readText(path);
+    const packageIndex = pipeline.indexOf('PackageAzureDevOpsExtension@5');
+    const validationIndex = pipeline.indexOf('Validate VSIX structure and Marketplace size limit');
+    assert.ok(packageIndex > 0 && validationIndex > packageIndex, `${path} validates the created VSIX`);
+    assert.match(pipeline, /unzip -t "\$vsix"/);
+    assert.match(pipeline, /52428800/);
   }
 });
 
@@ -529,24 +540,51 @@ test('the GitHub Action release requires both attestations to succeed before eit
   assert.match(workflow.slice(publish), /if: steps\.stage\.outputs\.already-published != 'true'/);
 });
 
-test('the release/packaging pipelines pin an EXACT tfx-cli version, not a mutable range', () => {
-  // R2: identical repository commits must package/publish with identical,
-  // checked-in tooling — not whatever `v0.x` happens to resolve to that day.
+test('the release/packaging pipelines use the reviewed v5 extension tasks and their bundled tfx-cli', () => {
   const files = ['.pipelines/OneBranch.Official.yml', '.pipelines/OneBranch.PullRequest.yml'];
-  const pins = new Set<string>();
   for (const file of files) {
     const text = readText(file);
-    const matches = [...text.matchAll(/TfxInstaller@4[\s\S]*?version:\s*'([^']+)'/g)];
-    assert.ok(matches.length > 0, `${file} installs tfx-cli via TfxInstaller@4`);
-    for (const m of matches) {
-      const version = m[1];
-      assert.ok(version, `${file} has a captured tfx-cli version`);
-      assert.doesNotMatch(version, /^v?0\.x$/i, `${file} must not use a mutable tfx-cli range like 'v0.x'`);
-      assert.match(version, /^\d+\.\d+\.\d+$/, `${file} must pin an exact semver tfx-cli version`);
-      pins.add(version);
-    }
+    assert.match(text, /TfxInstaller@5/);
+    assert.match(text, /PackageAzureDevOpsExtension@5/);
+    assert.doesNotMatch(text, /(?:TfxInstaller|PackageAzureDevOpsExtension|PublishAzureDevOpsExtension)@4/);
+    const installers = [...text.matchAll(/TfxInstaller@5[\s\S]*?version:\s*builtin[\s\S]*?checkLatest:\s*false/g)];
+    assert.ok(installers.length > 0, `${file} uses the tfx-cli bundled with TfxInstaller@5 without a latest lookup`);
   }
-  assert.equal(pins.size, 1, `all tfx-cli installs must use the SAME exact pinned version, found: ${[...pins].join(', ')}`);
+});
+
+test('the Official pipeline signs and verifies the VSIX with the supported ADO extension operations', () => {
+  const pipeline = readText('.pipelines/OneBranch.Official.yml');
+  const sign = pipeline.slice(pipeline.indexOf('- stage: sign'), pipeline.indexOf('- stage: publish'));
+  assert.match(sign, /OperationCode": "AdoExtensionSign"/);
+  assert.match(sign, /OperationCode": "AdoExtensionVerify"/);
+  assert.match(sign, /KeyCode": "\$\(AdoExtensionSigningKeyCode\)"/);
+  assert.doesNotMatch(sign, /signing_profile:\s*external_distribution/);
+  assert.match(sign, /grep -q '\\\\?\.psdsxs\$/);
+  assert.match(sign, /sha256sum "\$\(basename "\$\{vsixes\[0\]\}"\)" > "\$\(basename "\$\{vsixes\[0\]\}"\)\.sha256"/);
+});
+
+test('the Official pipeline publishes through PublishAzureDevOpsExtension@5 using AzureRM WIF without mutating signed bytes', () => {
+  const pipeline = readText('.pipelines/OneBranch.Official.yml');
+  const publish = pipeline.slice(pipeline.indexOf('- stage: publish'));
+  assert.match(publish, /PublishAzureDevOpsExtension@5/);
+  assert.match(publish, /connectTo:\s*'AzureRM'/);
+  assert.match(publish, /connectedServiceNameAzureRM:\s*'ADO-Plugin Publishing'/);
+  assert.match(publish, /updateTasksVersion:\s*false/);
+  assert.match(publish, /noWaitValidation:\s*true/);
+  assert.match(publish, /IsAzureDevOpsExtensionValid@5/);
+  assert.match(publish, /vsixFile:\s*'\$\(publish_vsix\.Extension\.OutputPath\)'/);
+  assert.match(publish, /sha256sum -c/);
+  assert.match(publish, /shareWith:\s*'\$\(AdoExtensionShareWith\)'/);
+  assert.doesNotMatch(publish, /extensionVisibility:/);
+});
+
+test('only the Official pipeline depends on the protected ADO release metadata variable group', () => {
+  const official = readText('.pipelines/OneBranch.Official.yml');
+  const pr = readText('.pipelines/OneBranch.PullRequest.yml');
+  assert.match(official, /group:\s*ADO-plugin-variable-group/);
+  assert.match(official, /AdoExtensionSigningKeyCode/);
+  assert.match(official, /AdoExtensionShareWith/);
+  assert.doesNotMatch(pr, /ADO-plugin-variable-group/);
 });
 
 test('both marketplaces are released from ONE core commit, provenance recorded on each side', () => {

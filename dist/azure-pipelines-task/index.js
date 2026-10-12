@@ -132,6 +132,8 @@ var require_brace_expansion = __commonJS({
     var escPeriod = "\0PERIOD" + Math.random() + "\0";
     var EXPANSION_MAX = 1e5;
     var EXPANSION_MAX_LENGTH = 4e6;
+    var EXPANSION_MAX_DEPTH = 1e3;
+    var EXPANSION_MAX_REWRITES = 1e3;
     function numeric(str) {
       return parseInt(str, 10) == str ? parseInt(str, 10) : str.charCodeAt(0);
     }
@@ -141,25 +143,36 @@ var require_brace_expansion = __commonJS({
     function unescapeBraces(str) {
       return str.split(escSlash).join("\\").split(escOpen).join("{").split(escClose).join("}").split(escComma).join(",").split(escPeriod).join(".");
     }
-    function parseCommaParts(str) {
-      if (!str)
-        return [""];
-      var parts = [];
-      var m = balanced("{", "}", str);
-      if (!m)
-        return str.split(",");
-      var pre = m.pre;
-      var body = m.body;
-      var post = m.post;
-      var p = pre.split(",");
-      p[p.length - 1] += "{" + body + "}";
-      var postParts = parseCommaParts(post);
-      if (post.length) {
-        p[p.length - 1] += postParts.shift();
-        p.push.apply(p, postParts);
+    function pushAll(target, items) {
+      for (var i = 0; i < items.length; i++) {
+        target.push(items[i]);
       }
-      parts.push.apply(parts, p);
-      return parts;
+    }
+    function parseCommaParts(str) {
+      var parts = [];
+      var carry = "";
+      for (; ; ) {
+        var m = balanced("{", "}", str);
+        if (!m) {
+          var tail = str.split(",");
+          tail[0] = carry + tail[0];
+          pushAll(parts, tail);
+          return parts;
+        }
+        var pre = m.pre;
+        var body = m.body;
+        var post = m.post;
+        var p = pre.split(",");
+        p[0] = carry + p[0];
+        p[p.length - 1] += "{" + body + "}";
+        if (!post.length) {
+          pushAll(parts, p);
+          return parts;
+        }
+        carry = p.pop();
+        pushAll(parts, p);
+        str = post;
+      }
     }
     function expandTop(str, options) {
       if (!str)
@@ -167,10 +180,12 @@ var require_brace_expansion = __commonJS({
       options = options || {};
       var max = options.max == null ? EXPANSION_MAX : options.max;
       var maxLength = options.maxLength == null ? EXPANSION_MAX_LENGTH : options.maxLength;
+      var maxDepth = options.maxDepth == null ? EXPANSION_MAX_DEPTH : options.maxDepth;
+      var maxRewrites = options.maxRewrites == null ? EXPANSION_MAX_REWRITES : options.maxRewrites;
       if (str.substr(0, 2) === "{}") {
         str = "\\{\\}" + str.substr(2);
       }
-      return expand(escapeBraces(str), max, maxLength, true).map(unescapeBraces);
+      return expand(escapeBraces(str), max, maxLength, maxDepth, 0, maxRewrites, true).map(unescapeBraces);
     }
     function embrace(str) {
       return "{" + str + "}";
@@ -245,9 +260,13 @@ var require_brace_expansion = __commonJS({
       }
       return N;
     }
-    function expand(str, max, maxLength, isTop) {
+    function expand(str, max, maxLength, maxDepth, depth, maxRewrites, isTop) {
+      if (depth > maxDepth) {
+        return [str];
+      }
       var acc = [""];
       var accBase = [0];
+      var rewrites = 0;
       var dropEmpties = false;
       var firstGroup = true;
       var nextBase;
@@ -265,7 +284,8 @@ var require_brace_expansion = __commonJS({
         var isSequence = isNumericSequence || isAlphaSequence;
         var isOptions = m.body.indexOf(",") >= 0;
         if (!isSequence && !isOptions) {
-          if (m.post.match(/,(?!,).*\}/)) {
+          if (rewrites < maxRewrites && m.post.match(/,(?!,).*\}/)) {
+            rewrites++;
             str = m.pre + "{" + m.body + escClose + m.post;
             isTop = true;
             firstGroup = true;
@@ -297,7 +317,7 @@ var require_brace_expansion = __commonJS({
         } else {
           var n = parseCommaParts(m.body);
           if (n.length === 1 && n[0] !== void 0) {
-            n = expand(n[0], max, maxLength, false).map(embrace);
+            n = expand(n[0], max, maxLength, maxDepth, depth + 1, maxRewrites, false).map(embrace);
             if (n.length === 1) {
               nextBase = [];
               acc = combine(
@@ -325,7 +345,7 @@ var require_brace_expansion = __commonJS({
           values = [];
           var valuesLength = 0;
           outer: for (var j = 0; j < n.length; j++) {
-            var expanded = expand(n[j], max, maxLength, false);
+            var expanded = expand(n[j], max, maxLength, maxDepth, depth + 1, maxRewrites, false);
             for (var k = 0; k < expanded.length; k++) {
               var v = expanded[k];
               if (dropsEmpties && !v) continue;
@@ -1179,7 +1199,17 @@ var require_vault = __commonJS({
           return crypto3.createHash("sha256").update(key).digest();
         };
         Vault2.prototype.genKey = function() {
-          fs6.writeFileSync(this._keyFile, crypto3.randomUUID(), { encoding: "utf8" });
+          var key;
+          if (crypto3.randomUUID) {
+            key = crypto3.randomUUID();
+          } else {
+            var bytes = crypto3.randomBytes(16);
+            bytes[6] = bytes[6] & 15 | 64;
+            bytes[8] = bytes[8] & 63 | 128;
+            var hex = bytes.toString("hex");
+            key = hex.slice(0, 8) + "-" + hex.slice(8, 12) + "-" + hex.slice(12, 16) + "-" + hex.slice(16, 20) + "-" + hex.slice(20);
+          }
+          fs6.writeFileSync(this._keyFile, key, { encoding: "utf8" });
         };
         return Vault2;
       })()
@@ -4626,6 +4656,284 @@ var require_q = __commonJS({
   }
 });
 
+// node_modules/azure-pipelines-task-lib/externaloutput.js
+var require_externaloutput = __commonJS({
+  "node_modules/azure-pipelines-task-lib/externaloutput.js"(exports2) {
+    "use strict";
+    var __extends = exports2 && exports2.__extends || /* @__PURE__ */ (function() {
+      var extendStatics = function(d, b) {
+        extendStatics = Object.setPrototypeOf || { __proto__: [] } instanceof Array && function(d2, b2) {
+          d2.__proto__ = b2;
+        } || function(d2, b2) {
+          for (var p in b2) if (Object.prototype.hasOwnProperty.call(b2, p)) d2[p] = b2[p];
+        };
+        return extendStatics(d, b);
+      };
+      return function(d, b) {
+        if (typeof b !== "function" && b !== null)
+          throw new TypeError("Class extends value " + String(b) + " is not a constructor or null");
+        extendStatics(d, b);
+        function __() {
+          this.constructor = d;
+        }
+        d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+      };
+    })();
+    var __assign = exports2 && exports2.__assign || function() {
+      __assign = Object.assign || function(t) {
+        for (var s, i = 1, n = arguments.length; i < n; i++) {
+          s = arguments[i];
+          for (var p in s) if (Object.prototype.hasOwnProperty.call(s, p))
+            t[p] = s[p];
+        }
+        return t;
+      };
+      return __assign.apply(this, arguments);
+    };
+    Object.defineProperty(exports2, "__esModule", { value: true });
+    exports2.errorExternalOutput = exports2.warningExternalOutput = exports2.debugExternalOutput = exports2.writeExternalOutput = exports2.createFilteredWriter = exports2.filterExternalOutput = exports2.createExternalOutputStream = exports2.ExternalOutputStream = exports2.MarkerFilter = exports2.defaultAllowedVsoCommands = void 0;
+    var stream = require("stream");
+    var im = require_internal();
+    var MARKER = Buffer.from("##vso[", "ascii");
+    var NEUTRALIZED = Buffer.from("##_vso[", "ascii");
+    var EMPTY = Buffer.alloc(0);
+    var SPACE = 32;
+    var RBRACKET = 93;
+    var CR = 13;
+    var LF = 10;
+    var MAX_HEADER = 256;
+    exports2.defaultAllowedVsoCommands = Object.freeze(["task.debug", "task.setprogress"]);
+    function resolveAllowed(options) {
+      if (!options.enableVsoCommands) {
+        return /* @__PURE__ */ new Set();
+      }
+      var list = options.allowedVsoCommands !== void 0 ? options.allowedVsoCommands : exports2.defaultAllowedVsoCommands;
+      return new Set(list.map(function(c) {
+        return c.toLowerCase();
+      }));
+    }
+    function canonicalCommandName(raw) {
+      var parts = raw.split(".").filter(function(p) {
+        return p.length > 0;
+      });
+      if (parts.length !== 2) {
+        return null;
+      }
+      return (parts[0] + "." + parts[1]).toLowerCase();
+    }
+    function partialMarkerSuffixLength(buf) {
+      var max = Math.min(MARKER.length - 1, buf.length);
+      for (var k = max; k >= 1; k--) {
+        if (buf.compare(MARKER, 0, k, buf.length - k, buf.length) === 0) {
+          return k;
+        }
+      }
+      return 0;
+    }
+    function scanHeader(buf, start) {
+      var limit = Math.min(buf.length, start + MAX_HEADER);
+      for (var k = start; k < limit; k++) {
+        var b = buf[k];
+        if (b === SPACE || b === RBRACKET) {
+          return { term: k, newline: false };
+        }
+        if (b === CR || b === LF) {
+          return { term: k, newline: true };
+        }
+      }
+      return { term: -1, newline: false };
+    }
+    var MarkerFilter = (
+      /** @class */
+      (function() {
+        function MarkerFilter2(enabled2, allowed) {
+          this.enabled = enabled2;
+          this.allowed = allowed;
+          this.pending = EMPTY;
+        }
+        MarkerFilter2.prototype.push = function(chunk) {
+          var buf = this.pending.length ? Buffer.concat([this.pending, chunk]) : chunk;
+          this.pending = EMPTY;
+          var out = [];
+          var pos = 0;
+          while (pos < buf.length) {
+            var idx = buf.indexOf(MARKER, pos);
+            if (idx === -1) {
+              var keep = Math.min(partialMarkerSuffixLength(buf), buf.length - pos);
+              var emitEnd = buf.length - keep;
+              if (emitEnd > pos) {
+                out.push(pos === 0 && emitEnd === buf.length ? buf : buf.subarray(pos, emitEnd));
+              }
+              this.pending = keep ? buf.subarray(buf.length - keep) : EMPTY;
+              break;
+            }
+            if (idx > pos) {
+              out.push(buf.subarray(pos, idx));
+            }
+            var afterMarker = idx + MARKER.length;
+            if (!this.enabled) {
+              out.push(NEUTRALIZED);
+              pos = afterMarker;
+              continue;
+            }
+            var _a = scanHeader(buf, afterMarker), term = _a.term, newline = _a.newline;
+            if (term === -1) {
+              if (buf.length - afterMarker >= MAX_HEADER) {
+                out.push(NEUTRALIZED);
+                pos = afterMarker;
+                continue;
+              }
+              this.pending = buf.subarray(idx);
+              break;
+            }
+            if (newline) {
+              out.push(NEUTRALIZED);
+              pos = afterMarker;
+              continue;
+            }
+            var name_1 = canonicalCommandName(buf.toString("utf8", afterMarker, term));
+            out.push(name_1 && this.allowed.has(name_1) ? MARKER : NEUTRALIZED);
+            pos = afterMarker;
+          }
+          if (out.length === 0) {
+            return EMPTY;
+          }
+          if (out.length === 1) {
+            var only = out[0];
+            return only === NEUTRALIZED || only === MARKER ? Buffer.from(only) : only;
+          }
+          return Buffer.concat(out);
+        };
+        MarkerFilter2.prototype.flush = function() {
+          var p = this.pending;
+          this.pending = EMPTY;
+          if (p.length === 0) {
+            return EMPTY;
+          }
+          if (this.enabled && p.length >= MARKER.length && p.subarray(0, MARKER.length).equals(MARKER)) {
+            return Buffer.concat([NEUTRALIZED, p.subarray(MARKER.length)]);
+          }
+          return p;
+        };
+        return MarkerFilter2;
+      })()
+    );
+    exports2.MarkerFilter = MarkerFilter;
+    var ExternalOutputStream = (
+      /** @class */
+      (function(_super) {
+        __extends(ExternalOutputStream2, _super);
+        function ExternalOutputStream2(options) {
+          var _this = _super.call(this) || this;
+          _this.markerFilter = new MarkerFilter(!!options.enableVsoCommands, resolveAllowed(options));
+          return _this;
+        }
+        ExternalOutputStream2.prototype._transform = function(chunk, _encoding, callback) {
+          try {
+            var buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), "utf8");
+            var out = this.markerFilter.push(buf);
+            if (out.length) {
+              this.push(out);
+            }
+            callback();
+          } catch (err) {
+            callback(err);
+          }
+        };
+        ExternalOutputStream2.prototype._flush = function(callback) {
+          try {
+            var out = this.markerFilter.flush();
+            if (out.length) {
+              this.push(out);
+            }
+            callback();
+          } catch (err) {
+            callback(err);
+          }
+        };
+        return ExternalOutputStream2;
+      })(stream.Transform)
+    );
+    exports2.ExternalOutputStream = ExternalOutputStream;
+    function createExternalOutputStream(options) {
+      var filterStream = new ExternalOutputStream(options);
+      var destination = options.destination || process.stdout;
+      filterStream.pipe(destination, { end: false });
+      return filterStream;
+    }
+    exports2.createExternalOutputStream = createExternalOutputStream;
+    function filterExternalOutput(data, options) {
+      var filter = new MarkerFilter(!!options.enableVsoCommands, resolveAllowed(options));
+      var buf = Buffer.isBuffer(data) ? data : Buffer.from(String(data), "utf8");
+      var filtered = filter.push(buf);
+      var pending = filter.flush();
+      return pending.length ? Buffer.concat([filtered, pending]) : filtered;
+    }
+    exports2.filterExternalOutput = filterExternalOutput;
+    function createFilteredWriter(options, destination) {
+      var filter = new MarkerFilter(!!options.enableVsoCommands, resolveAllowed(options));
+      var ended = false;
+      return {
+        write: function(data) {
+          if (ended) {
+            throw new Error("Cannot write after end");
+          }
+          var buf = Buffer.isBuffer(data) ? data : Buffer.from(String(data), "utf8");
+          var filtered = filter.push(buf);
+          if (filtered.length) {
+            destination.write(filtered);
+          }
+        },
+        end: function() {
+          if (ended) {
+            return;
+          }
+          ended = true;
+          var pending = filter.flush();
+          if (pending.length) {
+            destination.write(pending);
+          }
+        }
+      };
+    }
+    exports2.createFilteredWriter = createFilteredWriter;
+    function logExternalOutput(message, options) {
+      var filtered = filterExternalOutput(message, options);
+      switch (options.type) {
+        case "raw":
+          var destination = options.destination || process.stdout;
+          destination.write(filtered);
+          break;
+        case "debug":
+          im._debug(filtered.toString("utf8"));
+          break;
+        case "warning":
+          im._warning(filtered.toString("utf8"), options.issueSource, options.auditAction);
+          break;
+        case "error":
+          im._error(filtered.toString("utf8"), options.issueSource, options.auditAction);
+          break;
+      }
+    }
+    function writeExternalOutput(message, options) {
+      logExternalOutput(message, __assign(__assign({}, options), { type: "raw" }));
+    }
+    exports2.writeExternalOutput = writeExternalOutput;
+    function debugExternalOutput(message, options) {
+      logExternalOutput(message, __assign(__assign({}, options), { type: "debug" }));
+    }
+    exports2.debugExternalOutput = debugExternalOutput;
+    function warningExternalOutput(message, options) {
+      logExternalOutput(message, __assign(__assign({}, options), { type: "warning" }));
+    }
+    exports2.warningExternalOutput = warningExternalOutput;
+    function errorExternalOutput(message, options) {
+      logExternalOutput(message, __assign(__assign({}, options), { type: "error" }));
+    }
+    exports2.errorExternalOutput = errorExternalOutput;
+  }
+});
+
 // node_modules/azure-pipelines-task-lib/toolrunner.js
 var require_toolrunner = __commonJS({
   "node_modules/azure-pipelines-task-lib/toolrunner.js"(exports2) {
@@ -4657,6 +4965,7 @@ var require_toolrunner = __commonJS({
     var child = require("child_process");
     var im = require_internal();
     var fs6 = require("fs");
+    var eom = require_externaloutput();
     var ToolRunner = (
       /** @class */
       (function(_super) {
@@ -4959,11 +5268,39 @@ var require_toolrunner = __commonJS({
             failOnStdErr: options.failOnStdErr || false,
             ignoreReturnCode: options.ignoreReturnCode || false,
             windowsVerbatimArguments: options.windowsVerbatimArguments || false,
-            shell: options.shell || false
+            shell: options.shell || false,
+            externalOutput: options.externalOutput
           };
           result.outStream = options.outStream || process.stdout;
           result.errStream = options.errStream || process.stderr;
           return result;
+        };
+        ToolRunner2.prototype._createDisplayFilter = function(options) {
+          var ext = options.externalOutput;
+          if (!ext) {
+            return null;
+          }
+          var outStream = options.outStream;
+          var errDest = options.failOnStdErr ? options.errStream : options.outStream;
+          var stdoutWriter = eom.createFilteredWriter(ext, outStream);
+          var stderrWriter = errDest === outStream ? stdoutWriter : eom.createFilteredWriter(ext, errDest);
+          return {
+            commandLine: function(text) {
+              outStream.write(eom.filterExternalOutput(text, ext));
+            },
+            stdout: function(data) {
+              return stdoutWriter.write(data);
+            },
+            stderr: function(data) {
+              return stderrWriter.write(data);
+            },
+            finalize: function() {
+              stdoutWriter.end();
+              if (stderrWriter !== stdoutWriter) {
+                stderrWriter.end();
+              }
+            }
+          };
         };
         ToolRunner2.prototype._getSpawnOptions = function(options) {
           options = options || {};
@@ -4992,8 +5329,13 @@ var require_toolrunner = __commonJS({
           });
           var success = true;
           var optionsNonNull = this._cloneExecOptions(options);
+          var df = this._createDisplayFilter(optionsNonNull);
           if (!optionsNonNull.silent) {
-            optionsNonNull.outStream.write(this._getCommandString(optionsNonNull) + os3.EOL);
+            if (df) {
+              df.commandLine(this._getCommandString(optionsNonNull) + os3.EOL);
+            } else {
+              optionsNonNull.outStream.write(this._getCommandString(optionsNonNull) + os3.EOL);
+            }
           }
           var cp;
           var toolPath = pipeOutputToTool.toolPath;
@@ -5012,30 +5354,31 @@ var require_toolrunner = __commonJS({
           fileStream = this.pipeOutputToFile ? fs6.createWriteStream(this.pipeOutputToFile) : null;
           return new Promise(function(resolve, reject) {
             var _a, _b, _c, _d;
+            var complete = function() {
+              if (waitingEvents != 0) {
+                return;
+              }
+              if (df) {
+                df.finalize();
+              }
+              if (error2) {
+                reject(error2);
+              } else {
+                resolve(returnCode);
+              }
+            };
             if (fileStream) {
               waitingEvents++;
               fileStream.on("finish", function() {
                 waitingEvents--;
                 fileStream = null;
-                if (waitingEvents == 0) {
-                  if (error2) {
-                    reject(error2);
-                  } else {
-                    resolve(returnCode);
-                  }
-                }
+                complete();
               });
               fileStream.on("error", function(err) {
                 waitingEvents--;
                 _this._debug("Failed to pipe output of ".concat(toolPathFirst, " to file ").concat(_this.pipeOutputToFile, ". Error = ").concat(err));
                 fileStream = null;
-                if (waitingEvents == 0) {
-                  if (error2) {
-                    reject(error2);
-                  } else {
-                    resolve(returnCode);
-                  }
-                }
+                complete();
               });
             }
             (_a = cpFirst.stdout) === null || _a === void 0 ? void 0 : _a.on("data", function(data) {
@@ -5058,8 +5401,12 @@ var require_toolrunner = __commonJS({
               }
               successFirst = !optionsNonNull.failOnStdErr;
               if (!optionsNonNull.silent) {
-                var s = optionsNonNull.failOnStdErr ? optionsNonNull.errStream : optionsNonNull.outStream;
-                s.write(data);
+                if (df) {
+                  df.stderr(data);
+                } else {
+                  var s = optionsNonNull.failOnStdErr ? optionsNonNull.errStream : optionsNonNull.outStream;
+                  s.write(data);
+                }
               }
             });
             cpFirst.on("error", function(err) {
@@ -5070,9 +5417,7 @@ var require_toolrunner = __commonJS({
               }
               (_a2 = cp.stdin) === null || _a2 === void 0 ? void 0 : _a2.end();
               error2 = new Error(toolPathFirst + " failed. " + err.message);
-              if (waitingEvents == 0) {
-                reject(error2);
-              }
+              complete();
             });
             cpFirst.on("close", function(code, signal) {
               var _a2;
@@ -5087,19 +5432,17 @@ var require_toolrunner = __commonJS({
                 fileStream.end();
               }
               (_a2 = cp.stdin) === null || _a2 === void 0 ? void 0 : _a2.end();
-              if (waitingEvents == 0) {
-                if (error2) {
-                  reject(error2);
-                } else {
-                  resolve(returnCode);
-                }
-              }
+              complete();
             });
             var stdLineBuffer = "";
             (_c = cp.stdout) === null || _c === void 0 ? void 0 : _c.on("data", function(data) {
               _this.emit("stdout", data);
               if (!optionsNonNull.silent) {
-                optionsNonNull.outStream.write(data);
+                if (df) {
+                  df.stdout(data);
+                } else {
+                  optionsNonNull.outStream.write(data);
+                }
               }
               stdLineBuffer = _this._processLineBuffer(data, stdLineBuffer, function(line) {
                 _this.emit("stdline", line);
@@ -5110,8 +5453,12 @@ var require_toolrunner = __commonJS({
               _this.emit("stderr", data);
               success = !optionsNonNull.failOnStdErr;
               if (!optionsNonNull.silent) {
-                var s = optionsNonNull.failOnStdErr ? optionsNonNull.errStream : optionsNonNull.outStream;
-                s.write(data);
+                if (df) {
+                  df.stderr(data);
+                } else {
+                  var s = optionsNonNull.failOnStdErr ? optionsNonNull.errStream : optionsNonNull.outStream;
+                  s.write(data);
+                }
               }
               errLineBuffer = _this._processLineBuffer(data, errLineBuffer, function(line) {
                 _this.emit("errline", line);
@@ -5120,9 +5467,7 @@ var require_toolrunner = __commonJS({
             cp.on("error", function(err) {
               waitingEvents--;
               error2 = new Error(toolPath + " failed. " + err.message);
-              if (waitingEvents == 0) {
-                reject(error2);
-              }
+              complete();
             });
             cp.on("close", function(code, signal) {
               waitingEvents--;
@@ -5143,13 +5488,7 @@ var require_toolrunner = __commonJS({
               } else if (!success) {
                 error2 = new Error(toolPath + " failed with return code: " + code);
               }
-              if (waitingEvents == 0) {
-                if (error2) {
-                  reject(error2);
-                } else {
-                  resolve(returnCode);
-                }
-              }
+              complete();
             });
           });
         };
@@ -5164,8 +5503,13 @@ var require_toolrunner = __commonJS({
           });
           var success = true;
           var optionsNonNull = this._cloneExecOptions(options);
+          var df = this._createDisplayFilter(optionsNonNull);
           if (!optionsNonNull.silent) {
-            optionsNonNull.outStream.write(this._getCommandString(optionsNonNull) + os3.EOL);
+            if (df) {
+              df.commandLine(this._getCommandString(optionsNonNull) + os3.EOL);
+            } else {
+              optionsNonNull.outStream.write(this._getCommandString(optionsNonNull) + os3.EOL);
+            }
           }
           var cp;
           var toolPath = pipeOutputToTool.toolPath;
@@ -5182,30 +5526,31 @@ var require_toolrunner = __commonJS({
           waitingEvents++;
           cp = child.spawn(pipeOutputToTool._getSpawnFileName(optionsNonNull), pipeOutputToTool._getSpawnArgs(optionsNonNull), pipeOutputToTool._getSpawnOptions(optionsNonNull));
           fileStream = this.pipeOutputToFile ? fs6.createWriteStream(this.pipeOutputToFile) : null;
+          var complete = function() {
+            if (waitingEvents != 0) {
+              return;
+            }
+            if (df) {
+              df.finalize();
+            }
+            if (error2) {
+              defer.reject(error2);
+            } else {
+              defer.resolve(returnCode);
+            }
+          };
           if (fileStream) {
             waitingEvents++;
             fileStream.on("finish", function() {
               waitingEvents--;
               fileStream = null;
-              if (waitingEvents == 0) {
-                if (error2) {
-                  defer.reject(error2);
-                } else {
-                  defer.resolve(returnCode);
-                }
-              }
+              complete();
             });
             fileStream.on("error", function(err) {
               waitingEvents--;
               _this._debug("Failed to pipe output of ".concat(toolPathFirst, " to file ").concat(_this.pipeOutputToFile, ". Error = ").concat(err));
               fileStream = null;
-              if (waitingEvents == 0) {
-                if (error2) {
-                  defer.reject(error2);
-                } else {
-                  defer.resolve(returnCode);
-                }
-              }
+              complete();
             });
           }
           (_a = cpFirst.stdout) === null || _a === void 0 ? void 0 : _a.on("data", function(data) {
@@ -5226,8 +5571,12 @@ var require_toolrunner = __commonJS({
             }
             successFirst = !optionsNonNull.failOnStdErr;
             if (!optionsNonNull.silent) {
-              var s = optionsNonNull.failOnStdErr ? optionsNonNull.errStream : optionsNonNull.outStream;
-              s.write(data);
+              if (df) {
+                df.stderr(data);
+              } else {
+                var s = optionsNonNull.failOnStdErr ? optionsNonNull.errStream : optionsNonNull.outStream;
+                s.write(data);
+              }
             }
           });
           cpFirst.on("error", function(err) {
@@ -5238,9 +5587,7 @@ var require_toolrunner = __commonJS({
             }
             (_a2 = cp.stdin) === null || _a2 === void 0 ? void 0 : _a2.end();
             error2 = new Error(toolPathFirst + " failed. " + err.message);
-            if (waitingEvents == 0) {
-              defer.reject(error2);
-            }
+            complete();
           });
           cpFirst.on("close", function(code, signal) {
             var _a2;
@@ -5255,19 +5602,17 @@ var require_toolrunner = __commonJS({
               fileStream.end();
             }
             (_a2 = cp.stdin) === null || _a2 === void 0 ? void 0 : _a2.end();
-            if (waitingEvents == 0) {
-              if (error2) {
-                defer.reject(error2);
-              } else {
-                defer.resolve(returnCode);
-              }
-            }
+            complete();
           });
           var stdLineBuffer = "";
           (_c = cp.stdout) === null || _c === void 0 ? void 0 : _c.on("data", function(data) {
             _this.emit("stdout", data);
             if (!optionsNonNull.silent) {
-              optionsNonNull.outStream.write(data);
+              if (df) {
+                df.stdout(data);
+              } else {
+                optionsNonNull.outStream.write(data);
+              }
             }
             stdLineBuffer = _this._processLineBuffer(data, stdLineBuffer, function(line) {
               _this.emit("stdline", line);
@@ -5278,8 +5623,12 @@ var require_toolrunner = __commonJS({
             _this.emit("stderr", data);
             success = !optionsNonNull.failOnStdErr;
             if (!optionsNonNull.silent) {
-              var s = optionsNonNull.failOnStdErr ? optionsNonNull.errStream : optionsNonNull.outStream;
-              s.write(data);
+              if (df) {
+                df.stderr(data);
+              } else {
+                var s = optionsNonNull.failOnStdErr ? optionsNonNull.errStream : optionsNonNull.outStream;
+                s.write(data);
+              }
             }
             errLineBuffer = _this._processLineBuffer(data, errLineBuffer, function(line) {
               _this.emit("errline", line);
@@ -5288,9 +5637,7 @@ var require_toolrunner = __commonJS({
           cp.on("error", function(err) {
             waitingEvents--;
             error2 = new Error(toolPath + " failed. " + err.message);
-            if (waitingEvents == 0) {
-              defer.reject(error2);
-            }
+            complete();
           });
           cp.on("close", function(code, signal) {
             waitingEvents--;
@@ -5311,13 +5658,7 @@ var require_toolrunner = __commonJS({
             } else if (!success) {
               error2 = new Error(toolPath + " failed with return code: " + code);
             }
-            if (waitingEvents == 0) {
-              if (error2) {
-                defer.reject(error2);
-              } else {
-                defer.resolve(returnCode);
-              }
-            }
+            complete();
           });
           return defer.promise;
         };
@@ -5365,8 +5706,13 @@ var require_toolrunner = __commonJS({
             _this._debug("   " + arg);
           });
           var optionsNonNull = this._cloneExecOptions(options);
+          var df = this._createDisplayFilter(optionsNonNull);
           if (!optionsNonNull.silent) {
-            optionsNonNull.outStream.write(this._getCommandString(optionsNonNull) + os3.EOL);
+            if (df) {
+              df.commandLine(this._getCommandString(optionsNonNull) + os3.EOL);
+            } else {
+              optionsNonNull.outStream.write(this._getCommandString(optionsNonNull) + os3.EOL);
+            }
           }
           var state3 = new ExecState(optionsNonNull, this.toolPath);
           state3.on("debug", function(message) {
@@ -5405,15 +5751,23 @@ var require_toolrunner = __commonJS({
             });
           }
           this.childProcess = cp;
-          (_a = cp.stdout) === null || _a === void 0 ? void 0 : _a.on("finish", function() {
+          (_a = cp.stdout) === null || _a === void 0 ? void 0 : _a.on("end", function() {
             if (!optionsNonNull.silent) {
-              optionsNonNull.outStream.write(os3.EOL);
+              if (df) {
+                df.stdout(Buffer.from(os3.EOL));
+              } else {
+                optionsNonNull.outStream.write(os3.EOL);
+              }
             }
           });
           (_b = cp.stdout) === null || _b === void 0 ? void 0 : _b.on("data", function(data) {
             _this.emit("stdout", data);
             if (!optionsNonNull.silent) {
-              optionsNonNull.outStream.write(data);
+              if (df) {
+                df.stdout(data);
+              } else {
+                optionsNonNull.outStream.write(data);
+              }
             }
             stdLineBuffer = _this._processLineBuffer(data, stdLineBuffer, function(line) {
               _this.emit("stdline", line);
@@ -5423,8 +5777,12 @@ var require_toolrunner = __commonJS({
             state3.processStderr = true;
             _this.emit("stderr", data);
             if (!optionsNonNull.silent) {
-              var s = optionsNonNull.failOnStdErr ? optionsNonNull.errStream : optionsNonNull.outStream;
-              s.write(data);
+              if (df) {
+                df.stderr(data);
+              } else {
+                var s = optionsNonNull.failOnStdErr ? optionsNonNull.errStream : optionsNonNull.outStream;
+                s.write(data);
+              }
             }
             errLineBuffer = _this._processLineBuffer(data, errLineBuffer, function(line) {
               _this.emit("errline", line);
@@ -5443,6 +5801,9 @@ var require_toolrunner = __commonJS({
             state3.CheckComplete();
           });
           cp.on("close", function(code, signal) {
+            if (df) {
+              df.finalize();
+            }
             state3.processCloseCode = code;
             state3.processCloseSignal = signal;
             state3.processClosed = true;
@@ -5464,8 +5825,13 @@ var require_toolrunner = __commonJS({
             _this._debug("   " + arg);
           });
           var optionsNonNull = this._cloneExecOptions(options);
+          var df = this._createDisplayFilter(optionsNonNull);
           if (!optionsNonNull.silent) {
-            optionsNonNull.outStream.write(this._getCommandString(optionsNonNull) + os3.EOL);
+            if (df) {
+              df.commandLine(this._getCommandString(optionsNonNull) + os3.EOL);
+            } else {
+              optionsNonNull.outStream.write(this._getCommandString(optionsNonNull) + os3.EOL);
+            }
           }
           var state3 = new ExecState(optionsNonNull, this.toolPath);
           state3.on("debug", function(message) {
@@ -5500,15 +5866,23 @@ var require_toolrunner = __commonJS({
             return defer.promise;
           }
           this.childProcess = cp;
-          (_a = cp.stdout) === null || _a === void 0 ? void 0 : _a.on("finish", function() {
+          (_a = cp.stdout) === null || _a === void 0 ? void 0 : _a.on("end", function() {
             if (!optionsNonNull.silent) {
-              optionsNonNull.outStream.write(os3.EOL);
+              if (df) {
+                df.stdout(Buffer.from(os3.EOL));
+              } else {
+                optionsNonNull.outStream.write(os3.EOL);
+              }
             }
           });
           (_b = cp.stdout) === null || _b === void 0 ? void 0 : _b.on("data", function(data) {
             _this.emit("stdout", data);
             if (!optionsNonNull.silent) {
-              optionsNonNull.outStream.write(data);
+              if (df) {
+                df.stdout(data);
+              } else {
+                optionsNonNull.outStream.write(data);
+              }
             }
             stdLineBuffer = _this._processLineBuffer(data, stdLineBuffer, function(line) {
               _this.emit("stdline", line);
@@ -5518,8 +5892,12 @@ var require_toolrunner = __commonJS({
             state3.processStderr = true;
             _this.emit("stderr", data);
             if (!optionsNonNull.silent) {
-              var s = optionsNonNull.failOnStdErr ? optionsNonNull.errStream : optionsNonNull.outStream;
-              s.write(data);
+              if (df) {
+                df.stderr(data);
+              } else {
+                var s = optionsNonNull.failOnStdErr ? optionsNonNull.errStream : optionsNonNull.outStream;
+                s.write(data);
+              }
             }
             errLineBuffer = _this._processLineBuffer(data, errLineBuffer, function(line) {
               _this.emit("errline", line);
@@ -5538,6 +5916,9 @@ var require_toolrunner = __commonJS({
             state3.CheckComplete();
           });
           cp.on("close", function(code, signal) {
+            if (df) {
+              df.finalize();
+            }
             state3.processCloseCode = code;
             state3.processCloseSignal = signal;
             state3.processClosed = true;
@@ -5555,15 +5936,17 @@ var require_toolrunner = __commonJS({
           });
           var success = true;
           options = this._cloneExecOptions(options);
+          var ext = options.externalOutput;
           if (!options.silent) {
-            options.outStream.write(this._getCommandString(options) + os3.EOL);
+            var cmdLine = this._getCommandString(options) + os3.EOL;
+            options.outStream.write(ext ? eom.filterExternalOutput(cmdLine, ext) : cmdLine);
           }
           var r = child.spawnSync(this._getSpawnFileName(options), this._getSpawnArgs(options), this._getSpawnSyncOptions(options));
           if (!options.silent && r.stdout && r.stdout.length > 0) {
-            options.outStream.write(r.stdout);
+            options.outStream.write(ext ? eom.filterExternalOutput(r.stdout, ext) : r.stdout);
           }
           if (!options.silent && r.stderr && r.stderr.length > 0) {
-            options.errStream.write(r.stderr);
+            options.errStream.write(ext ? eom.filterExternalOutput(r.stderr, ext) : r.stderr);
           }
           var res = { code: r.status, error: r.error };
           res.stdout = r.stdout ? r.stdout.toString() : "";
@@ -5668,7 +6051,7 @@ var require_task = __commonJS({
     };
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.getPlatform = exports2.osType = exports2.writeFile = exports2.exist = exports2.stats = exports2.debug = exports2.error = exports2.warning = exports2.command = exports2.setTaskVariable = exports2.getTaskVariable = exports2.getSecureFileTicket = exports2.getSecureFileName = exports2.getEndpointAuthorization = exports2.getEndpointAuthorizationParameterRequired = exports2.getEndpointAuthorizationParameter = exports2.getEndpointAuthorizationSchemeRequired = exports2.getEndpointAuthorizationScheme = exports2.getEndpointDataParameterRequired = exports2.getEndpointDataParameter = exports2.getEndpointUrlRequired = exports2.getEndpointUrl = exports2.getPathInputRequired = exports2.getPathInput = exports2.filePathSupplied = exports2.getDelimitedInput = exports2.getPipelineFeature = exports2.getBoolFeatureFlag = exports2.getBoolInput = exports2.getInputRequired = exports2.getInput = exports2.setSecret = exports2.setVariable = exports2.getVariables = exports2.assertAgent = exports2.getVariable = exports2.loc = exports2.setResourcePath = exports2.setSanitizedResult = exports2.setResult = exports2.setErrStream = exports2.setStdStream = exports2.AgentHostedMode = exports2.Platform = exports2.IssueSource = exports2.FieldType = exports2.ArtifactType = exports2.IssueType = exports2.TaskState = exports2.TaskResult = void 0;
-    exports2.updateReleaseName = exports2.addBuildTag = exports2.updateBuildNumber = exports2.uploadBuildLog = exports2.associateArtifact = exports2.uploadArtifact = exports2.logIssue = exports2.logDetail = exports2.setProgress = exports2.setEndpoint = exports2.addAttachment = exports2.uploadSummary = exports2.prependPath = exports2.uploadFile = exports2.CodeCoverageEnabler = exports2.CodeCoveragePublisher = exports2.TestPublisher = exports2.getHttpCertConfiguration = exports2.getHttpProxyConfiguration = exports2.findMatch = exports2.filter = exports2.match = exports2.tool = exports2.execSync = exports2.exec = exports2.execAsync = exports2.rmRF = exports2.legacyFindFiles = exports2.find = exports2.retry = exports2.mv = exports2.cp = exports2.ls = exports2.which = exports2.resolve = exports2.mkdirP = exports2.popd = exports2.pushd = exports2.cd = exports2.checkPath = exports2.cwd = exports2.getSprint = exports2.getAgentMode = exports2.getNodeMajorVersion = void 0;
+    exports2.defaultAllowedVsoCommands = exports2.errorExternalOutput = exports2.warningExternalOutput = exports2.debugExternalOutput = exports2.writeExternalOutput = exports2.createExternalOutputStream = exports2.updateReleaseName = exports2.addBuildTag = exports2.updateBuildNumber = exports2.uploadBuildLog = exports2.associateArtifact = exports2.uploadArtifact = exports2.logIssue = exports2.logDetail = exports2.setProgress = exports2.setEndpoint = exports2.addAttachment = exports2.uploadSummary = exports2.prependPath = exports2.uploadFile = exports2.CodeCoverageEnabler = exports2.CodeCoveragePublisher = exports2.TestPublisher = exports2.getHttpCertConfiguration = exports2.getHttpProxyConfiguration = exports2.findMatch = exports2.filter = exports2.match = exports2.tool = exports2.execSync = exports2.exec = exports2.execAsync = exports2.rmRF = exports2.legacyFindFiles = exports2.find = exports2.retry = exports2.mv = exports2.cp = exports2.ls = exports2.which = exports2.resolve = exports2.mkdirP = exports2.popd = exports2.pushd = exports2.cd = exports2.checkPath = exports2.cwd = exports2.getSprint = exports2.getAgentMode = exports2.getNodeMajorVersion = void 0;
     var childProcess2 = require("child_process");
     var fs6 = require("fs");
     var path3 = require("path");
@@ -5677,6 +6060,7 @@ var require_task = __commonJS({
     var im = require_internal();
     var tcm = require_taskcommand();
     var trm = require_toolrunner();
+    var eom = require_externaloutput();
     var semver = require_semver();
     var TaskResult2;
     (function(TaskResult3) {
@@ -6721,21 +7105,60 @@ var require_task = __commonJS({
       }
       return Object.keys(allFiles).sort();
     }
+    function _quoteWindowsCmdPath(value) {
+      return '"'.concat(value.replace(/%/g, '"^%"'), '"');
+    }
+    function _publishRmRFSpecialPathTelemetry(inputPath) {
+      try {
+        var hasPercent = inputPath.includes("%");
+        var hasCmdMetachar = /[&|<>^]/.test(inputPath);
+        var hasDelayedExpansion = inputPath.includes("!");
+        var hasParentheses = /[()]/.test(inputPath);
+        if (!hasPercent && !hasCmdMetachar && !hasDelayedExpansion && !hasParentheses) {
+          return;
+        }
+        var message = JSON.stringify({
+          event: "SpecialPathDetected",
+          hasPercent,
+          hasCmdMetachar,
+          hasDelayedExpansion,
+          hasParentheses
+        });
+        console.log("##vso[telemetry.publish area=TaskHub;feature=TaskLibRmRF]".concat(message));
+      } catch (err) {
+        (0, exports2.debug)("Failed to publish rmRF telemetry: ".concat(err.message));
+      }
+    }
+    function _rmWindows(targetPath, isDirectory) {
+      var normalizedPath = im._normalizeSeparators(targetPath);
+      if (!getPipelineFeature("EnableRmRFCommandPathQuoting")) {
+        var legacyArgs = isDirectory ? ["/c", "rd", "/s", "/q", normalizedPath] : ["/c", "del", "/f", "/a", normalizedPath];
+        childProcess2.execFileSync("cmd.exe", legacyArgs);
+        return;
+      }
+      var quotedPath = _quoteWindowsCmdPath(normalizedPath);
+      var args = isDirectory ? ["/d", "/v:off", "/c", "rd", "/s", "/q", quotedPath] : ["/d", "/v:off", "/c", "del", "/f", "/a", quotedPath];
+      var options = {
+        windowsVerbatimArguments: true
+      };
+      childProcess2.execFileSync("cmd.exe", args, options);
+    }
     function rmRF(inputPath) {
       (0, exports2.debug)("rm -rf " + inputPath);
       if (getPlatform() == Platform.Windows) {
+        _publishRmRFSpecialPathTelemetry(inputPath);
         try {
           var lstats = fs6.lstatSync(inputPath);
           if (lstats.isDirectory() && !lstats.isSymbolicLink()) {
             (0, exports2.debug)("removing directory " + inputPath);
-            childProcess2.execFileSync("cmd.exe", ["/c", "rd", "/s", "/q", im._normalizeSeparators(inputPath)]);
+            _rmWindows(inputPath, true);
           } else if (lstats.isSymbolicLink()) {
             (0, exports2.debug)("removing symbolic link " + inputPath);
             var realPath = fs6.readlinkSync(inputPath);
             if (fs6.existsSync(realPath)) {
               var stats_4 = fs6.statSync(realPath);
               if (stats_4.isDirectory()) {
-                childProcess2.execFileSync("cmd.exe", ["/c", "rd", "/s", "/q", im._normalizeSeparators(realPath)]);
+                _rmWindows(realPath, true);
                 fs6.unlinkSync(inputPath);
               } else {
                 fs6.unlinkSync(inputPath);
@@ -6746,7 +7169,7 @@ var require_task = __commonJS({
             }
           } else {
             (0, exports2.debug)("removing file " + inputPath);
-            childProcess2.execFileSync("cmd.exe", ["/c", "del", "/f", "/a", im._normalizeSeparators(inputPath)]);
+            _rmWindows(inputPath, false);
           }
         } catch (err) {
           (0, exports2.debug)("Error: " + err.message);
@@ -7301,6 +7724,27 @@ var require_task = __commonJS({
     exports2.TaskCommand = tcm.TaskCommand;
     exports2.commandFromString = tcm.commandFromString;
     exports2.ToolRunner = trm.ToolRunner;
+    function createExternalOutputStream(options) {
+      return eom.createExternalOutputStream(options);
+    }
+    exports2.createExternalOutputStream = createExternalOutputStream;
+    function writeExternalOutput(message, options) {
+      eom.writeExternalOutput(message, options);
+    }
+    exports2.writeExternalOutput = writeExternalOutput;
+    function debugExternalOutput(message, options) {
+      eom.debugExternalOutput(message, options);
+    }
+    exports2.debugExternalOutput = debugExternalOutput;
+    function warningExternalOutput(message, options) {
+      eom.warningExternalOutput(message, options);
+    }
+    exports2.warningExternalOutput = warningExternalOutput;
+    function errorExternalOutput(message, options) {
+      eom.errorExternalOutput(message, options);
+    }
+    exports2.errorExternalOutput = errorExternalOutput;
+    exports2.defaultAllowedVsoCommands = eom.defaultAllowedVsoCommands;
     if (semver.lt(process.versions.node, "4.2.0")) {
       (0, exports2.warning)("Tasks require a new agent.  Upgrade your agent or node to 4.2.0 or later", exports2.IssueSource.TaskInternal);
     }

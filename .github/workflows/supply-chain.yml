@@ -97,9 +97,10 @@ jobs:
       - name: Install workspace dependencies
         run: npm ci
       - name: Audit production dependencies
-        # The runtime bundles ship only production deps; fail on a high/critical
-        # advisory in that set.
-        run: npm audit --omit=dev --audit-level=high
+        # esbuild tree-shakes install-only task-lib tooling. Fail on every
+        # high/critical advisory that is actually present in either shipped
+        # bundle, while reporting excluded install-only paths explicitly.
+        run: npm run audit:bundles
       - name: RBAC least-privilege + release-validation gate (RV2)
         # Fails closed if the role template cites an operation outside the
         # source-proven set, omits a required one, or subtracts/over-grants a

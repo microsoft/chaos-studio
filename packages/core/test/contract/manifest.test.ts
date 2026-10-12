@@ -106,15 +106,14 @@ test('each Azure extension manifest packages its own task folder plus the Market
 
   const prod = readManifest('vss-extension.json');
   const dev = readManifest('vss-extension.dev.json');
-  // Each manifest packages its own task folder AND the shared overview + icon so the
-  // public Marketplace listing has the mandatory content.details + icons.default.
+  // Each manifest packages its own task folder, license, overview, and icon.
   assert.deepEqual(
     prod.files.map((f) => f.path).sort(),
-    ['images/icon.png', 'overview.md', 'tasks/AzureChaosStudioScenarioV1'],
+    ['LICENSE', 'images/icon.png', 'overview.md', 'tasks/AzureChaosStudioScenarioV1'],
   );
   assert.deepEqual(
     dev.files.map((f) => f.path).sort(),
-    ['images/icon.png', 'overview.md', 'tasks/AzureChaosStudioScenarioV1Dev'],
+    ['LICENSE', 'images/icon.png', 'overview.md', 'tasks/AzureChaosStudioScenarioV1Dev'],
     'the dev extension must package the distinct-GUID dev task folder plus the assets',
   );
 

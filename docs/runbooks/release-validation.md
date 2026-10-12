@@ -302,9 +302,10 @@ The gate is scoped to break that cycle **without weakening the production gate**
   `typecheck` / `test` / `npm run build` still execute; the built runtime is still
   bound to its own `HEAD` for byte-identical shipping (the runtime-equality gate falls
   back to `HEAD` rather than skipping); `sign` still requires the protected
-  `SigningEnvironment` deployment approval and produces a real ESRP signature; `publish`
-  still requires `publishExtension`, the trusted `PublishBranch`, and the
-  `ADO-Plugin Publishing` service connection's own branch-control + approval gate; and
+  `ChaosStudio-ESRP-Signing-Prod` environment and produces a verified ADO extension
+  signature; `publish` still requires `publishExtension`, the trusted `PublishBranch`,
+  and the `ADO-Plugin Publishing` AzureRM/WIF service connection's own branch-control
+  + approval gate; and
   the Dev manifest is `public: false` with the `Preview` gallery flag, so it is never
   listed on the Marketplace and can only be **shared explicitly** with specific
   Azure DevOps organizations (the restricted test organizations used for RV) — see

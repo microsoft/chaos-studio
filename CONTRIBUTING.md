@@ -113,12 +113,13 @@ commands; the checklist is:
   release").
 - [ ] **ADO signing + publish resources branch-restricted** — on the signing pipeline
   ENVIRONMENT **`ChaosStudio-ESRP-Signing-Prod`** (the `onebranch.pipeline.signing@1` task
-  takes no service connection; named in `OneBranch.Official.yml` as `SigningEnvironment`) AND
-  the `ADO-Plugin Publishing` Marketplace service connection, set Approvals and checks →
+  takes no service connection; consumed directly by the sign deployment job) AND
+  the `ADO-Plugin Publishing` **AzureRM workload-identity** service connection, set
+  Approvals and checks →
   Branch Control = `refs/heads/main` and restrict Security → Pipeline permissions to EXACTLY
   the official pipeline; the publish connection additionally requires an Approval. These
-  EXTERNAL controls (plus OneBranch platform governance of the `external_distribution`
-  SignType) are the authoritative gate; the in-YAML branch conditions are defense in depth
+  EXTERNAL controls (plus OneBranch/ESRP authorization of the ADO-extension
+  signing KeyCode) are the authoritative gate; the in-YAML branch conditions are defense in depth
   only (see "Azure Pipelines extension publish security"). Verify with
   `scripts/verify-ado-signing-protections.sh https://dev.azure.com/ORG PROJECT OFFICIAL_PIPELINE_ID`
   — the 1st argument is the full **ORG_URL** (`https://dev.azure.com/ORG`), not a bare org name.
@@ -564,51 +565,42 @@ org/repo role control.
 ### Azure Pipelines extension publish security (required configuration)
 
 The [`OneBranch.Official`](.pipelines/OneBranch.Official.yml) pipeline publishes the
-signed VSIX to the Visual Studio Marketplace. Publication is split into **three** isolated
-stages: `build` builds/packages an **unsigned** VSIX (holds **no** Marketplace credential
-and does **no** signing); `sign` is a **deployment** job bound to the protected pipeline
-environment `$(SigningEnvironment)` that signs + cryptographically validates the VSIX; and
-a separate `publish` stage — a OneBranch v2 `releaseJob` that declares the signed VSIX as an
-artifact input and disables repository checkout — publishes it, running **no repository
-code**. In YAML the `publish` stage runs only when the run sets `publishExtension: true`
-**and** the run is from the trusted default branch (`PublishBranch`, `refs/heads/main`).
+signed VSIX to the Visual Studio Marketplace through three isolated stages:
 
-**Signing's INDEPENDENT enforcement is OneBranch platform governance, not this YAML.** The
-pipeline is manual-dispatch only (`trigger: none`), so a maintainer can queue it against any
-branch, and a feature branch could edit or delete the `sign` stage's `environment:` binding.
-That binding is therefore **defense in depth, not the authoritative control.** The
-authoritative control is external to the file: a Real `external_distribution` SignType is
-granted by ESRP/OneBranch onboarding **only to the onboarded Official pipeline** (by pipeline
-id / service tree) running the Production/Official template from the trusted branch. A feature
-branch that deletes the `environment:` binding and calls `onebranch.pipeline.signing@1`
-directly cannot obtain a trusted signature — the broker issues at most a **Test** signature,
-which fails the CodeSign Validation gates. Layered on top, the `sign` stage is a **deployment
-job that TARGETS the `$(SigningEnvironment)` environment**, so Azure DevOps also evaluates that
-environment's Approvals-and-checks **before the deployment (and therefore any signing step) can
-run**. The `build` stage produces an unsigned VSIX (so a feature-branch run still validates via
-build/test/Node-20); only the platform-governed, environment-gated `sign` stage grants the
-`external_distribution` signature.
+1. `build` creates an unsigned VSIX and stamps its final extension/task version.
+2. `sign` is a deployment job bound to the protected
+   `ChaosStudio-ESRP-Signing-Prod` environment. It runs the supported
+   `AdoExtensionSign` and `AdoExtensionVerify` OneBranch operations, requires a
+   `.psdsxs` Marketplace signature, and records the signed SHA-256.
+3. `publish` is a checkout-free OneBranch `releaseJob`. It verifies the signed
+   digest, publishes with `PublishAzureDevOpsExtension@5` through AzureRM workload
+   identity, then waits for Marketplace validation with
+   `IsAzureDevOpsExtensionValid@5`.
 
-Because a manual run loads the pipeline YAML *from the selected branch*, no in-file
-condition or variable (`PublishBranch`, the stage conditions) is authoritative on its own.
-The `onebranch.pipeline.signing@1` task takes **no** pipeline service connection — ESRP
-signing is brokered by the governed OneBranch signing environment — so the concrete,
-ADO-gateable protected resource for signing is the pipeline **environment**,
-**`ChaosStudio-ESRP-Signing-Prod`** (named in the pipeline's `SigningEnvironment` variable),
-which the `sign` **deployment** job targets. Configure the following **once** in Azure
-DevOps so `external_distribution` signing can only ever happen on the trusted branch:
+The publish task consumes a prebuilt, signed VSIX with
+`updateTasksVersion:false`; it must never mutate task or extension metadata after
+signing.
 
-- **Environment → `ChaosStudio-ESRP-Signing-Prod` → Approvals and checks → Branch
-  Control** (the "Evaluate branch protection" task-based check) — allowed branches limited
-  to exactly `refs/heads/main`, no unknown-status-branch allowance. Combined with OneBranch
-  platform governance (the Production/Official template + repo onboarding gate a
-  Real/`external_distribution` SignType to the official pipeline), this binds signing to the
-  trusted branch regardless of what the running YAML says.
-- **Environment → `ChaosStudio-ESRP-Signing-Prod` → Security → Pipeline permissions** —
-  restrict the environment to this official pipeline only, so no ad-hoc pipeline can sign.
+Configure the following external resources once:
 
-**Verify the signing + publish resources live** (the same fail-closed checks, run ahead of
-a release) with:
+- **Variable group `ADO-plugin-variable-group`:**
+  - `AdoExtensionSigningKeyCode` — the KeyCode assigned by OneBranch/ESRP
+    onboarding for `AdoExtensionSign`/`AdoExtensionVerify`. Do not copy another
+    product's KeyCode.
+  - `AdoExtensionShareWith` — comma-separated sanctioned organizations that may
+    receive the private Dev extension. Public production publication ignores it.
+- **Environment `ChaosStudio-ESRP-Signing-Prod`:** Branch Control limited to
+  `refs/heads/main`, branch protection required, unknown branch status denied,
+  and pipeline permissions restricted to the Official pipeline.
+- **AzureRM service connection `ADO-Plugin Publishing`:** workload identity
+  federation, Branch Control limited to `refs/heads/main`, required approval,
+  and pipeline permissions restricted to the Official pipeline. Add its service
+  principal to the Azure DevOps organization and grant it the required role on
+  the `AzureChaosStudio` Marketplace publisher.
+
+No Marketplace PAT or Key Vault secret is required for publishing.
+
+Verify the protected resources live before release:
 
 ```bash
 export AZURE_DEVOPS_EXT_PAT=...  # PAT with Service Connections + Environment + Pipeline resources + Build: Read
@@ -626,10 +618,9 @@ scripts/verify-ado-signing-protections.sh https://dev.azure.com/ORG PROJECT OFFI
   ChaosStudio-ESRP-Signing-Prod "ADO-Plugin Publishing" refs/heads/main
 ```
 
-It resolves each named protected resource — the signing **environment**
-`ChaosStudio-ESRP-Signing-Prod` (via the distributed-task environments API) and the publish
-**service connection** `ADO-Plugin Publishing` (via the service-endpoint API) — and fails
-closed unless each carries a **Branch Control** check identified by its immutable task
+It resolves each named protected resource and fails closed unless the publish
+service connection is an AzureRM endpoint using `WorkloadIdentityFederation`,
+and unless each carries a **Branch Control** check identified by its immutable task
 (`definitionRef.id`), not a user-settable display name, that is ENABLED (`isDisabled` must be
 the exact boolean `false`; a missing property, a null, or a string `"false"` fails closed),
 pins the REQUIRED task **version** (`definitionRef.version` must equal
@@ -642,10 +633,8 @@ unrecognized value fails closed), **and** authorizes EXACTLY the one official pi
 pipelines, and no others). The **publish** connection ADDITIONALLY requires an ENABLED
 **Approval** check (again `isDisabled == false`) with at least one approver and
 `requesterCannotBeApprover` set to the exact boolean `true` (a string `"true"` fails closed). The
-**signing** environment is gated by Branch Control + pipeline permissions and does NOT require a
-separate Approval — the human gate lives on the publish step, and signing's authoritative control
-is the OneBranch SignType entitlement (below) plus the CodeSign Validation
-gates in both stages.
+**signing** environment is gated by Branch Control + pipeline permissions and does
+not require a separate Approval — the human gate lives on the publish endpoint.
 
 **Signing-pipeline identity check (a consistency check, NOT branch-run prevention).** Because a
 manual run can queue the official pipeline against *any* branch — and a feature-branch YAML
@@ -659,19 +648,10 @@ to a different repo, or a same-id/name repo of a different provider, is rejected
 `EXPECTED_REPOSITORY_NAME` adds a mutable-name check) — its **default branch is
 `refs/heads/main`**, and its YAML path is the reviewed `.pipelines/OneBranch.Official.yml`
 (override with `EXPECTED_YAML_PATH`). This catches a **swapped/retargeted definition**, but it
-does NOT by itself prevent a feature-branch run. The **authoritative, non-removable** prevention
-is external and cannot be asserted over the REST API: the OneBranch/ESRP **Real
-`external_distribution` SignType entitlement**, granted by OneBranch onboarding to the onboarded
-Official pipeline on the trusted branch only. **Evidence to record** (the entitlement is
-portal-confirmed, not REST-queryable): capture the ESRP/OneBranch onboarding request id and the
-approved SignType (`external_distribution`) from the OneBranch portal, and keep it with the
-release runbook so the Real-signing authorization is auditable. The **machine-enforced backstop**
-is the CodeSign Validation gate in BOTH the sign and publish stages — a bypassing run obtains at
-most a **Test** signature whose certificate does not chain to the approved Microsoft production
-signing root, which those gates reject, so it can never publish. The committed pipeline's
-Real-SignType request (`signing_profile: external_distribution`) and both fail-closed gates are
-additionally locked by `packages/core/test/contract/ado-pipeline.test.ts`. The signing
-environment's Branch Control (verified above) additionally gates the deployment-job path.
+does NOT by itself prevent a feature-branch run. The authoritative signing
+authorization is the OneBranch/ESRP ADO-extension KeyCode entitlement, which is
+portal-confirmed rather than REST-queryable. Record the onboarding request and
+approved KeyCode with the release evidence.
 
 YAML conditions alone are likewise not sufficient for the Marketplace credential,
 because a feature branch could define its own pipeline that consumes the same service
@@ -693,17 +673,11 @@ Because the release stage uses the OneBranch `releaseJob` contract (declared
 artifact input, checkout disabled), the publishing step has no repository code on
 disk and can only act on the signed VSIX artifact produced by the `sign` stage.
 
-**Signed-artifact handoff is re-verified independently at publish time.** The `publish` stage
-does **not** trust that the `sign` stage ran: before spending the Marketplace credential it
-runs CodeSign Validation (`CodeSignValidation@0` + `PostAnalysis@2`, `BreakOn: WarningAbove`,
-`ToolLogsNotFoundAction: Error`) on the artifact it actually received and **fails closed**
-unless that VSIX is validly signed. A run that skipped or faked signing therefore cannot
-publish. **Confirm this handoff once in a live Official run:** queue the Official pipeline with
-`publishExtension: true` from `refs/heads/main`, and verify in the run logs that (a) the `sign`
-stage's CodeSign Validation passed on a Real `external_distribution` signature, (b) the
-`publish` stage's independent CodeSign re-verification passed on the consumed artifact, and (c)
-`PublishAzureDevOpsExtension` uploaded exactly that signed VSIX. Keep the run link with the
-release record.
+**Confirm the handoff once in a live Official run:** verify that
+`AdoExtensionVerify` succeeds, the `.psdsxs` entry is present, the sign-stage and
+publish-stage SHA-256 values match, `PublishAzureDevOpsExtension@5` uses the
+AzureRM/WIF endpoint, and Marketplace validation succeeds. Keep the run link with
+the release record.
 
 ## Issues & feedback
 

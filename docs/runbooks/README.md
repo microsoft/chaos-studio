@@ -43,7 +43,8 @@ admin and an ADO admin. They are verified, not created, by the tooling here:
 - GitHub: tag ruleset + release environment protections
   (`scripts/verify-release-protections.sh`).
 - Azure DevOps: the ESRP signing environment and the `ADO-Plugin Publishing`
-  service-connection approvals (`scripts/verify-ado-signing-protections.sh`).
+  AzureRM/workload-identity service-connection approvals
+  (`scripts/verify-ado-signing-protections.sh`).
 - A target preview environment (a Chaos Studio v2 stamp, a workspace, and federated
   CI identities) for RV1–RV3.
 

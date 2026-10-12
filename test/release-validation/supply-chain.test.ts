@@ -45,3 +45,16 @@ test('secret scan exceptions identify only the three historical synthetic redact
     `${prefix}jwt:17`,
   ]);
 });
+
+test('production audit evaluates the actual esbuild bundle graph, not unused install tooling', () => {
+  const workflow = readText('.github/workflows/supply-chain.yml');
+  assert.match(workflow, /run: npm run audit:bundles/);
+  assert.doesNotMatch(workflow, /npm audit --omit=dev --audit-level=high/);
+
+  const audit = readText('scripts/audit-bundled-production.mjs');
+  assert.match(audit, /metafile:\s*true/);
+  assert.match(audit, /spawnSync\(process\.execPath, \[npmCli, 'audit', '--omit=dev', '--json'\]/);
+  assert.doesNotMatch(audit, /BUNDLE_AUDIT_REPORT|BUNDLE_AUDIT_ENTRYPOINTS/);
+  assert.match(audit, /Bundled production advisory/);
+  assert.match(audit, /Install-only advisory excluded from shipped bundles/);
+});

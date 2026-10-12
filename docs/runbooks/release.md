@@ -238,13 +238,15 @@ node scripts/lib/release-commit.mjs assert-tag-commit <tag> <build-commit>
 which resolves `refs/tags/<tag>` and **rejects any other build commit** (an ancestor,
 a later receipt-bearing commit, or a branch that happens to share the tag's name). If
 the tag does not exist yet, the build fails: release the Action first. The `sign`
-stage is a deployment job bound to the ESRP signing environment, and the `publish`
-stage is a `releaseJob` that re-verifies the signature of the artifact it received
-before spending the Marketplace credential.
+stage is a deployment job bound to the ESRP signing environment and runs
+`AdoExtensionSign` + `AdoExtensionVerify`. The `publish` stage is a `releaseJob`
+that verifies the signed artifact digest before spending the Marketplace WIF
+credential, publishes without changing task metadata, and waits for Marketplace
+validation.
 
-**Provenance (ADO side):** the published VSIX carries an ESRP `external_distribution`
-signature, cryptographically validated by CodeSign Validation in both the sign and
-publish stages. Record the pipeline run ID and build number in the release notes.
+**Provenance (ADO side):** the published VSIX carries the OneBranch ADO extension
+`.psdsxs` signature. Record the pipeline run ID, build number, signed VSIX SHA-256,
+extension version, and task version in the release notes.
 
 ## 4. Record the release
 

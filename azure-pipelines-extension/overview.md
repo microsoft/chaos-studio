@@ -23,6 +23,7 @@ This task drives the Chaos Studio v2 scenario journey from a pipeline:
 ## Support
 
 - **Source & issues:** <https://github.com/microsoft/chaos-studio>
+- **License:** [MIT](LICENSE)
 - **API version:** `2026-05-01-preview`
 
 > This extension is in **Preview**. Behavior and inputs may change before general

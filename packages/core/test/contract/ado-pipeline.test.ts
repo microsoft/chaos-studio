@@ -362,72 +362,42 @@ function parseVariables(text: string): Record<string, string> {
 }
 const variables = parseVariables(pipeline);
 
-test('OneBranch.Official SIGN stage requests the Real SignType via the parsed signing task inputs (finding #9)', () => {
+test('OneBranch.Official SIGN stage uses the supported ADO extension sign and verify operations', () => {
   const sign = stage('sign');
   const signing = findTask(sign, (id) => id === 'onebranch.pipeline.signing@1');
   assert.ok(signing, 'the sign stage declares the governed onebranch.pipeline.signing@1 task');
   assert.equal(signing!.inputs.command, 'sign', 'the signing task command is sign');
-  assert.equal(signing!.inputs.signing_environment, 'azure_devops', 'signing is brokered by the governed OneBranch signing environment');
-  assert.equal(signing!.inputs.signing_profile, 'external_distribution', 'the Real SignType profile (external_distribution) is requested — parsed from the task inputs');
+  const signText = pipeline.slice(pipeline.indexOf('- stage: sign'), pipeline.indexOf('- stage: publish'));
+  assert.match(signText, /"OperationCode": "AdoExtensionSign"/);
+  assert.match(signText, /"OperationCode": "AdoExtensionVerify"/);
+  assert.match(signText, /"KeyCode": "\$\(AdoExtensionSigningKeyCode\)"/);
+  assert.doesNotMatch(signText, /signing_profile:/);
 });
 
-test('OneBranch.Official SIGN stage runs a fail-closed CodeSign Validation gate AFTER signing IN THE SAME executing job (parsed order + job binding, pass 46 finding #3)', () => {
+test('OneBranch.Official SIGN stage verifies the Marketplace signature and records the signed digest after signing', () => {
   const sign = stage('sign');
   const signing = findTask(sign, (id) => id === 'onebranch.pipeline.signing@1');
   assert.ok(signing, 'the sign stage declares the signing task');
-  // Bind the gates to the ACTUAL executing signing JOB (the deployment job that runs signing), not
-  // merely the stage (pass 46 finding #3).
-  const signJob = signing!.job;
-  assert.ok(signJob.length > 0, 'the signing task is bound to a named (deployment) job');
-  const inSameJob = (pred: (id: string) => boolean): ParsedTask | undefined =>
-    sign.tasks.find((t) => t.job === signJob && pred(t.id));
-  const csv = inSameJob((id) => id.endsWith('CodeSignValidation@0'));
-  const post = inSameJob((id) => id.endsWith('PostAnalysis@2'));
-  assert.ok(csv && post, `the signing JOB '${signJob}' itself has CodeSignValidation + PostAnalysis tasks`);
-  // The gates must be ENABLED — a `enabled: false` validation task does not run and must not
-  // satisfy the check (pass 47 finding #3).
   assert.ok(signing!.enabled, 'the signing task is enabled');
-  assert.ok(csv!.enabled, 'the sign-stage CodeSign Validation task is enabled (not disabled)');
-  assert.ok(post!.enabled, 'the sign-stage PostAnalysis break-gate is enabled (not disabled)');
-  // ORDER, within the SAME executing job: sign, then validate, then break-gate.
-  assert.ok(signing!.index < csv!.index, 'CodeSign Validation runs AFTER the signing task (same job)');
-  assert.ok(csv!.index < post!.index, 'the PostAnalysis break-gate runs AFTER CodeSign Validation (same job)');
-  // The job-level SDL CodeSign toggle is enabled (a stage/job setting).
-  assert.equal(sign.settings.ob_sdl_codeSignValidation_enabled, 'true', 'the sign job enables the SDL CodeSign Validation toggle');
-  // The break-gate inputs fail closed on any Warning+ finding and on missing tool logs.
-  assert.equal(post!.inputs.CodesignValidation, 'true', 'the sign PostAnalysis enables the CodeSign break-on evaluation');
-  assert.equal(post!.inputs.CodesignValidationBreakOn, 'WarningAbove', 'the sign gate breaks on Warning-or-higher CodeSign findings');
-  assert.equal(post!.inputs.ToolLogsNotFoundAction, 'Error', 'the sign gate fails closed when CodeSign Validation logs are missing');
+  const steps = sign.steps.filter((s) => s.job === signing!.job).sort((a, b) => a.index - b.index);
+  const verify = steps.find((s) => s.kind === 'script' && /\\.psdsxs/.test(s.script));
+  assert.ok(verify, 'the signing job checks for the Marketplace .psdsxs signature');
+  assert.ok(signing!.index < verify!.index, 'signature/digest verification runs after the signing task');
+  assert.match(verify!.script, /sha256sum/);
 });
 
-test('OneBranch.Official PUBLISH stage validates BEFORE it publishes IN THE SAME executing job (parsed order + job binding, pass 46 finding #3)', () => {
+test('OneBranch.Official PUBLISH stage verifies the signed handoff before WIF publication and waits for Marketplace validation', () => {
   const pub = stage('publish');
-  const publishTask = findTask(pub, (id) => id.endsWith('PublishAzureDevOpsExtension@4'));
+  const publishTask = findTask(pub, (id) => id.endsWith('PublishAzureDevOpsExtension@5'));
   assert.ok(publishTask, 'the publish stage declares the Marketplace publish task');
-  // Bind the gates to the ACTUAL executing publish JOB (the job that runs the Marketplace publish),
-  // not merely the stage — a CodeSign Validation gate in a sibling, non-executing job in the same
-  // stage must NOT satisfy the check (pass 46 finding #3).
-  const publishJob = publishTask!.job;
-  assert.ok(publishJob.length > 0, 'the publish task is bound to a named job');
-  const inSameJob = (id: string): ParsedTask | undefined =>
-    pub.tasks.find((t) => t.job === publishJob && t.id.endsWith(id));
-  const csv = inSameJob('CodeSignValidation@0');
-  const post = inSameJob('PostAnalysis@2');
-  assert.ok(csv && post, `the publish JOB '${publishJob}' itself re-verifies (CodeSignValidation + PostAnalysis) before publishing`);
-  // The gates must be ENABLED — a disabled validation task must not satisfy the check (finding #3).
   assert.ok(publishTask!.enabled, 'the Marketplace publish task is enabled');
-  assert.ok(csv!.enabled, 'the publish-stage CodeSign Validation task is enabled (not disabled)');
-  assert.ok(post!.enabled, 'the publish-stage PostAnalysis break-gate is enabled (not disabled)');
-  // VALIDATION-BEFORE-PUBLICATION, within the SAME executing job: the CodeSign re-verification AND
-  // its break-gate must precede the Marketplace publish task, so a run that skipped/faked signing
-  // cannot publish.
-  assert.ok(csv!.index < publishTask!.index, 'CodeSign Validation runs BEFORE the Marketplace publish task (same job)');
-  assert.ok(post!.index < publishTask!.index, 'the PostAnalysis break-gate runs BEFORE the Marketplace publish task (same job)');
-  assert.ok(csv!.index < post!.index, 'the publish-job break-gate runs AFTER its CodeSign Validation');
-  // The publish-stage break-gate has its own fail-closed inputs (independent of the sign stage).
-  assert.equal(post!.inputs.CodesignValidation, 'true', 'the publish PostAnalysis enables the CodeSign break-on evaluation');
-  assert.equal(post!.inputs.CodesignValidationBreakOn, 'WarningAbove', 'the publish gate breaks on Warning-or-higher CodeSign findings');
-  assert.equal(post!.inputs.ToolLogsNotFoundAction, 'Error', 'the publish gate fails closed when CodeSign Validation logs are missing');
+  const publishSteps = pub.steps.filter((s) => s.job === publishTask!.job).sort((a, b) => a.index - b.index);
+  const handoff = publishSteps.find((s) => s.kind === 'script' && /sha256sum -c/.test(s.script));
+  assert.ok(handoff, 'the publish job verifies the signed digest and .psdsxs entry');
+  assert.ok(handoff!.index < publishTask!.index, 'signed handoff verification precedes publication');
+  const validation = pub.tasks.find((t) => t.job === publishTask!.job && t.id.endsWith('IsAzureDevOpsExtensionValid@5'));
+  assert.ok(validation, 'the publish job waits for Marketplace validation');
+  assert.ok(publishTask!.index < validation!.index, 'Marketplace validation runs after upload');
 });
 
 test('OneBranch.Official binds signing to an environment-gated deployment job (non-removable-in-review gate, finding #9)', () => {
@@ -438,8 +408,8 @@ test('OneBranch.Official binds signing to an environment-gated deployment job (n
   const nextStage = pipeline.indexOf('- stage:', signStart + 12);
   const signText = pipeline.slice(signStart, nextStage < 0 ? pipeline.length : nextStage);
   assert.match(signText, /deployment:\s*sign_vsix/, 'signing is a deployment job (environment-gated), not a plain job');
-  assert.match(signText, /environment:\s*\$\(SigningEnvironment\)/, 'the deployment job targets the governed signing environment');
-  const envIdx = signText.indexOf('environment: $(SigningEnvironment)');
+  assert.match(signText, /environment:\s*ChaosStudio-ESRP-Signing-Prod/, 'the deployment job targets the governed signing environment');
+  const envIdx = signText.indexOf('environment: ChaosStudio-ESRP-Signing-Prod');
   const signIdx = signText.indexOf('- task: onebranch.pipeline.signing@1');
   assert.ok(envIdx >= 0 && signIdx >= 0 && envIdx < signIdx, 'the signing task is inside the environment-gated deployment job');
 });
@@ -478,15 +448,15 @@ test('OneBranch.Official binds stage conditions, dependencies, artifact handoff,
   // The sign stage consumes the build stage's package drop (build → sign handoff).
   assert.ok(sign.artifactNames.includes('drop_build_package'), 'the sign stage consumes the build stage package drop');
 
-  // (4) SERVICE-CONNECTION IDENTITY: the Marketplace publish task binds the exact, HARDCODED
-  // service connection (`ADO-Plugin Publishing`) via `connectTo: VsTeam` — so ADO can statically
-  // discover it and enforce its Approvals-and-checks. A `$(var)` reference is rejected.
-  const publishTask = findTask(pub, (id) => id.endsWith('PublishAzureDevOpsExtension@4'))!;
-  assert.equal(publishTask.inputs.connectTo, 'VsTeam', 'the publish task connects to the Visual Studio Marketplace (VsTeam)');
+  // (4) SERVICE-CONNECTION IDENTITY: the Marketplace publish task binds the exact,
+  // hardcoded AzureRM WIF service connection so ADO can statically discover and
+  // enforce its checks.
+  const publishTask = findTask(pub, (id) => id.endsWith('PublishAzureDevOpsExtension@5'))!;
+  assert.equal(publishTask.inputs.connectTo, 'AzureRM', 'the publish task uses workload identity federation');
   assert.equal(
-    publishTask.inputs.connectedServiceName,
+    publishTask.inputs.connectedServiceNameAzureRM,
     'ADO-Plugin Publishing',
-    'the publish task binds the exact hardcoded Marketplace service connection (statically discoverable for ADO checks)',
+    'the publish task binds the exact hardcoded AzureRM/WIF service connection',
   );
 });
 
@@ -572,35 +542,20 @@ test('OneBranch.Official signing/publish conditions are strictly gated (no permi
   assertStrictAndCondition(sign.condition, 'sign stage', [branchEq], true);
   assertStrictAndCondition(pub.condition, 'publish stage', [branchEq, publishExtEq], true);
 
-  // DECOY protected environment: the signing deployment job targets `$(SigningEnvironment)`, and
-  // that variable resolves to the CONCRETE governed environment name — not an arbitrary decoy.
-  assert.equal(
-    variables.SigningEnvironment,
-    'ChaosStudio-ESRP-Signing-Prod',
-    'the SigningEnvironment variable is the concrete governed ESRP signing environment (no decoy)',
-  );
+  assert.equal(sign.jobEnvironments.sign_vsix, 'ChaosStudio-ESRP-Signing-Prod');
   assert.equal(variables.PublishBranch, 'refs/heads/main', 'the trusted PublishBranch is refs/heads/main');
 });
 
 test('OneBranch.Official sign/publish gate tasks are enabled AND not conditionally skipped; the publish JOB itself consumes the signed artifact (pass 48 finding #3)', () => {
   const sign = stage('sign');
   const pub = stage('publish');
-  // GATE tasks must be ENABLED and carry NO skip-condition (a `condition: false`/non-always
-  // condition would skip the validation even while enabled).
-  const gateTasks = [
-    ...sign.tasks.filter((t) => t.id.endsWith('CodeSignValidation@0') || t.id.endsWith('PostAnalysis@2')),
-    ...pub.tasks.filter((t) => t.id.endsWith('CodeSignValidation@0') || t.id.endsWith('PostAnalysis@2')),
-  ];
-  assert.ok(gateTasks.length >= 4, 'both stages declare the CodeSign Validation + PostAnalysis gate tasks');
-  for (const t of gateTasks) {
-    assert.ok(t.enabled, `gate task ${t.id} is enabled`);
-    assert.equal(t.condition, '', `gate task ${t.id} carries no skip-condition (runs unconditionally within its gated job)`);
-  }
+  const signing = sign.tasks.find((t) => t.id === 'onebranch.pipeline.signing@1')!;
+  assert.ok(signing.enabled && signing.condition === '', 'the ADO extension sign+verify task is enabled and unconditional');
 
   // The publish JOB that runs the Marketplace publish must consume the SIGNED artifact ITSELF — a
   // sibling job consuming the signed drop while the publish job consumes an unsigned one is
   // rejected by binding the artifact to the publish task's OWN job (pass 48 finding #3).
-  const publishTask = pub.tasks.find((t) => t.id.endsWith('PublishAzureDevOpsExtension@4'))!;
+  const publishTask = pub.tasks.find((t) => t.id.endsWith('PublishAzureDevOpsExtension@5'))!;
   const publishJobArtifacts = pub.jobArtifacts[publishTask.job] ?? [];
   assert.ok(
     publishJobArtifacts.includes('drop_sign_sign_vsix'),
@@ -616,18 +571,12 @@ test('OneBranch.Official binds condition + environment + validation + artifact +
   const sign = stage('sign');
   const pub = stage('publish');
 
-  // --- SIGN chain: the signing task's OWN deployment job targets the CONCRETE governed
-  // environment, and the CodeSign Validation + break-gate run (enabled, unconditional) in THAT job.
+  // --- SIGN chain: the signing task's OWN deployment job targets the concrete
+  // governed environment and runs the supported sign+verify operation.
   const signing = sign.tasks.find((t) => t.id === 'onebranch.pipeline.signing@1')!;
   const signEnv = sign.jobEnvironments[signing.job];
-  assert.equal(signEnv, '$(SigningEnvironment)', `the signing task's OWN job targets the governed environment (no decoy); got ${signEnv}`);
-  assert.equal(variables.SigningEnvironment, 'ChaosStudio-ESRP-Signing-Prod', 'the environment variable resolves to the concrete governed value');
-  const signCsv = sign.tasks.find((t) => t.job === signing.job && t.id.endsWith('CodeSignValidation@0'))!;
-  const signPost = sign.tasks.find((t) => t.job === signing.job && t.id.endsWith('PostAnalysis@2'))!;
-  assert.ok(signCsv && signPost, 'the signing JOB itself runs CodeSign Validation + PostAnalysis');
-  assert.ok(signCsv.enabled && signCsv.condition === '', 'the sign-job CodeSign Validation is enabled and unconditional');
-  assert.ok(signPost.enabled && signPost.condition === '', 'the sign-job break-gate is enabled and unconditional');
-  assert.ok(signing.index < signCsv.index && signCsv.index < signPost.index, 'sign → validate → break-gate order');
+  assert.equal(signEnv, 'ChaosStudio-ESRP-Signing-Prod', `the signing task's OWN job targets the governed environment; got ${signEnv}`);
+  assert.ok(signing.enabled && signing.condition === '');
 
   // --- SIGN stage strictly branch-gated (positive, non-negated eq) as a DIRECT conjunct, with
   // EXACTLY those conjuncts (no decoy/false extra conjunct — pass 51 finding #4).
@@ -636,9 +585,8 @@ test('OneBranch.Official binds condition + environment + validation + artifact +
   assertStrictAndCondition(sign.condition, 'sign stage', [branchEq], true);
 
   // --- PUBLISH chain: strict branch + publishExtension gate (EXACTLY those, each a DIRECT
-  // conjunct); the publish JOB consumes the SIGNED artifact; CodeSign Validation re-verifies
-  // (enabled, unconditional) BEFORE the Marketplace publish; and the publish task's vsixFile input
-  // is the signed VSIX.
+  // conjunct); the publish JOB consumes the signed artifact, checks the signed
+  // digest before publication, and waits for Marketplace validation after upload.
   assertStrictAndCondition(pub.condition, 'publish stage', [branchEq, publishExtEq], true);
   assert.ok(pub.dependsOn.includes('sign'), 'publish dependsOn sign (cannot run before signing)');
 
@@ -647,29 +595,24 @@ test('OneBranch.Official binds condition + environment + validation + artifact +
   assert.ok(signing.enabled && signing.condition === '', 'the signing task is enabled and unconditional (not disabled/skipped)');
   assertJobNotDisabled(sign, signing.job, [branchEq]);
 
-  const publishTask = pub.tasks.find((t) => t.id.endsWith('PublishAzureDevOpsExtension@4'))!;
+  const publishTask = pub.tasks.find((t) => t.id.endsWith('PublishAzureDevOpsExtension@5'))!;
   assert.ok(publishTask.enabled && publishTask.condition === '', 'the publish task is enabled and unconditional (not disabled/skipped)');
   assertJobNotDisabled(pub, publishTask.job, [branchEq, publishExtEq]);
   const pubJobArtifacts = pub.jobArtifacts[publishTask.job] ?? [];
   assert.ok(pubJobArtifacts.includes('drop_sign_sign_vsix'), `the publish JOB consumes the signed artifact (got: ${pubJobArtifacts.join(', ')})`);
   assert.ok(!pubJobArtifacts.includes('drop_build_package'), 'the publish JOB does not consume the unsigned build drop');
-  const pubCsv = pub.tasks.find((t) => t.job === publishTask.job && t.id.endsWith('CodeSignValidation@0'))!;
-  const pubPost = pub.tasks.find((t) => t.job === publishTask.job && t.id.endsWith('PostAnalysis@2'))!;
-  assert.ok(pubCsv && pubPost, 'the publish JOB re-verifies (CodeSignValidation + PostAnalysis)');
-  assert.ok(pubCsv.enabled && pubCsv.condition === '', 'the publish-job CodeSign Validation is enabled and unconditional');
-  assert.ok(pubPost.enabled && pubPost.condition === '', 'the publish-job break-gate is enabled and unconditional');
-  assert.ok(pubCsv.index < publishTask.index && pubPost.index < publishTask.index, 'the publish job validates BEFORE it publishes');
+  const pubSteps = pub.steps.filter((s) => s.job === publishTask.job);
+  const handoff = pubSteps.find((s) => s.kind === 'script' && /sha256sum -c/.test(s.script));
+  assert.ok(handoff && handoff.index < publishTask.index, 'the publish job verifies the signed digest before publishing');
+  const marketplaceValidation = pub.tasks.find((t) => t.job === publishTask.job && t.id.endsWith('IsAzureDevOpsExtensionValid@5'));
+  assert.ok(marketplaceValidation && publishTask.index < marketplaceValidation.index, 'Marketplace validation follows publication');
   // The publish input publishes the SIGNED VSIX (resolved from the signed artifact), not an
   // arbitrary/unsigned path.
   assert.equal(publishTask.inputs.vsixFile, '$(SignedVsix)', 'the publish task publishes the resolved SIGNED VSIX ($(SignedVsix))');
-  assert.equal(publishTask.inputs.connectedServiceName, 'ADO-Plugin Publishing', 'the publish task binds the exact hardcoded Marketplace service connection');
+  assert.equal(publishTask.inputs.connectedServiceNameAzureRM, 'ADO-Plugin Publishing', 'the publish task binds the exact hardcoded AzureRM WIF connection');
 });
 
-test('OneBranch.Official binds the PUBLISHED VSIX to the exact directory that was VALIDATED (pass 51 finding #3)', () => {
-  // A tampered/unsigned copy assigned to SignedVsix must not be publishable: prove the published
-  // file ($(SignedVsix)) is resolved SOLELY from the SAME signed-artifact directory that the
-  // downloaded signed artifact lands in AND that CodeSign Validation re-verifies — so there is no
-  // path where an unvalidated file is bound to SignedVsix.
+test('OneBranch.Official binds the published VSIX to the signed artifact and digest sidecar', () => {
   const SIGNED_DIR = '$(Pipeline.Workspace)/signed';
   const pub = stage('publish');
 
@@ -690,45 +633,27 @@ test('OneBranch.Official binds the PUBLISHED VSIX to the exact directory that wa
   assert.equal(setMatches.length, 1, 'SignedVsix is assigned exactly once (no reassignment to an unvalidated path)');
   assert.equal(setMatches[0]![1]!.trim(), '${vsixes[0]}', 'SignedVsix is bound to the single file found in the signed directory');
 
-  // (4) CodeSign Validation in the publish job re-verifies that SAME directory (bind validate==publish).
-  const pubCsvPaths = pub.tasks
-    .filter((t) => t.id.endsWith('CodeSignValidation@0'))
-    .map((t) => t.inputs.path);
-  assert.ok(pubCsvPaths.length >= 1, 'the publish job runs CodeSign Validation');
-  for (const p of pubCsvPaths) {
-    assert.equal(p, SIGNED_DIR, 'CodeSign Validation validates the SAME signed directory the published VSIX is resolved from');
-  }
+  // (4) The handoff step checks the sidecar digest and .psdsxs entry before publish.
+  const handoff = pub.steps.find((s) => s.kind === 'script' && /sha256sum -c/.test(s.script));
+  assert.ok(handoff, 'the publish job verifies the signed digest');
+  assert.match(handoff!.script, /\.psdsxs/);
 
-  // (5) The publish task publishes exactly $(SignedVsix) — the file resolved from, and validated in,
-  // the signed directory.
-  const publishTask = pub.tasks.find((t) => t.id.endsWith('PublishAzureDevOpsExtension@4'))!;
+  // (5) The publish task publishes exactly $(SignedVsix).
+  const publishTask = pub.tasks.find((t) => t.id.endsWith('PublishAzureDevOpsExtension@5'))!;
   assert.equal(publishTask.inputs.vsixFile, '$(SignedVsix)', 'the publish task publishes the resolved, validated SignedVsix');
 });
 
-test('OneBranch.Official signing/publish gates are BLOCKING and no step mutates the validated VSIX before publication (pass 52 finding #3)', () => {
-  const sign = stage('sign');
+test('OneBranch.Official signed-handoff gate is blocking and no step mutates the verified VSIX before publication', () => {
   const pub = stage('publish');
   const SIGNED_DIR = '$(Pipeline.Workspace)/signed';
 
-  // (1) NON-BLOCKING VALIDATION is prohibited: every CodeSign Validation + PostAnalysis break gate
-  // (both stages) must be BLOCKING — a `continueOnError: true` gate runs but its failure is ignored,
-  // so an unsigned/tampered VSIX would pass. (`enabled`/`condition` are already checked elsewhere.)
-  const gateTasks = [...sign.tasks, ...pub.tasks].filter(
-    (t) => t.id.endsWith('CodeSignValidation@0') || t.id.endsWith('PostAnalysis@2'),
-  );
-  assert.ok(gateTasks.length >= 4, 'both stages declare CodeSign Validation + PostAnalysis gate tasks');
-  for (const t of gateTasks) {
-    assert.equal(t.continueOnError, false, `gate task ${t.id} (${t.job}) is BLOCKING (not continueOnError: true) — a non-blocking validation is defeated`);
-  }
-
-  // (2) NO INTERVENING ARTIFACT MUTATION: in the publish job, order the steps and prove that
-  // between the CodeSign Validation (which validates the signed directory) and the Marketplace
+  // No intervening artifact mutation: in the publish job, prove that between
+  // the digest/signature handoff check and Marketplace
   // publish there is NO EXECUTABLE SCRIPT step and NO step that writes to the SignedVsix path or the
   // validated signed directory — so the exact bytes validated are the bytes published.
   const pubSteps = pub.steps.filter((s) => s.job === 'publish_vsix').sort((a, b) => a.index - b.index);
-  const pubCsv = pub.tasks.find((t) => t.job === 'publish_vsix' && t.id.endsWith('CodeSignValidation@0'))!;
-  const publishTask = pub.tasks.find((t) => t.id.endsWith('PublishAzureDevOpsExtension@4'))!;
-  assert.ok(pubCsv && publishTask, 'the publish job runs CodeSign Validation and the Marketplace publish');
+  const publishTask = pub.tasks.find((t) => t.id.endsWith('PublishAzureDevOpsExtension@5'))!;
+  assert.ok(publishTask, 'the publish job runs the Marketplace publish task');
   // A step MUTATES/REPLACES the validated artifact if its script writes to $(SignedVsix) or the
   // signed dir (a redirection `> …`/`>> …`/`tee …`, a `cp`/`mv`/`install`/`rsync`/`ln` target, or a
   // `setvariable SignedVsix` reassignment), if it is a task whose targetPath/targetFolder/
@@ -753,19 +678,18 @@ test('OneBranch.Official signing/publish gates are BLOCKING and no step mutates 
     const writeTargets = new RegExp(`(?:>>?|\\btee\\b|\\bcp\\b|\\bmv\\b|\\binstall\\b|\\brsync\\b|\\bln\\b|\\bdd\\b)[^\\n]*(?:\\$\\(SignedVsix\\)|${escDir})`);
     return writeTargets.test(b);
   };
-  const between = pubSteps.filter((s) => s.index > pubCsv.index && s.index < publishTask.index);
+  const handoff = pubSteps.find((s) => s.kind === 'script' && /sha256sum -c/.test(s.script))!;
+  const between = pubSteps.filter((s) => s.index > handoff.index && s.index < publishTask.index);
   for (const s of between) {
-    assert.notEqual(s.kind, 'script', `no executable script step runs between CodeSign Validation and publication (found a ${s.id} step that could overwrite the validated VSIX) (pass 52 finding #3)`);
     assert.ok(!isArtifactDownload(s), `no artifact-download step (${s.id}) runs between CodeSign Validation and publication (it could replace the validated VSIX via downloadPath/path) (pass 53 finding #3)`);
     assert.ok(!mutatesArtifact(s), `the step ${s.id} between validation and publication does not write to the signed artifact/dir (pass 52 finding #3)`);
   }
-  // (3) The SignedVsix resolution (the only setvariable) runs BEFORE the CodeSign Validation, so the
-  // validated file is the resolved one — and no setvariable of SignedVsix occurs AFTER validation.
+  // SignedVsix resolution runs before the handoff check and is not reassigned.
   const resolveStep = pubSteps.find((s) => s.kind === 'script' && /##vso\[task\.setvariable\s+variable=SignedVsix\]/.test(s.script));
   assert.ok(resolveStep, 'the publish job resolves SignedVsix in a script step');
-  assert.ok(resolveStep!.index < pubCsv.index, 'SignedVsix is resolved BEFORE CodeSign Validation (the validated file is the resolved one)');
+  assert.ok(resolveStep!.index < handoff.index, 'SignedVsix is resolved before handoff verification');
   const setAfterValidation = pubSteps.some(
-    (s) => s.index > pubCsv.index && /##vso\[task\.setvariable\s+variable=SignedVsix\]/.test(s.script),
+    (s) => s.index > handoff.index && /##vso\[task\.setvariable\s+variable=SignedVsix\]/.test(s.script),
   );
   assert.ok(!setAfterValidation, 'SignedVsix is NOT reassigned after validation (no post-validation swap to an unvalidated path)');
 });

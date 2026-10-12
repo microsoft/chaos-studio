@@ -4,7 +4,8 @@
 # The `onebranch.pipeline.signing@1` task takes NO service connection, so ESRP signing is
 # gated by the pipeline ENVIRONMENT the build_sign stage is associated with (default
 # `ChaosStudio-ESRP-Signing-Prod`); Marketplace PUBLISH is gated by the `ADO-Plugin
-# Publishing` service-connection ENDPOINT. Neither the in-YAML branch conditions nor
+# Publishing` AzureRM workload-identity service-connection ENDPOINT. Neither the
+# in-YAML branch conditions nor
 # PublishBranch are authoritative (a manual run loads the YAML from the SELECTED branch), so
 # the ENFORCED gate must live on those concrete resources: (1) Approvals-and-checks ->
 # Branch Control limited to the trusted branch (identified by the immutable task, not a
@@ -145,7 +146,7 @@ api() { curl -fsS --max-time 60 -u ":${AZURE_DEVOPS_EXT_PAT}" -H 'Accept: applic
 # Resolve a service connection (endpoint) id by exact name within the project.
 endpoint_id() {
   local name="$1" json
-  json="$(api "${ORG}/${PROJECT}/_apis/serviceendpoint/endpoints?endpointNames=$(jq -rn --arg n "$name" '$n|@uri')&api-version=7.1-preview.4")" || return 1
+  json="$(api "${ORG}/${PROJECT}/_apis/serviceendpoint/endpoints?endpointNames=$(jq -rn --arg n "$name" '$n|@uri')&includeDetails=true&api-version=7.1-preview.4")" || return 1
   # Require EXACTLY one endpoint of that exact name.
   local n
   n="$(printf '%s' "$json" | jq -r '[.value[]? | select(.name == $nm)] | length' --arg nm "$name" 2>/dev/null)"
@@ -153,6 +154,28 @@ endpoint_id() {
     return 2
   fi
   printf '%s' "$json" | jq -r '.value[] | select(.name == $nm) | .id' --arg nm "$name"
+}
+
+verify_publish_endpoint_auth() {
+  local json count type scheme
+  json="$(api "${ORG}/${PROJECT}/_apis/serviceendpoint/endpoints?endpointNames=$(jq -rn --arg n "$PUBLISH_SC" '$n|@uri')&includeDetails=true&api-version=7.1-preview.4")" || {
+    err "publish: could not read AzureRM/WIF details for '${PUBLISH_SC}'."
+    return
+  }
+  count="$(printf '%s' "$json" | jq -r '[.value[]? | select(.name == $nm)] | length' --arg nm "$PUBLISH_SC" 2>/dev/null)"
+  if [[ "$count" != "1" ]]; then
+    err "publish: expected exactly one service connection named '${PUBLISH_SC}' while checking WIF authentication, found ${count:-0}."
+    return
+  fi
+  type="$(printf '%s' "$json" | jq -r '.value[] | select(.name == $nm) | (.type // "") | ascii_downcase' --arg nm "$PUBLISH_SC")"
+  scheme="$(printf '%s' "$json" | jq -r '.value[] | select(.name == $nm) | (.authorization.scheme // "")' --arg nm "$PUBLISH_SC")"
+  if [[ "$type" != "azurerm" ]]; then
+    err "publish: '${PUBLISH_SC}' is endpoint type '${type}', not the required AzureRM endpoint used by PublishAzureDevOpsExtension@5."
+  elif [[ "$scheme" != "WorkloadIdentityFederation" ]]; then
+    err "publish: '${PUBLISH_SC}' uses authorization scheme '${scheme}', not WorkloadIdentityFederation."
+  else
+    ok "publish: '${PUBLISH_SC}' is an AzureRM workload-identity service connection."
+  fi
 }
 
 # Resolve a pipeline ENVIRONMENT id by exact name within the project. Environments live in
@@ -313,13 +336,11 @@ verify_resource() {
 # PREVENT feature-branch signing. It confirms the reviewed pipeline is intact: the official
 # build DEFINITION (server-side, not editable from a feature-branch YAML) (a) defaults to the
 # trusted branch and (b) runs the expected reviewed OneBranch.Official YAML — a swapped
-# definition or retargeted YAML path is caught here. The AUTHORITATIVE prevention is external:
-# (1) the ESRP Real `external_distribution` SignType ENTITLEMENT, granted by OneBranch/ESRP
-# onboarding ONLY to the onboarded Official pipeline on the trusted branch (a portal-confirmed
-# property, NOT exposed by the ADO REST API, so it cannot be asserted here); and (2) the
-# CodeSign Validation gates in BOTH the sign and publish stages, which fail closed on the
-# NON-Real (Test) signature a bypassing feature-branch run would obtain. The signing
-# environment's Branch Control (verified separately) additionally gates the deployment-job path.
+# definition or retargeted YAML path is caught here. The authoritative signing
+# prevention is the ESRP/OneBranch ADO-extension KeyCode entitlement, granted only
+# to the onboarded Official pipeline on the trusted branch. That portal-confirmed
+# property is not exposed by the ADO REST API, so it cannot be asserted here.
+# The signing environment's Branch Control additionally gates the deployment path.
 verify_official_pipeline_branch_lock() {
   local before=$fail defn defBranch yamlPath repoId repoType repoName
   defn="$(api "${ORG}/${PROJECT}/_apis/build/definitions/${OFFICIAL_PIPELINE_ID}?api-version=7.1")"
@@ -350,13 +371,14 @@ verify_official_pipeline_branch_lock() {
   if [[ "${yamlPath#/}" != "${EXPECTED_YAML_PATH#/}" ]]; then
     err "official-pipeline: definition ${OFFICIAL_PIPELINE_ID} runs YAML '${yamlPath:-<none>}', not the expected official pipeline '${EXPECTED_YAML_PATH}'; the official pipeline id must map to the reviewed OneBranch.Official YAML."
   fi
-  [[ $fail -eq $before ]] && ok "official-pipeline: ${OFFICIAL_PIPELINE_ID} builds the pinned repository (id ${EXPECTED_REPOSITORY_ID}, type ${EXPECTED_REPOSITORY_TYPE}${EXPECTED_REPOSITORY_NAME:+, name ${EXPECTED_REPOSITORY_NAME}}), defaults to '${TRUSTED_BRANCH}', and runs '${yamlPath}' (server-side identity intact; ESRP Real-SignType entitlement is portal-confirmed, not REST-queryable)."
+  [[ $fail -eq $before ]] && ok "official-pipeline: ${OFFICIAL_PIPELINE_ID} builds the pinned repository (id ${EXPECTED_REPOSITORY_ID}, type ${EXPECTED_REPOSITORY_TYPE}${EXPECTED_REPOSITORY_NAME:+, name ${EXPECTED_REPOSITORY_NAME}}), defaults to '${TRUSTED_BRANCH}', and runs '${yamlPath}' (server-side identity intact; ADO-extension signing KeyCode entitlement is portal-confirmed, not REST-queryable)."
 }
 
 # Signing is gated by a pipeline ENVIRONMENT (the onebranch.pipeline.signing@1 task takes no
 # service connection); publishing is gated by a real service-connection ENDPOINT.
 verify_official_pipeline_branch_lock
 verify_resource "signing" "environment" "$SIGNING_ENV" "no"
+verify_publish_endpoint_auth
 verify_resource "publish" "endpoint" "$PUBLISH_SC" "yes"
 
 if [[ $fail -ne 0 ]]; then

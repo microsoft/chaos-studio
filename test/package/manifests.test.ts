@@ -229,5 +229,15 @@ for (const [label, rel, expectId, isPublic, expectFolder] of [
       const taskJson = readJson(`azure-pipelines-extension/${folder}/task.json`) as { name: string };
       assert.ok(taskJson.name.length > 0, `${folder}/task.json is a valid task manifest`);
     }
+    const packagedPaths = (m.files ?? []).map((f) => f.path);
+    assert.ok(packagedPaths.includes('overview.md'), `${label} extension packages its Marketplace overview`);
+    assert.ok(packagedPaths.includes('LICENSE'), `${label} extension packages the repository license`);
   });
 }
+
+test('the packaged extension license is byte-identical to the repository license', () => {
+  assert.equal(
+    readText('azure-pipelines-extension/LICENSE').replace(/\r\n/g, '\n'),
+    readText('LICENSE').replace(/\r\n/g, '\n'),
+  );
+});

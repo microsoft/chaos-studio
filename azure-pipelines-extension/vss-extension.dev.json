@@ -41,6 +41,10 @@
       "addressable": true
     },
     {
+      "path": "LICENSE",
+      "addressable": true
+    },
+    {
       "path": "images/icon.png",
       "addressable": true
     }

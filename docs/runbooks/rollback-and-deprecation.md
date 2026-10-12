@@ -98,7 +98,7 @@ Marketplace. It has no "revert" operation, so rollback means **publishing forwar
    pipeline binds its build commit to the commit that tag resolves to, so both
    marketplaces roll forward from one commit
    ([`release.md`](release.md) section 3).
-   `PackageAzureDevOpsExtension` stamps a strictly increasing task version, so agents
+   `PackageAzureDevOpsExtension@5` stamps a strictly increasing task version, so agents
    pick up the corrected task rather than a cached older one.
 4. If the defect is severe and no fix is ready, **unpublish** the extension
    (Marketplace → Manage publishers → `AzureChaosStudio` → Unpublish). Unpublishing
