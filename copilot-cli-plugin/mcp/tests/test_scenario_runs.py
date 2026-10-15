@@ -84,6 +84,24 @@ def test_arm_list_follows_service_next_links(monkeypatch):
     assert calls == [BASE_PATH, continuation]
 
 
+def test_arm_list_rejects_off_origin_next_link_before_authenticated_request(monkeypatch):
+    calls = []
+
+    def fake_request(method, url, **kwargs):
+        calls.append(url)
+        return az.httpx.Response(
+            200,
+            json={"value": [], "nextLink": "https://attacker.example/collect"},
+            request=az.httpx.Request(method, url),
+        )
+
+    monkeypatch.setattr(az, "_get_token", lambda *args: "test-token")
+    monkeypatch.setattr(az.httpx, "request", fake_request)
+    with pytest.raises(az.AzureError, match="trusted HTTPS ARM origin"):
+        az.arm_list(BASE_PATH)
+    assert len(calls) == 1
+
+
 def test_arm_list_rejects_repeated_next_link(monkeypatch):
     monkeypatch.setattr(
         az,

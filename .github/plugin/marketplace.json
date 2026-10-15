@@ -4,7 +4,7 @@
     "name": "Azure Chaos Studio"
   },
   "metadata": {
-    "description": "Plugins for Azure Chaos Studio — managed resilience testing for Azure.",
+    "description": "Plugins for Azure Chaos Studio — managed fault injection for Azure.",
     "version": "0.3.0"
   },
   "plugins": [

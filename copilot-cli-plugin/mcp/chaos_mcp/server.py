@@ -150,7 +150,12 @@ def chaos_create_workspace(
     try:
         resp = az.arm_put(path, body)
         az.wait_for_lro(resp)
-        workspace = az.arm_get(path)
+        # Belt-and-suspenders: the LRO poll returning is not proof the resource
+        # itself settled, so confirm the workspace reached a terminal Succeeded
+        # provisioningState before touching it. A non-Succeeded terminal state
+        # (or a timeout) raises AzureError and is surfaced as _err below rather
+        # than proceeding to RBAC on a half-provisioned workspace.
+        workspace = az.wait_until_provisioned(path)
     except az.AzureError as e:
         return _err(e)
 
@@ -189,7 +194,14 @@ def chaos_refresh_recommendations(
     try:
         resp = az.arm_post(f"{base}/refreshRecommendations")
         az.wait_for_lro(resp)
-        evaluation = az.arm_get(f"{base}/evaluations/latest")
+        # Confirm the evaluation is genuinely terminal before returning success.
+        # Evaluations report progress under properties.status (terminal states
+        # Succeeded / PartiallySucceeded); a terminal Failed raises and surfaces
+        # as _err rather than a stale "in progress" evaluation.
+        evaluation = az.wait_until_provisioned(
+            f"{base}/evaluations/latest",
+            success_states=("succeeded", "partiallysucceeded"),
+        )
     except az.AzureError as e:
         return _err(e)
     return _ok(evaluation)

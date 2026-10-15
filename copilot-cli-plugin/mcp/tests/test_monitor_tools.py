@@ -164,6 +164,56 @@ def test_metrics_empty_metric_names_rejected(monkeypatch):
     assert called == [], "no HTTP call should be made when metric_names is empty"
 
 
+@pytest.mark.parametrize("resource_id", [
+    "https://attacker.example/collect",
+    "//attacker.example/collect",
+    "/subscriptions/sub/providers/Microsoft.Compute/virtualMachines/vm?x=y",
+    "/subscriptions/sub/providers/Microsoft.Compute/virtualMachines/vm#fragment",
+    "/subscriptions/sub/providers/Microsoft.Compute/virtualMachines/vm\\evil",
+])
+def test_metrics_rejects_invalid_resource_id_before_auth(monkeypatch, _no_real_az, resource_id):
+    install_transport(monkeypatch, lambda req: pytest.fail(f"Unexpected request: {req.url}"))
+    result = monitor.monitor_query_metrics(
+        resource_id, ["CPU"], "2026-05-29T10:00:00Z", "2026-05-29T11:00:00Z"
+    )
+    assert result["ok"] is False
+    assert result["errorType"] == "AzureError"
+    assert "resource_id" in result["error"]
+    assert _no_real_az["resources"] == []
+
+
+@pytest.mark.parametrize("url", [
+    "https://attacker.example/collect",
+    "http://management.azure.com/resource",
+    "https://management.azure.com.attacker.example/resource",
+    "https://management.azure.com@attacker.example/resource",
+    "https://attacker.example@management.azure.com/resource",
+    "https://management.azure.com:444/resource",
+    "//attacker.example/resource",
+    "/\\attacker.example/resource",
+])
+@pytest.mark.parametrize("helper", ["arm_request", "arm_get_with_query"])
+def test_arm_helpers_reject_untrusted_urls_before_auth(monkeypatch, _no_real_az, url, helper):
+    install_transport(monkeypatch, lambda req: pytest.fail(f"Unexpected request: {req.url}"))
+    if helper == "arm_request":
+        monkeypatch.setattr(az.httpx, "request", lambda *a, **k: pytest.fail("Unexpected request"))
+        call = lambda: az.arm_request("GET", url)
+    else:
+        call = lambda: az.arm_get_with_query(url, {})
+    with pytest.raises(az.AzureError, match="ARM request"):
+        call()
+    assert _no_real_az["resources"] == []
+
+
+def test_arm_helpers_allow_trusted_absolute_url(monkeypatch, _no_real_az):
+    url = "https://management.azure.com/resource?api-version=2026-05-01-preview"
+    install_transport(monkeypatch, lambda req: httpx.Response(200, json={"ok": True}))
+    assert az.arm_get_with_query(url, {}).status_code == 200
+    monkeypatch.setattr(az.httpx, "request", lambda *a, **k: httpx.Response(200, request=httpx.Request("GET", k["url"] if "url" in k else a[1])))
+    assert az.arm_request("GET", url).status_code == 200
+    assert len(_no_real_az["resources"]) == 2
+
+
 # ---------------------------------------------------------------------------
 # monitor_query_logs
 # ---------------------------------------------------------------------------

@@ -13,6 +13,7 @@ handles 429/5xx with exponential backoff and honors Retry-After.
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import httpx
@@ -66,6 +67,10 @@ def monitor_query_metrics(
     """
     if not metric_names:
         return _validation_error("metric_names must contain at least one metric name.")
+    if not re.fullmatch(
+        r"/subscriptions/[^/?#\\\s]+(?:/[^/?#\\\s]+)+", resource_id, re.IGNORECASE
+    ) or "/providers/" not in resource_id.lower():
+        return _validation_error("resource_id must be a relative ARM resource ID.")
     try:
         resp = az.arm_get_with_query(
             f"{resource_id}/providers/Microsoft.Insights/metrics",
