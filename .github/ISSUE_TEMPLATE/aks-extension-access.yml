@@ -1,0 +1,58 @@
+name: 🔑 Request access to the AKS extension preview
+description: Ask to add your subscription to the allow list for the Chaos Studio extension for AKS (preview).
+title: "[AKS extension access]: "
+labels: ["aks-extension", "access-request", "preview"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The Chaos Studio extension for AKS is in limited preview. Microsoft must add your subscription to an allow list before you can install it. For details, see [Prepare to use the Chaos Studio extension for AKS](https://learn.microsoft.com/azure/chaos-studio/chaos-studio-aks-extension-install).
+
+        This issue is public. Don't include secrets, credentials, cluster names, or other sensitive data. After we add your subscription, we reply here with the installation instructions.
+  - type: input
+    id: subscription
+    attributes:
+      label: Azure subscription ID
+      description: The subscription that contains your AKS cluster and Chaos Studio Workspace. To add more than one subscription, separate the IDs with commas.
+      placeholder: 00000000-0000-0000-0000-000000000000
+    validations:
+      required: true
+  - type: dropdown
+    id: region
+    attributes:
+      label: Workspace region
+      description: The extension uses the Chaos Studio data plane in your Workspace's region. Your AKS cluster can be in any region that supports AKS extensions.
+      options:
+        - West Central US
+        - West US 2
+        - North Europe
+        - Sweden Central
+        - UK South
+        - Japan East
+        - Other (tell us below)
+    validations:
+      required: true
+  - type: checkboxes
+    id: faults
+    attributes:
+      label: Faults you plan to use
+      options:
+        - label: Pod delete
+        - label: CPU hog
+        - label: Memory hog
+        - label: Network latency
+        - label: Network loss
+  - type: checkboxes
+    id: config
+    attributes:
+      label: Cluster configuration
+      description: Check each item that applies to your cluster.
+      options:
+        - label: The cluster has Linux amd64 node pools.
+        - label: Workload identity, the OIDC issuer, and Azure RBAC for Kubernetes are turned on.
+        - label: Deployment Safeguards is set to Enforce.
+  - type: textarea
+    id: scenario
+    attributes:
+      label: What do you want to test?
+      description: Optional. Describe the workload and the failure you want to validate.
