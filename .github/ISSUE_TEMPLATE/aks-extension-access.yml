@@ -20,10 +20,15 @@ body:
   - type: dropdown
     id: region
     attributes:
-      label: Cluster region
-      description: The preview is available in West Central US.
+      label: Workspace region
+      description: The extension uses the Chaos Studio data plane in your Workspace's region. Your AKS cluster can be in any region that supports AKS extensions.
       options:
         - West Central US
+        - West US 2
+        - North Europe
+        - Sweden Central
+        - UK South
+        - Japan East
         - Other (tell us below)
     validations:
       required: true
