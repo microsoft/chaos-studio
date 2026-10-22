@@ -1,0 +1,354 @@
+# Runbook — release validation (RV1–RV3) and the receipt
+
+RV1–RV3 are the three checks that must be green **in the target preview environment**
+before either marketplace publishes. They are executed by an operator against a live
+Chaos Studio v2 stamp using the **private** Action and extension builds, and their
+results are recorded as a *receipt* that both release configs re-verify.
+
+The split is deliberate: the operator records **what the environment did**; the
+repository decides **whether that satisfies the contract**. A receipt that merely
+claims `passed` is rejected, and a protocol mismatch therefore always surfaces as a
+receipt failure — never as a silently accommodating client change.
+
+---
+
+## Environment prerequisites
+
+| Item | Requirement |
+|---|---|
+| Cloud | `AzureCloud` (v1 is public-cloud only) |
+| Stamp | A Chaos Studio v2 deployment serving the pinned `api-version` |
+| Workspace | One workspace used by **all three** checks |
+| Scenario configuration | A short, safe, repeatable configuration (a no-op or low-blast-radius fault) |
+| Identities | One federated (WIF/OIDC) CI identity per platform — GitHub Actions and Azure Pipelines — with **no** client secret |
+| Role | The custom role from `security/chaos-studio-runner.role-template.json`, assigned at **workspace** scope |
+| Builds | The private Action build ref and the `ChaosStudioWorkspacesDev` VSIX, both built from the validated core commit |
+
+> **Task name in the dev extension:** `ChaosStudioWorkspacesDev` contributes
+> `AzureChaosStudioScenarioDev@1`, not `AzureChaosStudioScenario@1` (that name is
+> reserved for the production `ChaosStudioWorkspaces` extension). Any Azure
+> Pipelines example or fixture used during RV1–RV3 must reference
+> `AzureChaosStudioScenarioDev@1` — see
+> [`examples/azure-pipelines/README.md`](../../examples/azure-pipelines/README.md#prerequisite--install-the-extension).
+
+Record the workspace resource ID's sha256 (never the raw ID):
+
+```bash
+printf '%s' "<workspace-resource-id>" | sha256sum
+```
+
+## RV1 — target-region protocol smoke
+
+**Capture mechanism.** Both private builds print a shared, redacted protocol-metadata
+line for every ARM request/response they issue when an operator opts in — set
+`CHAOS_STUDIO_RV_CAPTURE=1` in the environment/pipeline variables of the RV session
+(GitHub Action step `env:`, or the Azure Pipelines task's process environment). With
+that variable set, each adapter reports every call through the core's
+`ArmHttpClient` `onObservation` hook (`packages/core/src/http.ts`) and prints one
+line per call via its normal info-log channel (`::notice::` on GitHub, `##[section]`
+on Azure Pipelines) in the fixed, greppable shape:
+
+```
+RV-OBSERVATION {"method":"POST","url":"https://management.azure.com/.../execute?api-version=...","status":202,"location":"https://management.azure.com/.../runs/<runId>","retryAfterSeconds":5,"correlationId":"<id>","requestId":"<id>","errorCode":null,"errorMessage":null}
+```
+
+This is exactly (and only) the set of fields the client already parses for its own
+acceptance/poll decisions (`ParsedResponse` in `http.ts`) — no header value, request
+body, or credential ever appears, and `errorMessage` is passed through the shared
+`redact()` before it is printed. Extract the transcript from the job/task log with:
+
+```bash
+grep -o 'RV-OBSERVATION .*' <job-log> | sed 's/^RV-OBSERVATION //' > observations.jsonl
+```
+
+Run `validate`, then `execute` (the **success run**), poll it to `Succeeded`, then
+separately `execute` a **second, independent run** (the **cancellation run**),
+observe it **in flight** (a `202` GET reporting a non-terminal `properties.status`,
+e.g. `Running`), and only THEN `cancel` it — against the workspace from **each**
+private build, with `CHAOS_STUDIO_RV_CAPTURE=1` set for that job/task run. A
+terminal-run cancellation is a no-op (RV3), so the cancellation run must never be
+driven to (or recorded at) any terminal state before the cancel: recording one run's
+`Succeeded` observation and then its own (no-op) cancel attempt as `Canceled` is not
+real evidence and is rejected, and so is skipping the in-flight observation entirely.
+
+From `observations.jsonl`, record, for each long-running call: the acceptance
+`status`, the trailing `location` segments, the advertised `retryAfterSeconds`, and
+— for calls actually driven to a terminal outcome (`validate`, the success run, and
+the cancel) — the terminal polled `status` and the terminal `properties.status`.
+Every `RV-OBSERVATION` line for a terminal (200) GET already carries this directly:
+`businessState` is the observed `properties.status` value, and `statusField`/
+`startTimeField`/`endTimeField` are the field NAMES the deployed body actually
+exposed (`undefined` if the expected field is absent — e.g. the service still used
+`properties.state`), so the receipt's `terminalState` and `wire.statusField`/
+`startTimeField`/`endTimeField` come directly from these values, never typed in
+from what the contract expects. `errorChannelsPresent` lists every array-valued key
+directly under `properties` on that response, so `wire.validationErrorChannels`/
+`runErrorChannels` are populated from the UNION of `errorChannelsPresent` observed
+across that transcript's validate/execute/cancel calls, not asserted from the
+constants in `packages/core/src/contract.ts`. Also record the `api-version`
+embedded in each `url`.
+
+The receipt carries **one transcript per adapter** under `observations.transcripts`,
+each tagged with its `platform` (`github-action`, `azure-pipelines-task`). Each
+transcript contains a `successRun` (the run driven to `Succeeded`) and a
+`cancellationRun` — a separate run whose `execute` acceptance is recorded WITHOUT
+any terminal claim, an `inFlight` observation proving it was caught genuinely
+non-terminal, and a `cancel` driven to `Canceled`. Both platforms are required,
+and across all four runs recorded (two adapters × success + cancellation) every
+run ID must be distinct — each private build has to drive its own runs, and the
+success/cancellation pair within one adapter must never collapse to the same run.
+Re-recording a single run under two platform labels, or reusing the success run
+as the cancellation run, is rejected.
+
+Passes when *every* transcript's observed protocol equals the pinned contract: a `202`
+acceptance with the expected `Location` suffix and `Retry-After`, a terminal `200`, a
+terminal state in the contract's success set, an in-flight `202` GET reporting a
+non-terminal state for the cancellation run, GUID run IDs that each execute
+`Location` and `runs/{runId}` suffix address, a cancel `Location` addressing the
+cancellation run's own run ID, and the exact field/error-channel names the
+fixtures encode.
+
+## RV2 — workload identity and least privilege
+
+1. Prove both federated identities acquire an ARM token **secretlessly**.
+2. Record the role definition the identity actually held.
+3. For **each** of the 5 `PROVIDER_OPERATIONS` (`validate`, `validationRead`,
+   `execute`, `runRead`, `runCancel` — `packages/core/src/contract.ts`), run an
+   isolated negative case using PREPARED resources, not a full re-run of the
+   journey (the core's `validate-and-execute` mode short-circuits on the first
+   failure and never reaches `execute`/`runCancel` on its own, so "re-run the
+   journey" cannot exercise the later operations at all once an earlier one is
+   removed).
+
+   **Invocation mechanism.** The public adapters only ever drive the
+   orchestrated modes, so use the operator CLI `scripts/lib/rv2-invoke.mjs`
+   instead — it makes exactly ONE named provider-operation call through the
+   SAME `ArmHttpClient` (same URL builders, same acceptance/status handling,
+   same `RV-OBSERVATION` capture) both adapters use, without adding any new
+   public generic-ARM capability:
+
+   ```bash
+   az login   # or rely on the CI identity's federated session
+   node scripts/lib/rv2-invoke.mjs validate \
+     --subscription-id <sub> --resource-group <rg> --workspace-name <ws> \
+     --scenario-name <scn> --scenario-configuration-name <cfg>
+   node scripts/lib/rv2-invoke.mjs execute \
+     --subscription-id <sub> --resource-group <rg> --workspace-name <ws> \
+     --scenario-name <scn> --scenario-configuration-name <cfg>
+   node scripts/lib/rv2-invoke.mjs runRead \
+     --subscription-id <sub> --resource-group <rg> --workspace-name <ws> \
+     --scenario-name <scn> --scenario-configuration-name <cfg> --run-id <guid>
+   node scripts/lib/rv2-invoke.mjs runCancel \
+     --subscription-id <sub> --resource-group <rg> --workspace-name <ws> \
+     --scenario-name <scn> --scenario-configuration-name <cfg> --run-id <guid>
+   node scripts/lib/rv2-invoke.mjs validationRead \
+     --subscription-id <sub> --resource-group <rg> --workspace-name <ws> \
+     --scenario-name <scn> --scenario-configuration-name <cfg>
+   ```
+
+   Each invocation prints one `RV-OBSERVATION {...}` line for the call it made
+   plus a final `RV2-INVOKE-RESULT {...}` summary (`status`, `errorCode`,
+   `authorizationFailure`). For each operation in turn:
+   a. Remove only that operation from the role (leave the other four intact).
+   b. Invoke each of the 5 operations exactly once against PRE-PROVISIONED
+      resources scoped for this case (a configuration already `Succeeded` from
+      validation for `validationRead`; a run already accepted/in-flight from a
+      prior `execute` invocation for `runRead` and `runCancel`; the
+      configuration itself for `validate`; a fresh accepted run for `execute`)
+      — each `rv2-invoke.mjs` call is its own independent process, never one
+      pipeline run.
+   c. From the resulting `RV2-INVOKE-RESULT` lines, confirm the removed
+      operation's call reports `authorizationFailure: true` (`403`/
+      `AuthorizationFailed`) and every one of the other four calls reports its
+      normal 2xx acceptance/read status.
+   d. Restore the role to the full set before the next operation's case.
+4. Prove the operations the journey deliberately does not call
+   (`Microsoft.Chaos/workspaces/read`,
+   `Microsoft.Chaos/locations/workspaceOperationResults/read`) are genuinely
+   unnecessary.
+
+Passes when the role is exactly the required set — no missing, extraneous, unknown,
+data-action, or `NotActions` entries — assigned at workspace scope, both identities
+are secretless, and every negative case isolates a single operation: the removed
+operation's own call fails with `403`, and each of the other four operations'
+independently-exercised calls still succeeds.
+
+## RV3 — cancellation operational bounds
+
+Measure the wall-clock seconds from the cancel request to the observed `Canceled`
+state; issue two rapid cancels and confirm both are accepted and the run stays on the
+cancellation path; cancel an already-terminal run and confirm it is a safe accepted
+no-op; and force a cleanup failure and confirm the **original** pipeline failure is
+preserved.
+
+Passes when cancellation completes within the cleanup deadline the client enforces
+and every idempotency/precedence property above holds.
+
+## Recording the receipt
+
+```bash
+mkdir -p test/release-validation/receipts
+cp test/release-validation/receipt.template.json \
+   test/release-validation/receipts/<tag>.json
+```
+
+Replace every placeholder with what you **observed** — not with what you expected —
+set `"template": false`, set each check's `status` to `passed`, then:
+
+```bash
+node scripts/lib/rv-receipt.mjs stamp  test/release-validation/receipts/<tag>.json
+node scripts/lib/rv-receipt.mjs verify test/release-validation/receipts/<tag>.json
+```
+
+`stamp` writes a canonical sha256 digest over the receipt body; `verify` re-derives it
+and re-evaluates every observation against the source-proven contract constants. The
+digest is **mandatory** — an unstamped receipt is rejected. Both verbs refuse the
+committed template outright, so a checked-in skeleton can never satisfy a gate. Commit
+the receipt and proceed to [`release.md`](release.md).
+
+> **Trust boundary — read this before relying on a receipt.** The digest proves the
+> committed bytes have not been edited *since stamping*; it is **not** a signature and
+> it does **not** prove the observations came from a real environment. A receipt is
+> operator-attested evidence, and its authority comes from the controls around it: it
+> lands through a reviewed pull request, it is bound to one core commit and to shipped
+> trees that must be byte-identical at release time, its observations are
+> independently re-evaluated against the source-proven contract (so a fabricated
+> receipt must reproduce the true contract exactly to pass), and it expires. Review a
+> receipt PR as you would any other security-relevant change: confirm the run IDs,
+> region, and workspace hash correspond to a real validation session. Replacing this
+> with a CI-generated, workload-identity-signed attestation is the next hardening step
+> and is tracked as follow-up work.
+
+`verify` honours two environment variables:
+
+- `EXPECTED_CORE_COMMIT` — require the receipt to be bound to this commit SHA. The
+  release configs do **not** set this; they instead re-derive the commit from the
+  receipt and then prove ancestry plus shipped-tree equality against the release
+  commit. Use it manually when you want to assert a specific commit.
+- `MAX_AGE_DAYS` — reject evidence older than this many days (default `30`). Both
+  release configs set this to `30`.
+
+Exit codes: `0` gate passed, `1` gate **failed** (evidence rejected), `2` usage or
+I/O error.
+
+Shipped-tree equality has a second half on the Azure Pipelines side, because the
+OneBranch `build` stage **rebuilds** `dist/` and packages the rebuilt runtime rather
+than the committed blobs. After `npm run build`, and before anything is staged,
+packaged, signed or published, it runs:
+
+```bash
+node scripts/lib/verify-built-runtime.mjs <validated-commit>
+```
+
+which requires the rebuilt `dist/` to equal the `dist/` committed at the receipt's
+validated commit exactly — the complete file set (added **and** removed),
+git-normalized modes, and blob hashes. That closes the gap where a changed build
+*input* outside the compared shipping paths (`scripts/build.mjs`, the root dependency
+metadata, a transitive bundler version) would otherwise produce packaged bytes RV1–RV3
+never exercised. On a publishing run a missing baseline **fails**; it is never
+downgraded to `HEAD`. Its exit codes match the receipt CLI: `0` pass, `1` mismatch
+(release blocked), `2` usage or I/O error.
+
+---
+
+## Responding to a failed RV
+
+**Do not** edit the receipt, relax an evaluator, or set `MAX_AGE_DAYS` higher to get
+past a red gate. Every failed RV blocks the release, but a failed evaluator identifies
+a disagreement — it does **not** identify which component caused it. Preserve the raw
+observations and client logs, then compare them with the authoritative service source,
+the committed source-derived contract, and (where relevant) both adapters before
+assigning ownership:
+
+| Failure | Meaning | Action |
+|---|---|---|
+| `api-version`, `wire:`, `Location suffix`, `Retry-After`, or terminal-state failures in RV1 | The observation disagrees with the source-derived contract; the service, client request/parsing, committed contract, or recorded evidence may be wrong | Keep the release blocked and triage using the raw HTTP transcript plus authoritative source. Fix a demonstrated client/repository defect here; open a service defect only after evidence attributes the mismatch to the deployed service. See [`contract-drift.md`](contract-drift.md). Never silently accommodate an unreviewed service change. |
+| RV2 role `missing`/`extraneous`/`unknown` | The role template, provider-operation snapshot, permission probe, or service operation set may disagree | Compare the generated provider-operation source, role template, and actual failed/succeeded calls. Fix a demonstrated repository/client defect; open a service defect only for an operation mismatch confirmed in the authoritative provider source or deployed service. |
+| RV2 identity failures | Federation is misconfigured | Fix the federated credential subject/audience and re-run; this is an environment fix, not a code change. |
+| RV3 duration over the cleanup deadline | Cancellation exceeded the bound; service latency, network/platform behavior, or the client's timing/cleanup logic may be responsible | Preserve timestamps and request/response evidence, then attribute the delay. Open a service defect for confirmed service latency; fix confirmed client logic here. Any client timeout change is reviewed and requires a fresh RV pass. |
+| RV3 duplicate/terminal-run cancellation failures | The observed cancellation response disagrees with the expected service semantics, or the client invoked/interpreted it incorrectly | Compare the raw cancel exchanges with the authoritative contract and client logs before attribution. Fix demonstrated client behavior; open a service defect only for a confirmed service mismatch. |
+| RV3 original-failure precedence failure | The client allowed cleanup failure to mask the original operation failure | Treat as a client defect and fix the orchestrator/error mapping; the receipt alone is not evidence of a service defect. |
+| `digest:` mismatch | The receipt was edited after stamping | Re-run the affected checks and produce a fresh receipt. Never re-stamp an edited receipt. |
+| `unstamped` | The receipt was never stamped | Run `rv-receipt.mjs stamp` and commit the result. |
+| `in the future` / `after the receipt` | The timestamps are inconsistent or post-dated | Correct the recorded instants from the actual session; post-dating to defeat staleness is prohibited. |
+| `expected exactly one '<platform>' transcript` / `its own run` | RV1 was not run from both private builds, or one run was recorded twice | Run RV1 from the missing adapter and record its own transcript. |
+| `older than N days` | The evidence is stale | Re-run RV1–RV3. |
+| `is not an ancestor` / `changes shipped code` | The release commit is not what was validated | Re-run RV1–RV3 against the actual release commit. |
+
+Do not file a service defect until the evidence attributes the failure to the service.
+Every confirmed service defect must name the observed value, expected authoritative
+contract value, region, raw transcript/log evidence, and receipt path. Link it from
+the release issue and keep the release blocked until it is resolved or the contract
+is deliberately re-derived, re-reviewed, and revalidated.
+
+---
+
+## Private-preview bootstrap (breaking the RV ↔ Dev-publish circular dependency)
+
+RV1–RV3 require a **private** `ChaosStudioWorkspacesDev` build (Environment
+prerequisites, above) — but the OneBranch `build` stage's release-validation receipt
+gate normally requires a receipt (i.e. a completed RV pass) for **every** publishing
+run, including the very first `ChaosStudioWorkspacesDev` publish. Enforced literally,
+that is circular: RV needs the private build, and the private build's gate needs RV.
+
+The gate is scoped to break that cycle **without weakening the production gate**:
+
+- The receipt gate (`Release-validation receipt gate` step) and the runtime-equality
+  gate's requirement for a receipt-validated baseline run **only** when
+  `extensionManifest == vss-extension.json` (the production manifest). See the
+  `condition:` on those steps in `.pipelines/OneBranch.Official.yml`.
+- Publishing `vss-extension.dev.json` (`ChaosStudioWorkspacesDev`) therefore requires
+  **no** RV receipt. Every other control stays in force for that run: `npm ci` /
+  `typecheck` / `test` / `npm run build` still execute; the built runtime is still
+  bound to its own `HEAD` for byte-identical shipping (the runtime-equality gate falls
+  back to `HEAD` rather than skipping); `sign` still requires the protected
+  `ChaosStudio-ESRP-Signing-Prod` environment and produces a verified ADO extension
+  signature; `publish` still requires `publishExtension`, the trusted `PublishBranch`,
+  and the `ADO-Plugin Publishing` AzureRM/WIF service connection's own branch-control
+  + approval gate; and
+  the Dev manifest is `public: false` with the `Preview` gallery flag, so it is never
+  listed on the Marketplace and can only be **shared explicitly** with specific
+  Azure DevOps organizations (the restricted test organizations used for RV) — see
+  [Microsoft Learn: share a private extension](https://learn.microsoft.com/azure/devops/extend/publish/overview#share-your-extension).
+- Publishing `vss-extension.json` (the production `ChaosStudioWorkspaces` extension)
+  is **never** exempt: its manifest name does not match the Dev-only condition, so the
+  receipt gate and the receipt-bound runtime baseline are always required for it, with
+  no code path around them.
+
+**Initial sequence for a brand-new environment (no prior RV evidence exists yet):**
+
+1. Run this pipeline manually with `publishExtension: true`,
+   `extensionManifest: vss-extension.dev.json`, and no `releaseTag`. The receipt gate
+   is skipped (Dev manifest); build/sign/publish proceed normally and produce a signed,
+   private `ChaosStudioWorkspacesDev` VSIX on the Marketplace — **unlisted, but NOT yet
+   accessible to any organization.** Publishing a private (`public: false`) extension
+   only makes it exist in the publisher's account; it grants **no** organization
+   installation access by itself. Automated sharing as part of the pipeline run is
+   optional and is not configured here — do not assume the publish step shares it.
+2. **Mandatory manual step — share the extension before installing it.** An operator
+   with publisher access must explicitly share `ChaosStudioWorkspacesDev` with each
+   approved RV test organization (Marketplace → Manage publishers → `AzureChaosStudio`
+   → the extension → **Share/Unshare** → add each org by name — see
+   [Microsoft Learn: share a private extension](https://learn.microsoft.com/azure/devops/extend/publish/overview#share-your-extension)).
+   Confirm sharing succeeded (the extension appears under "Shared with" for every
+   approved organization) before proceeding — do not attempt installation until this
+   is confirmed.
+3. Install `ChaosStudioWorkspacesDev` into the RV test organizations (per
+   "Environment prerequisites" above) alongside the corresponding private GitHub Action
+   build, and execute RV1–RV3 against them.
+4. Record and stamp the receipt (`node scripts/lib/rv-receipt.mjs stamp|verify`, above)
+   and commit it under `test/release-validation/receipts/<tag>.json`.
+5. Release the GitHub Action first (creates the exact `vMAJOR.MINOR.PATCH` tag —
+   [`release.md`](release.md)), then run this pipeline again with
+   `extensionManifest: vss-extension.json` and `releaseTag` set to that tag. The
+   production receipt gate now runs, verifies the committed receipt, binds this build
+   to the shared release commit, and — only if all of that passes — signs and publishes
+   the production `ChaosStudioWorkspaces` extension.
+
+Later releases repeat only steps 3–5 (using either the previously-published Dev build
+or a fresh private one for RV, as needed); steps 1–2 need not be repeated once a
+`ChaosStudioWorkspacesDev` build already exists in the Marketplace **and** is still
+shared with the current set of approved RV organizations — re-confirm sharing (step 2)
+whenever the approved RV organization list changes, and re-running step 1 to refresh
+the Dev build before a new RV pass is expected and safe (sharing persists across
+version updates to the same extension, but should still be spot-checked).

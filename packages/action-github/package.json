@@ -1,0 +1,17 @@
+{
+  "name": "@azure/chaos-studio-action",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Thin GitHub Action adapter for the Azure Chaos Studio v2 CI/CD integration. Wraps @actions/core input/output/annotations and an AzureCliCredential (workload-identity) token source around the shared TypeScript orchestration core in packages/core. All service behavior lives in the core; this package only translates the GitHub platform surface.",
+  "license": "MIT",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "test": "node --test \"test/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit -p ../../tsconfig.json"
+  },
+  "dependencies": {
+    "@actions/core": "^3.0.0",
+    "@azure/identity": "^4.0.0"
+  }
+}

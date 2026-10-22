@@ -1,0 +1,265 @@
+# Source-contract drift detection (E6-T3).
+#
+# The shared core encodes the Microsoft.Chaos `2026-05-01-preview` wire protocol as
+# SOURCE-DERIVED fixtures plus a provenance manifest that binds each fixture to an
+# authoritative source extract and pins its hash. Those fixtures are the client's
+# only model of the service. If the service's source contract moves, this repository
+# must find out on a SCHEDULE — not from a customer pipeline failing in production.
+#
+# DETECTION SCOPE — be precise about what this can and cannot see. It runs against the
+# COMMITTED fixtures, source extracts, and pinned constants, so it detects:
+#   * a fixture/extract/recorded-hash that no longer agrees with the rest (including an
+#     edit that bypassed the generator),
+#   * a broken wire-shape or RV-evaluator assertion, and
+#   * an `api-version` literal that disagrees with the pinned constant.
+# It CANNOT observe the upstream service source directly — that would need authenticated
+# access to the service repository — so an upstream change that nobody has mirrored here
+# is NOT detected by this workflow. RV1 against a live environment is only a PARTIAL
+# compensating control: it observes the success/cancellation paths it exercises, not the
+# whole contract (docs/runbooks/contract-drift.md).
+#
+# The policy this workflow enforces (per the release notes and D5/FR15): a protocol
+# mismatch OPENS A SERVICE DEFECT. It never silently changes client behaviour, never
+# regenerates fixtures automatically, and never bumps the pinned `api-version`. Those
+# are deliberate, reviewed code changes that require a fresh RV1-RV3 pass
+# (docs/runbooks/contract-drift.md).
+#
+# Split into two jobs on purpose:
+#   * `drift` checks out and RUNS repository code, and holds NO write permission.
+#   * `report` holds `issues: write` and runs NO repository code (no checkout), so a
+#     compromised fixture/script cannot reach the token that files the defect.
+#
+# The SERVICE-DEFECT claim is gated on an EXPLICIT contract verdict, never on "the job
+# failed". The three checks that can observe the source contract (provenance
+# re-derivation, the SOURCE-PROTOCOL suite, the pinned `api-version` assertion) are
+# evaluated by `scripts/lib/contract-drift.mjs`, which separates a CHECKED MISMATCH
+# (exit 1, records `contract=mismatch`) from a check that could NOT BE EVALUATED
+# (exit 2, records nothing): a failed `git`, an unreadable file, a test file that will
+# not parse or import, an empty test discovery, or a test that dies before any contract
+# assertion runs. Mismatch-producing evaluation is restricted to explicitly classified
+# source-protocol assertions: the packaging and release-policy assertions that share the
+# contract test directory (the task manifest's `minimumAgentVersion`, the signing
+# configuration, the release rulesets) run under a SEPARATE check that publishes no
+# contract evidence, and an unclassified new test file fails the `classify` check rather
+# than being assumed to be protocol evidence. A dependency-install failure, a runner
+# failure, an unevaluable check, or a repository-side regression is reported honestly as
+# a workflow failure under its own label, so a service defect never rests on absent
+# evidence.
+name: contract-drift
+
+on:
+  schedule:
+    # Weekly, Mondays 07:00 UTC — early enough in the week that a drift defect can be
+    # triaged before a release is cut.
+    - cron: '0 7 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  drift:
+    name: Re-derive the source contract and diff it
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      # An EXPLICIT contract verdict, not "the job failed". Only a check that can
+      # actually OBSERVE the source contract sets `contract=mismatch`; dependency
+      # installation, the repository-policy assertions and the release-validation
+      # suite never do, so their failure cannot be reported as a protocol mismatch.
+      contractMismatch: ${{ steps.provenance.outputs.contract == 'mismatch' || steps.contract_suite.outputs.contract == 'mismatch' || steps.api_version.outputs.contract == 'mismatch' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+
+      # SETUP, not evidence. A failure here says nothing about the source contract,
+      # and it sets no contract output, so the reporting job will not claim drift.
+      - name: Install workspace dependencies
+        id: install
+        run: npm ci
+
+      - name: Re-derive the provenance manifest and fail on any drift
+        id: provenance
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        # Every contract check is EVALUATED by scripts/lib/contract-drift.mjs, which
+        # reports one of three verdicts: 0 = checked and matching, 1 = checked and
+        # MISMATCHING (it writes `contract=mismatch` to this step's output), 2 = the
+        # check could NOT be evaluated (it writes nothing). A shell wrapper cannot make
+        # that distinction — `git diff --exit-code` exits 1 for "there are differences"
+        # and 128 for "git could not run"; `node --test` exits nonzero for a failed
+        # assertion, a syntax error and an empty glob alike — so the service-defect
+        # claim would otherwise rest on absent evidence.
+        run: node scripts/lib/contract-drift.mjs provenance
+
+      - name: Check every source-contract test is classified
+        id: classify
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        # A CONTRACT MISMATCH is a claim about the SERVICE, so only assertions that
+        # can observe the service protocol may produce one. The contract test
+        # directory also holds repository-only assertions (the packaged task
+        # manifest, the signing pipeline, the release rulesets, the C# extraction
+        # machinery), which are run separately and publish no contract evidence.
+        # An unclassified new test file is an execution error: it is neither
+        # assumed to be protocol evidence nor silently skipped.
+        run: node scripts/lib/contract-drift.mjs classify
+
+      - name: Re-run the source-contract suite
+        id: contract_suite
+        # Each contract check runs INDEPENDENTLY of the others' outcome: one check
+        # failing must not skip another and suppress the verdict it would have
+        # published, which would downgrade real drift to a mere workflow failure.
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        # A mismatch here is recorded only when an IDENTIFIED SOURCE-PROTOCOL
+        # assertion observed the shipped fixtures disagreeing with the reviewed
+        # source extracts. A broken import, an unparseable test file, an empty
+        # discovery, or a test that dies during setup is a drift-check failure,
+        # not a service defect.
+        run: node scripts/lib/contract-drift.mjs contract-suite
+
+      - name: Re-run the repository-policy assertions
+        id: repository_suite
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        # The packaging and release-policy assertions that share the contract test
+        # directory. They must stay green, but they observe THIS REPOSITORY: this
+        # check can only report "green" or "could not be evaluated", never a
+        # contract mismatch, so a `minimumAgentVersion` or signing-configuration
+        # regression can never be escalated as a service defect.
+        run: node scripts/lib/contract-drift.mjs repository-suite
+
+      - name: Assert the pinned api-version has not moved anywhere in the repo
+        id: api_version
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        # D5/FR15: the `api-version` is a PINNED CONSTANT, never a customer input. It
+        # changes only by a reviewed code change plus a fresh RV1-RV3 pass. The check
+        # asserts the constant and every other api-version literal in the shipped
+        # surface; a file it cannot read is an execution error, never a mismatch.
+        run: node scripts/lib/contract-drift.mjs api-version
+
+      # LAST, and deliberately so: this suite observes THIS REPOSITORY, so it must never
+      # run ahead of a contract check and prevent it from publishing its verdict.
+      - name: Re-run the release-validation suite
+        id: release_validation_suite
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          # The release-validation suite asserts the RV receipt evaluators, the RBAC
+          # role template, and the release/handoff gates. It must stay green, but it
+          # observes THIS REPOSITORY's release machinery, not the service contract —
+          # so it deliberately records NO contract verdict, and a failure here is
+          # reported as a repository regression rather than as a service defect.
+          node --test "test/release-validation/**/*.test.ts"
+
+  report:
+    name: Report the drift-check failure
+    needs: drift
+    # Only when the detection job actually FAILED, and never on a cancelled run.
+    if: ${{ failure() && needs.drift.result == 'failure' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      # NOTE: this job deliberately has NO repository checkout step. It holds the only
+      # write permission in the workflow and must run no repository code; it composes
+      # the issue from workflow context alone.
+      - name: File (or update) the drift report
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # The drift job's EXPLICIT contract verdict. Only a check that observes the
+          # source contract (provenance re-derivation, the contract suite, the pinned
+          # api-version) can set it, so a `npm ci` failure or a release-validation
+          # regression is never reported as a protocol mismatch.
+          CONTRACT_MISMATCH: ${{ needs.drift.outputs.contractMismatch }}
+        with:
+          script: |
+            const runUrl = process.env.RUN_URL;
+            const mismatch = process.env.CONTRACT_MISMATCH === 'true';
+
+            // Two distinct reports, deduplicated by two distinct labels, so a
+            // service defect is only ever raised on confirmed contract evidence.
+            const report = mismatch
+              ? {
+                  label: 'contract-drift',
+                  title: 'contract-drift: the Microsoft.Chaos source contract no longer matches the shipped fixtures',
+                  body: [
+                    'The scheduled `contract-drift` workflow CONFIRMED a source-contract mismatch:',
+                    'the committed fixtures, the provenance manifest, or the pinned `api-version` no',
+                    'longer agree with each other or with the reviewed source extracts.',
+                    '',
+                    `Failing run: ${runUrl}`,
+                    '',
+                    '**This is a service defect, not a client bug.** Per the release policy, a protocol',
+                    'mismatch is escalated to the Chaos Studio service team rather than silently',
+                    'accommodated in the client: do NOT regenerate fixtures, relax an assertion, or bump',
+                    'the pinned `api-version` to make this green.',
+                    '',
+                    'Triage steps are in `docs/runbooks/contract-drift.md`.',
+                  ].join('\n'),
+                  recurrence: `The scheduled drift check confirmed the contract mismatch again: ${runUrl}`,
+                }
+              : {
+                  label: 'contract-drift-workflow-failure',
+                  title: 'contract-drift: the scheduled drift check could not complete',
+                  body: [
+                    'The scheduled `contract-drift` workflow failed, but it did NOT confirm a source-contract mismatch.',
+                    'None of the contract checks (provenance re-derivation, the source-contract suite, the',
+                    'pinned `api-version` assertion) reported drift. Either the failure is outside them —',
+                    'dependency installation, the runner, a timeout, or the repository-side release-validation',
+                    'suite — or a contract check COULD NOT BE EVALUATED (a failed `git`, an unreadable file, a',
+                    'test file that will not parse or import, an empty test discovery, or a test that died',
+                    'before any contract assertion ran). Neither is evidence of contract drift. Do not file a',
+                    'service defect on the strength of it.',
+                    '',
+                    `Failing run: ${runUrl}`,
+                    '',
+                    'Identify the failing step in the run log. While this workflow is failing, drift',
+                    'detection is NOT running: fix it promptly, because a real protocol mismatch would',
+                    'go unnoticed (`docs/runbooks/contract-drift.md`).',
+                  ].join('\n'),
+                  recurrence: `The scheduled drift check failed again without confirming contract drift: ${runUrl}`,
+                };
+
+            const { owner, repo } = context.repo;
+            const existing = await github.rest.issues.listForRepo({
+              owner,
+              repo,
+              state: 'open',
+              labels: report.label,
+              per_page: 100,
+            });
+
+            // One durable issue per episode: comment on the open one rather than
+            // opening a new issue on every scheduled run.
+            if (existing.data.length > 0) {
+              const issue = existing.data[0];
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: issue.number,
+                body: report.recurrence,
+              });
+              core.notice(`Updated existing ${report.label} issue #${issue.number}.`);
+              return;
+            }
+
+            const created = await github.rest.issues.create({
+              owner,
+              repo,
+              title: report.title,
+              body: report.body,
+              labels: [report.label],
+            });
+            core.notice(`Opened ${report.label} issue #${created.data.number}.`);
+

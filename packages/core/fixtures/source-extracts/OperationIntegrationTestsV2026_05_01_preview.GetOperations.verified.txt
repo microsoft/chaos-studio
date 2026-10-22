@@ -1,0 +1,194 @@
+{
+  "value": [
+    {
+      "name": "Microsoft.Chaos/operations/read",
+      "isDataAction": false,
+      "display": {
+        "provider": "Microsoft Chaos",
+        "resource": "Operations",
+        "operation": "List Operations",
+        "description": "Lists all of the available operations for the Microsoft.Chaos resource provider."
+      }
+    },
+    {
+      "name": "Microsoft.Chaos/register/action",
+      "isDataAction": false,
+      "display": {
+        "provider": "Microsoft Chaos",
+        "resource": "Microsoft Chaos",
+        "operation": "Register Microsoft.Chaos",
+        "description": "Registers the Microsoft.Chaos resource provider with a subscription."
+      }
+    },
+    {
+      "name": "Microsoft.Chaos/unregister/action",
+      "isDataAction": false,
+      "display": {
+        "provider": "Microsoft Chaos",
+        "resource": "Microsoft Chaos",
+        "operation": "Unregister Microsoft.Chaos",
+        "description": "Unregisters the Microsoft.Chaos resource provider from a subscription."
+      }
+    },
+    {
+      "name": "Microsoft.Chaos/locations/workspaceOperationResults/read",
+      "isDataAction": false,
+      "display": {
+        "provider": "Microsoft Chaos",
+        "resource": "Workspace Operation Result",
+        "operation": "Read Workspace Operation Result",
+        "description": "Reads the status of an asynchronous workspace operation."
+      }
+    },
+    {
+      "name": "Microsoft.Chaos/workspaces/read",
+      "isDataAction": false,
+      "display": {
+        "provider": "Microsoft Chaos",
+        "resource": "Workspace",
+        "operation": "Read Workspace",
+        "description": "Reads a Chaos Studio workspace."
+      }
+    },
+    {
+      "name": "Microsoft.Chaos/workspaces/write",
+      "isDataAction": false,
+      "display": {
+        "provider": "Microsoft Chaos",
+        "resource": "Workspace",
+        "operation": "Create or Update Workspace",
+        "description": "Creates or updates a Chaos Studio workspace."
+      }
+    },
+    {
+      "name": "Microsoft.Chaos/workspaces/delete",
+      "isDataAction": false,
+      "display": {
+        "provider": "Microsoft Chaos",
+        "resource": "Workspace",
+        "operation": "Delete Workspace",
+        "description": "Deletes a Chaos Studio workspace."
+      }
+    },
+    {
+      "name": "Microsoft.Chaos/workspaces/scenarios/read",
+      "isDataAction": false,
+      "display": {
+        "provider": "Microsoft Chaos",
+        "resource": "Scenario",
+        "operation": "Read Scenario",
+        "description": "Reads a scenario."
+      }
+    },
+    {
+      "name": "Microsoft.Chaos/workspaces/scenarios/write",
+      "isDataAction": false,
+      "display": {
+        "provider": "Microsoft Chaos",
+        "resource": "Scenario",
+        "operation": "Create or Update Scenario",
+        "description": "Creates or updates a scenario."
+      }
+    },
+    {
+      "name": "Microsoft.Chaos/workspaces/scenarios/delete",
+      "isDataAction": false,
+      "display": {
+        "provider": "Microsoft Chaos",
+        "resource": "Scenario",
+        "operation": "Delete Scenario",
+        "description": "Deletes a scenario."
+      }
+    },
+    {
+      "name": "Microsoft.Chaos/workspaces/scenarios/configurations/read",
+      "isDataAction": false,
+      "display": {
+        "provider": "Microsoft Chaos",
+        "resource": "Scenario Configuration",
+        "operation": "Read Scenario Configuration",
+        "description": "Reads a scenario configuration."
+      }
+    },
+    {
+      "name": "Microsoft.Chaos/workspaces/scenarios/configurations/write",
+      "isDataAction": false,
+      "display": {
+        "provider": "Microsoft Chaos",
+        "resource": "Scenario Configuration",
+        "operation": "Create or Update Scenario Configuration",
+        "description": "Creates or updates a scenario configuration."
+      }
+    },
+    {
+      "name": "Microsoft.Chaos/workspaces/scenarios/configurations/delete",
+      "isDataAction": false,
+      "display": {
+        "provider": "Microsoft Chaos",
+        "resource": "Scenario Configuration",
+        "operation": "Delete Scenario Configuration",
+        "description": "Deletes a scenario configuration."
+      }
+    },
+    {
+      "name": "Microsoft.Chaos/workspaces/scenarios/configurations/validate/action",
+      "isDataAction": false,
+      "display": {
+        "provider": "Microsoft Chaos",
+        "resource": "Scenario Configuration",
+        "operation": "Validate Scenario Configuration",
+        "description": "Validates a scenario configuration."
+      }
+    },
+    {
+      "name": "Microsoft.Chaos/workspaces/scenarios/configurations/execute/action",
+      "isDataAction": false,
+      "display": {
+        "provider": "Microsoft Chaos",
+        "resource": "Scenario Configuration",
+        "operation": "Execute Scenario Configuration",
+        "description": "Executes a scenario configuration and creates a scenario run."
+      }
+    },
+    {
+      "name": "Microsoft.Chaos/workspaces/scenarios/configurations/validations/read",
+      "isDataAction": false,
+      "display": {
+        "provider": "Microsoft Chaos",
+        "resource": "Scenario Configuration Validation",
+        "operation": "Read Scenario Configuration Validation",
+        "description": "Reads a scenario configuration validation resource."
+      }
+    },
+    {
+      "name": "Microsoft.Chaos/workspaces/scenarios/runs/read",
+      "isDataAction": false,
+      "display": {
+        "provider": "Microsoft Chaos",
+        "resource": "Scenario Run",
+        "operation": "Read Scenario Run",
+        "description": "Reads a scenario run resource."
+      }
+    },
+    {
+      "name": "Microsoft.Chaos/workspaces/scenarios/runs/delete",
+      "isDataAction": false,
+      "display": {
+        "provider": "Microsoft Chaos",
+        "resource": "Scenario Run",
+        "operation": "Delete Scenario Run",
+        "description": "Deletes a scenario run resource."
+      }
+    },
+    {
+      "name": "Microsoft.Chaos/workspaces/scenarios/runs/cancel/action",
+      "isDataAction": false,
+      "display": {
+        "provider": "Microsoft Chaos",
+        "resource": "Scenario Run",
+        "operation": "Cancel Scenario Run",
+        "description": "Cancels a scenario run."
+      }
+    }
+  ]
+}

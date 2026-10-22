@@ -1,0 +1,163 @@
+# OneBranch PR validation pipeline for the Azure Chaos Studio Workspaces
+# extension. Consumed by the Squall `ADO-Plugin-PullRequest`-equivalent pipeline
+# definition. Builds the shared core, runs checks, and packages the private
+# development VSIX (vss-extension.dev.json) to prove it packages cleanly. It does
+# NOT publish. Publication happens only from the Official pipeline.
+
+# Three-part, strictly increasing build number (see OneBranch.Official.yml).
+# The two-part ADO default fails `PackageAzureDevOpsExtension` even for the dev
+# VSIX, so pin a valid major.minor.patch here too.
+name: 1.$(Date:yyyyMMdd).$(Rev:r)
+
+trigger: none
+pr:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - package.json
+      - package-lock.json
+      - tsconfig.base.json
+      - tsconfig.json
+      - .gitattributes
+      - action.yml
+      - packages/**
+      - scripts/**
+      - dist/**
+      - azure-pipelines-extension/**
+      - .config/**
+      - .pipelines/**
+
+resources:
+  repositories:
+    - repository: templates
+      type: git
+      name: OneBranch.Pipelines/GovernedTemplates
+      ref: refs/heads/main
+
+variables:
+  - name: system.debug
+    value: false
+  - name: ExtensionRoot
+    value: '$(Build.SourcesDirectory)/azure-pipelines-extension'
+
+extends:
+  template: v2/OneBranch.NonOfficial.CrossPlat.yml@templates
+  parameters:
+    globalSdl:
+      tsa:
+        enabled: false
+      credscan:
+        suppressionsFile: $(Build.SourcesDirectory)/.config/CredScanSuppressions.json
+      policheck:
+        break: true
+    stages:
+      - stage: build_validate
+        jobs:
+          - job: package_dev_vsix
+            pool:
+              type: linux
+            variables:
+              ob_outputDirectory: '$(Build.SourcesDirectory)/out'
+            steps:
+              - task: NodeTool@0
+                displayName: Use Node 24
+                inputs:
+                  versionSpec: '24.x'
+
+              - script: npm ci
+                displayName: Install workspace dependencies
+
+              - script: npm run typecheck
+                displayName: Type-check
+
+              - script: npm test
+                displayName: Test shared core
+
+              - script: npm run build
+                displayName: Build committed bundles
+
+              # R2 fix: the rebuild above can silently drift from the committed
+              # dist/ bundles (e.g. a source change that isn't reflected in the
+              # checked-in output) unless the two are explicitly compared. Bind
+              # the just-built runtime to the reviewed HEAD commit BEFORE it is
+              # staged into the task folders and packaged, so a PR that would
+              # fail the same GitHub CI / Official runtime-equality gate is
+              # rejected here too instead of packaging different bytes.
+              - script: node scripts/lib/verify-built-runtime.mjs "$(git rev-parse HEAD)"
+                displayName: Bind the rebuilt runtime to HEAD (byte-identical shipping invariant)
+
+              - script: |
+                  set -euo pipefail
+                  # Stage the built task runtime into EVERY task folder so the
+                  # dev extension (distinct task GUID for side-by-side install)
+                  # packages a runnable bundle.
+                  for d in azure-pipelines-extension/tasks/*/ ; do
+                    cp -r dist/azure-pipelines-task/. "$d"
+                  done
+                displayName: Stage task runtime into every task folder
+
+              - script: |
+                  set -euo pipefail
+                  case "$(node --version)" in
+                    v24.*) : ;;
+                    *) echo "##vso[task.logissue type=error]Expected Node 24 for the preferred Node24 handler check, got $(node --version)."; exit 1 ;;
+                  esac
+                  for d in azure-pipelines-extension/tasks/*/ ; do
+                    node --check "${d}index.js"
+                  done
+                  node scripts/smoke-action-bundle.mjs "azure-pipelines-extension/tasks/AzureChaosStudioScenarioV1Dev/index.js"
+                displayName: Validate preferred Node24 task runtime
+
+              - task: NodeTool@0
+                displayName: Use Node 20 (Node20_1 Server fallback parity)
+                inputs:
+                  versionSpec: '20.x'
+
+              - script: |
+                  set -euo pipefail
+                  case "$(node --version)" in
+                    v20.*) : ;;
+                    *) echo "##vso[task.logissue type=error]Expected Node 20 for the Node20_1 fallback check, got $(node --version)."; exit 1 ;;
+                  esac
+                  for d in azure-pipelines-extension/tasks/*/ ; do
+                    node --check "${d}index.js"
+                  done
+                  node scripts/smoke-action-bundle.mjs "azure-pipelines-extension/tasks/AzureChaosStudioScenarioV1Dev/index.js"
+                displayName: Validate Node20_1 Server fallback runtime
+
+              - task: NodeTool@0
+                displayName: Restore Node 24 for packaging
+                inputs:
+                  versionSpec: '24.x'
+
+              - task: TfxInstaller@5
+                displayName: Install tfx-cli
+                inputs:
+                  # Use the CLI bundled with this reviewed task major. Do not
+                  # query npm for a mutable latest version.
+                  version: builtin
+                  checkLatest: false
+
+              - task: PackageAzureDevOpsExtension@5
+                displayName: Package development VSIX
+                inputs:
+                  rootFolder: '$(ExtensionRoot)'
+                  patternManifest: 'vss-extension.dev.json'
+                  extensionVersion: '$(Build.BuildNumber)'
+                  updateTasksVersion: false
+                  outputPath: '$(ob_outputDirectory)/ChaosStudioWorkspacesDev.vsix'
+
+              - script: |
+                  set -euo pipefail
+                  vsix='$(ob_outputDirectory)/ChaosStudioWorkspacesDev.vsix'
+                  test -f "$vsix"
+                  unzip -t "$vsix"
+                  size="$(stat -c%s "$vsix")"
+                  if [ "$size" -gt 52428800 ]; then
+                    echo "##vso[task.logissue type=error]VSIX is ${size} bytes; Marketplace packages must not exceed 50 MB."
+                    exit 1
+                  fi
+                  echo "Validated VSIX: ${size} bytes"
+                displayName: Validate VSIX structure and Marketplace size limit

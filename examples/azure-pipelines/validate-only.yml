@@ -1,0 +1,25 @@
+# Example: validate an Azure Chaos Studio scenario configuration only (never
+# execute). Use validate-only as a pre-flight / PR gate: the task passes iff
+# validation reaches the terminal `Succeeded` state and fails on
+# RequiresAttention / NoResolvedResources. No run is started.
+#
+# Auth is workload-identity federation (WIF) via an ARM service connection — NO
+# long-lived secret (NFR3). Prerequisite: install the "Azure Chaos Studio
+# Workspaces" extension so AzureChaosStudioScenario@1 is available.
+
+trigger: none
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+  - task: AzureChaosStudioScenario@1
+    displayName: Validate the scenario configuration
+    inputs:
+      azureSubscription: chaos-studio-wif   # ARM service connection (workload identity)
+      subscriptionId: $(chaosSubscriptionId)
+      resourceGroup: rg-chaos
+      workspaceName: ws-demo
+      scenarioName: scn-demo
+      scenarioConfigurationName: cfg-demo
+      mode: validate-only

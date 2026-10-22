@@ -1,0 +1,20 @@
+{
+  "description": "VF11: representative EXPECTED wire shape for validate against a workspace with NO evaluation snapshot. This is a hand-authored contract fixture, not a runtime-observed capture: the reviewed BE extracts establish STATICALLY that the legacy IsEvaluated 409 gate was removed (StartScenarioValidationCommand accepts a null snapshot and resolves the resource-selector map on the fly; the exception mapper maps no evaluation-required conflict), so the DOCUMENTED contract for an unevaluated workspace is the normal external 202 (validations/latest Location + default Retry-After 10) rather than a 409. It encodes that workspace evaluation is advisory in the inspected code, not a proven end-to-end runtime response.",
+  "provenance": { "source": "be.validation.command", "citation": "VF11" },
+  "operationId": "ScenarioConfigurations_Validate",
+  "context": "Workspace ws-unevaluated has never been evaluated (null discovery/evaluation snapshot).",
+  "request": {
+    "method": "POST",
+    "url": "https://management.azure.com/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-chaos/providers/Microsoft.Chaos/workspaces/ws-unevaluated/scenarios/scn-demo/configurations/cfg-demo/validate?api-version=2026-05-01-preview"
+  },
+  "response": {
+    "status": 202,
+    "headers": {
+      "Location": "https://management.azure.com/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-chaos/providers/Microsoft.Chaos/workspaces/ws-unevaluated/scenarios/scn-demo/configurations/cfg-demo/validations/latest?api-version=2026-05-01-preview",
+      "Retry-After": "10",
+      "x-ms-correlation-request-id": "aaaaaaaa-0000-0000-0000-000000000011",
+      "x-ms-request-id": "bbbbbbbb-0000-0000-0000-000000000011"
+    },
+    "body": null
+  }
+}

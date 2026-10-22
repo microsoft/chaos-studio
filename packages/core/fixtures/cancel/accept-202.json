@@ -1,0 +1,19 @@
+{
+  "description": "Cancel acceptance (VF8, VF9). External 202 with no body. The cancel request is keyed by the run ID (/runs/{runId}/cancel) that execute exposed in its Location — VF9: the service can cancel a run only once that run ID exists, and offers no validation-cancel or execute-before-run-ID cancel. Location points to the SAME run resource that execute returned; Retry-After defaults to 10. The backend cancel command handler (CancelScenarioRunCommand.cs) is state-aware: a repeated cancel and a cancel against a terminal run both no-op without throwing, so repeated cancellation is idempotent and terminal runs are a no-op. Clients poll the run resource until Canceled or another terminal state.",
+  "provenance": { "source": "gw.run.domainLogic", "citation": "VF8, VF9" },
+  "operationId": "ScenarioRuns_Cancel",
+  "request": {
+    "method": "POST",
+    "url": "https://management.azure.com/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-chaos/providers/Microsoft.Chaos/workspaces/ws-demo/scenarios/scn-demo/runs/22222222-2222-2222-2222-222222222222/cancel?api-version=2026-05-01-preview"
+  },
+  "response": {
+    "status": 202,
+    "headers": {
+      "Location": "https://management.azure.com/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-chaos/providers/Microsoft.Chaos/workspaces/ws-demo/scenarios/scn-demo/runs/22222222-2222-2222-2222-222222222222?api-version=2026-05-01-preview",
+      "Retry-After": "10",
+      "x-ms-correlation-request-id": "aaaaaaaa-0000-0000-0000-000000000009",
+      "x-ms-request-id": "bbbbbbbb-0000-0000-0000-000000000009"
+    },
+    "body": null
+  }
+}

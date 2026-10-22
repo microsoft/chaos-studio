@@ -1,0 +1,10 @@
+{
+  "description": "EXAMPLE ordered ScenarioRuns_Get polling sequence after a cancel request (VF7, VF8): a run that happens to be observed in Canceling before it settles on the terminal Canceled state. Canceling is a non-terminal in-progress state and MAY be observed ZERO OR MORE times before Canceled — a cancel can complete before the first poll, so the client is NOT guaranteed to see Canceling (this example shows two Canceling polls purely for illustration). The invariant the contract encodes is: every non-terminal poll is a 202 carrying the canonical Retry-After, and the run settles on a terminal 200 (Canceled) with no Retry-After. Canceling, when observed, only ever appears on a non-terminal 202, never as the terminal state.",
+  "provenance": { "source": "gw.run.state", "citation": "VF7, VF8" },
+  "operationId": "ScenarioRuns_Get",
+  "sequence": [
+    { "response": { "status": 202, "headers": { "Retry-After": "10" }, "body": { "properties": { "status": "Canceling", "startTime": "2026-05-01T12:01:00Z" } } } },
+    { "response": { "status": 202, "headers": { "Retry-After": "10" }, "body": { "properties": { "status": "Canceling", "startTime": "2026-05-01T12:01:00Z" } } } },
+    { "response": { "status": 200, "body": { "properties": { "status": "Canceled", "startTime": "2026-05-01T12:01:00Z", "endTime": "2026-05-01T12:02:15Z" } } } }
+  ]
+}

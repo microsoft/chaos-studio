@@ -1,0 +1,97 @@
+{
+  "description": "VF4 plan mutability + no server-side concurrency control, as an ILLUSTRATIVE request/response sequence that encodes the STATICALLY-INFERRED contract from the GW ConfigurationDomainLogicV1.ValidateAsync controller (see source-extracts/ConfigurationDomainLogicV1.cs). This is a hand-authored representative sequence, NOT an observed runtime capture. The STATIC evidence (authenticated in provenance.test.ts against the extracts) is: the controller reads no precondition and dispatches the validation command unconditionally, the store upserts validations/latest with no version/precondition parameter, the exception mapper maps no 412, and ValidationProperties.g.cs declares no eTag/version/concurrency wire field. From that, the inferred contract is: two successive validations of the SAME configuration resolve to the SAME singleton (.../configurations/cfg-demo/validations/latest); a client that attempts an If-Match precondition on the second validate sends a CONCRETE NONMATCHING ETag — a value a precondition-HONORING service would reject with 412 Precondition Failed — yet the inferred contract accepts it with the normal external 202 (never a 412), returns no ETag, and validations/latest is REPLACED in place (plan A -> plan B). Using a nonmatching ETag (rather than a match-any `*`, which any resource satisfies) is what makes the illustration meaningful: only a service that IGNORES the precondition returns 202 here. ARM exposes no eTag, If-Match/If-None-Match precondition, idempotency key, or version guard on validations/latest, so nothing prevents a later validation from replacing the current execution plan between an execute's validate and execute calls.",
+  "provenance": { "source": "gw.configuration.domainLogic", "citation": "VF4" },
+  "operationId": "ScenarioConfigurationValidations_Get",
+  "resourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-chaos/providers/Microsoft.Chaos/workspaces/ws-demo/scenarios/scn-demo/configurations/cfg-demo/validations/latest",
+  "sequence": [
+    {
+      "note": "First validate action is accepted; validations/latest will hold plan A.",
+      "request": {
+        "method": "POST",
+        "url": "https://management.azure.com/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-chaos/providers/Microsoft.Chaos/workspaces/ws-demo/scenarios/scn-demo/configurations/cfg-demo/validate?api-version=2026-05-01-preview"
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "Location": "https://management.azure.com/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-chaos/providers/Microsoft.Chaos/workspaces/ws-demo/scenarios/scn-demo/configurations/cfg-demo/validations/latest?api-version=2026-05-01-preview",
+          "Retry-After": "10",
+          "x-ms-correlation-request-id": "aaaaaaaa-0000-0000-0000-0000000000a1",
+          "x-ms-request-id": "bbbbbbbb-0000-0000-0000-0000000000a1"
+        }
+      }
+    },
+    {
+      "note": "GET validations/latest is terminal-success and holds plan A.",
+      "request": {
+        "method": "GET",
+        "url": "https://management.azure.com/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-chaos/providers/Microsoft.Chaos/workspaces/ws-demo/scenarios/scn-demo/configurations/cfg-demo/validations/latest?api-version=2026-05-01-preview"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-ms-correlation-request-id": "aaaaaaaa-0000-0000-0000-0000000000a2",
+          "x-ms-request-id": "bbbbbbbb-0000-0000-0000-0000000000a2"
+        },
+        "body": {
+          "id": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-chaos/providers/Microsoft.Chaos/workspaces/ws-demo/scenarios/scn-demo/configurations/cfg-demo/validations/latest",
+          "name": "latest",
+          "type": "Microsoft.Chaos/workspaces/scenarios/configurations/validations",
+          "properties": {
+            "status": "Succeeded",
+            "startTime": "2026-05-01T12:00:00Z",
+            "endTime": "2026-05-01T12:00:30Z",
+            "executionPlanJson": "{\"planId\":\"plan-A\",\"steps\":[{\"name\":\"branch-1\"}]}",
+            "errors": [],
+            "validationErrors": []
+          }
+        }
+      }
+    },
+    {
+      "note": "A LATER validate action attempts an If-Match precondition with a CONCRETE NONMATCHING ETag — a value a precondition-HONORING service would reject with 412. The statically-inferred contract IGNORES it: accepted with the normal 202 (NOT a 412), carries no ETag, and replaces validations/latest in place. (Illustrative of the statically-inferred contract, not an observed capture.)",
+      "request": {
+        "method": "POST",
+        "url": "https://management.azure.com/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-chaos/providers/Microsoft.Chaos/workspaces/ws-demo/scenarios/scn-demo/configurations/cfg-demo/validate?api-version=2026-05-01-preview",
+        "headers": {
+          "If-Match": "\"opaque-nonmatching-etag-v0\""
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "Location": "https://management.azure.com/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-chaos/providers/Microsoft.Chaos/workspaces/ws-demo/scenarios/scn-demo/configurations/cfg-demo/validations/latest?api-version=2026-05-01-preview",
+          "Retry-After": "10",
+          "x-ms-correlation-request-id": "aaaaaaaa-0000-0000-0000-0000000000a3",
+          "x-ms-request-id": "bbbbbbbb-0000-0000-0000-0000000000a3"
+        }
+      }
+    },
+    {
+      "note": "GET validations/latest now holds a DIFFERENT plan B on the SAME resource id: the If-Match did not prevent replacement and no version bump exists the client could have pinned.",
+      "request": {
+        "method": "GET",
+        "url": "https://management.azure.com/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-chaos/providers/Microsoft.Chaos/workspaces/ws-demo/scenarios/scn-demo/configurations/cfg-demo/validations/latest?api-version=2026-05-01-preview"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-ms-correlation-request-id": "aaaaaaaa-0000-0000-0000-0000000000a4",
+          "x-ms-request-id": "bbbbbbbb-0000-0000-0000-0000000000a4"
+        },
+        "body": {
+          "id": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-chaos/providers/Microsoft.Chaos/workspaces/ws-demo/scenarios/scn-demo/configurations/cfg-demo/validations/latest",
+          "name": "latest",
+          "type": "Microsoft.Chaos/workspaces/scenarios/configurations/validations",
+          "properties": {
+            "status": "Succeeded",
+            "startTime": "2026-05-01T12:05:00Z",
+            "endTime": "2026-05-01T12:05:30Z",
+            "executionPlanJson": "{\"planId\":\"plan-B\",\"steps\":[{\"name\":\"branch-1\"},{\"name\":\"branch-2\"}]}",
+            "errors": [],
+            "validationErrors": []
+          }
+        }
+      }
+    }
+  ]
+}

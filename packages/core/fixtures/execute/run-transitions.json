@@ -1,0 +1,12 @@
+{
+  "description": "Ordered ScenarioRuns_Get polling sequence for a successful execution-mode run (VF6, VF7). Encodes the 202-while-nonterminal to 200-when-terminal transition. Every 202 poll carries the canonical Retry-After; the terminal 200 carries none. Every status is a known ScenarioRunState; only the last is terminal.",
+  "provenance": { "source": "gw.run.state", "citation": "VF6, VF7" },
+  "operationId": "ScenarioRuns_Get",
+  "sequence": [
+    { "response": { "status": 202, "headers": { "Retry-After": "10" }, "body": { "properties": { "status": "Queued" } } } },
+    { "response": { "status": 202, "headers": { "Retry-After": "10" }, "body": { "properties": { "status": "Starting", "startTime": "2026-05-01T12:01:00Z" } } } },
+    { "response": { "status": 202, "headers": { "Retry-After": "10" }, "body": { "properties": { "status": "Running", "startTime": "2026-05-01T12:01:00Z" } } } },
+    { "response": { "status": 202, "headers": { "Retry-After": "10" }, "body": { "properties": { "status": "CleaningUp", "startTime": "2026-05-01T12:01:00Z" } } } },
+    { "response": { "status": 200, "body": { "properties": { "status": "Succeeded", "startTime": "2026-05-01T12:01:00Z", "endTime": "2026-05-01T12:11:00Z" } } } }
+  ]
+}

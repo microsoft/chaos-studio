@@ -1,0 +1,644 @@
+# OneBranch Official pipeline for the Azure Chaos Studio Workspaces extension.
+# Consumed by the Squall `ADO-Plugin-Official`-equivalent pipeline definition.
+# THREE isolated stages: `build` builds the shared core, runs checks, and packages an
+# UNSIGNED VSIX (holds NO Marketplace credential and does NO signing); `sign` is a
+# DEPLOYMENT job bound to the protected pipeline environment
+# `ChaosStudio-ESRP-Signing-Prod` that signs + verifies the VSIX with the
+# supported ADO extension operations (the environment's Approvals-and-checks are
+# an UNAVOIDABLE gate evaluated before the deployment runs); and `publish` is a OneBranch v2
+# `releaseJob` that declares the SIGNED VSIX as an explicit artifact input, disables
+# repository checkout, runs NO repository code, and publishes through the existing
+# AzureChaosStudio publisher using the `ADO-Plugin Publishing` AzureRM workload-
+# identity service connection. Publish executes ONLY when `publishExtension` is
+# set and the run is from the trusted default branch.
+#
+# TRUST BOUNDARY — because a MANUAL run loads THIS YAML from the SELECTED branch, no
+# in-file condition or variable (PublishBranch, the stage conditions, even the `sign` stage's
+# `environment:` binding) is authoritative: a feature branch could edit or delete them. The
+# INDEPENDENTLY ENFORCED controls live OUTSIDE this YAML, on the platform and the protected
+# resources themselves:
+#   (1) SIGNING is gated by OneBranch PLATFORM GOVERNANCE, not by this file. The
+#       ADO-extension signing KeyCode is granted by ESRP/OneBranch onboarding ONLY
+#       to the onboarded Official pipeline running the Production/Official
+#       template from the trusted branch. The `sign` deployment job's binding to the
+#       `ChaosStudio-ESRP-Signing-Prod` protected environment (ADO checks: Branch Control
+#       = refs/heads/main + pipeline permissions restricted to this pipeline; the human Approval
+#       gate lives on the PUBLISH resource, not signing) is DEFENSE IN DEPTH layered on top of
+#       that platform gate.
+#   (2) PUBLISH is gated by the `ADO-Plugin Publishing` Marketplace SERVICE CONNECTION's own
+#       Approvals-and-checks (Branch Control limited to PublishBranch + a required Approval),
+#       which bind the credential regardless of which pipeline/branch YAML references it.
+#   (3) The `publish` stage independently re-verifies the signed-artifact digest
+#       and `.psdsxs` signature entry before publishing.
+# Provision and confirm (1)+(2) live with scripts/verify-ado-signing-protections.sh (see
+# CONTRIBUTING.md, "Azure Pipelines extension publish security"). The in-YAML branch
+# conditions below are additional defense in depth. Signing uses the governed
+# `onebranch.pipeline.signing@1` task with the supported `AdoExtensionSign` and
+# `AdoExtensionVerify` operations. The signed package must contain the Marketplace
+# `.psdsxs` signature and is hash-bound across the sign→publish handoff.
+
+# Three-part, strictly increasing build number. `PackageAzureDevOpsExtension`
+# requires a `major.minor.patch` extensionVersion; the ADO default
+# ($(Date:yyyyMMdd)$(Rev:.r)) is only two parts and fails packaging. Major is
+# pinned to the extension's 1.x line; minor=date and patch=rev keep it ordered.
+name: 1.$(Date:yyyyMMdd).$(Rev:r)
+
+trigger: none
+pr: none
+
+parameters:
+  - name: publishExtension
+    displayName: Publish the VSIX to the Visual Studio Marketplace
+    type: boolean
+    default: false
+  - name: extensionManifest
+    displayName: Extension manifest to package
+    type: string
+    default: vss-extension.json
+    values:
+      - vss-extension.json
+      - vss-extension.dev.json
+  # The EXACT release version tag (vMAJOR.MINOR.PATCH) this publication belongs to.
+  # It selects BOTH halves of the release evidence, so they can never disagree:
+  #   * the release-validation receipt at test/release-validation/receipts/<tag>.json —
+  #     RV1-RV3 are executed by an operator against a real target preview environment
+  #     and recorded there; a PUBLISHING run re-verifies that evidence in the build
+  #     stage before anything is signed; and
+  #   * the SHARED RELEASE COMMIT — the commit the GitHub release published that tag
+  #     from. Publishing the VSIX from any other commit would break "both marketplaces
+  #     from ONE commit" (D16), which a per-pipeline receipt gate alone cannot prevent.
+  # Empty by default so a publishing run without recorded evidence FAILS CLOSED.
+  - name: releaseTag
+    displayName: Exact release tag (vMAJOR.MINOR.PATCH) — selects the receipt and the shared release commit
+    type: string
+    default: ''
+
+resources:
+  repositories:
+    - repository: templates
+      type: git
+      name: OneBranch.Pipelines/GovernedTemplates
+      ref: refs/heads/main
+
+variables:
+  # Non-secret release metadata provisioned outside this repository:
+  # - AdoExtensionSigningKeyCode: the ESRP/OneBranch-onboarded KeyCode authorized
+  #   for AdoExtensionSign/AdoExtensionVerify.
+  # - AdoExtensionShareWith: comma-separated sanctioned preview organizations.
+  # The pipeline uses no Key Vault secret for Marketplace publication; the
+  # `ADO-Plugin Publishing` AzureRM service connection supplies WIF.
+  - group: ADO-plugin-variable-group
+  - name: system.debug
+    value: false
+  - name: ExtensionRoot
+    value: '$(Build.SourcesDirectory)/azure-pipelines-extension'
+  # The trusted branch publication and signing are allowed from. A manual run from any
+  # other branch builds an UNSIGNED VSIX and skips the publish stage (see conditions).
+  # NOTE: this variable — like every line in this file — comes from the SELECTED branch
+  # on a manual run, so a feature branch could redefine it or drop the conditions that
+  # reference it. It is therefore only a defense-in-depth convenience. The AUTHORITATIVE
+  # gates live OUTSIDE this YAML: branch control + approvals on the `ADO-Plugin
+  # Publishing` AzureRM/WIF service connection AND branch control on the
+  # OneBranch signing environment, both limited to refs/heads/main, so neither signing nor
+  # publish credential can be brokered off the trusted branch regardless of the running
+  # YAML (see CONTRIBUTING.md, "Azure Pipelines extension publish security").
+  - name: PublishBranch
+    value: 'refs/heads/main'
+  # CONCRETE, IDENTIFIABLE protected resources (named here so they are statically
+  # referenceable, auditable, and carry ADO Approvals-and-checks). The
+  # `onebranch.pipeline.signing@1` task does NOT accept a pipeline service connection — ESRP
+  # signing is brokered by the governed OneBranch signing environment. The ADO-gateable
+  # protected resource for signing is therefore the pipeline environment
+  # `ChaosStudio-ESRP-Signing-Prod`, which the `sign` deployment job targets;
+  # Marketplace publishing uses a real ADO
+  # AzureRM workload-identity service connection (`ADO-Plugin Publishing`). BOTH must have, in Azure DevOps,
+  # Approvals-and-checks -> Branch Control = refs/heads/main, Security -> Pipeline permissions
+  # restricted to THIS official pipeline, and (publish) a required Approval. Verify live with
+  # `scripts/verify-ado-signing-protections.sh` (see CONTRIBUTING.md, "Azure Pipelines
+  # extension publish security").
+
+extends:
+  template: v2/OneBranch.Official.CrossPlat.yml@templates
+  parameters:
+    # Linux signing setup is gated behind this feature flag on the CrossPlat
+    # template; without it the `onebranch.pipeline.signing@1` task is not wired up
+    # on the linux pool and ESRP signing silently does not run.
+    featureFlags:
+      linuxEsrpSigning: true
+    globalSdl:
+      tsa:
+        enabled: true
+      credscan:
+        suppressionsFile: $(Build.SourcesDirectory)/.config/CredScanSuppressions.json
+      policheck:
+        break: true
+      codeSign:
+        enabled: true
+    stages:
+      # STAGE 1 — build & package the (UNSIGNED) VSIX. This stage runs REPOSITORY CODE
+      # (npm ci/build/test) but holds NO Marketplace publishing credential and does NO
+      # signing, so a compromised build cannot sign or publish. The packaged VSIX is
+      # emitted to $(ob_outputDirectory) and published as the stage drop for the sign stage.
+      - stage: build
+        jobs:
+          - job: package
+            pool:
+              type: linux
+            variables:
+              ob_outputDirectory: '$(Build.SourcesDirectory)/out'
+            steps:
+              - task: NodeTool@0
+                displayName: Use Node 24
+                inputs:
+                  versionSpec: '24.x'
+
+              # RELEASE-VALIDATION GATE (E6-T1/E6-T2). RV1-RV3 — target-region protocol
+              # smoke, WIF/RBAC proof, and cancellation operational bounds — run against a
+              # real preview environment and are recorded as a receipt committed under
+              # test/release-validation/receipts/ (the workspace scope is hashed, so the
+              # receipt carries no resource IDs). This step RE-EVALUATES every recorded
+              # observation against the source-proven contract constants, so a receipt that
+              # merely CLAIMS `passed` is rejected. It runs in the UNSIGNED build stage,
+              # which holds no signing or Marketplace credential, and it runs BEFORE
+              # packaging — so a publishing run cannot reach the Marketplace without
+              # green, current, commit-bound evidence. The same CLI backs the GitHub Action
+              # release workflow, so BOTH marketplaces gate on the SAME receipt and the
+              # SAME core commit (D16) — and, because the receipt gate alone would accept
+              # ANY receipt-bearing descendant, the step additionally binds this build to
+              # the commit the GitHub release published `releaseTag` from
+              # (scripts/lib/release-commit.mjs), so the two marketplaces cannot ship two
+              # different commits.
+              #
+              # ORDERING CONSEQUENCE: the GitHub Action release runs FIRST, because the
+              # exact version tag it creates is the shared release record this build is
+              # matched against (docs/runbooks/release.md).
+              #
+              # SCOPE OF THE GATE, precisely: it runs only on a PUBLISHING run OF THE
+              # PRODUCTION MANIFEST (`vss-extension.json`). A non-publishing main-branch
+              # build still reaches the `sign` stage and can produce a signed VSIX without
+              # RV evidence — that artifact is never published, because the `publish`
+              # stage additionally requires `publishExtension` and consumes only the
+              # artifact signed in its OWN run, whose `build` stage therefore ran this gate.
+              # The enforced invariant is "nothing PRODUCTION is PUBLISHED without
+              # evidence", not "nothing is ever signed".
+              #
+              # PRIVATE-PREVIEW BOOTSTRAP (architecture fix — see
+              # docs/runbooks/release-validation.md "Private-preview bootstrap"): RV1-RV3
+              # must be executed against the PRIVATE `ChaosStudioWorkspacesDev` build, but
+              # that build cannot exist yet if publishing it always required this receipt
+              # first — a circular dependency. This gate is therefore SKIPPED when
+              # `extensionManifest` is the DEV manifest (`vss-extension.dev.json`), which
+              # is `public: false` (never listed/discoverable), carries the "Preview"
+              # gallery flag, ships a distinct task GUID/name
+              # (`AzureChaosStudioScenarioDev@1`, not the production
+              # `AzureChaosStudioScenario@1`), and is shared only with restricted test
+              # organizations — so it can NEVER be mistaken for or substituted as the
+              # production release, and this exemption never weakens the production gate
+              # below. Signing, environment approvals, and private/`Preview` visibility
+              # are unaffected: this only changes which manifest may skip the receipt.
+              - script: |
+                  set -euo pipefail
+                  if [ -z "${RELEASE_TAG}" ]; then
+                    echo "##vso[task.logissue type=error]A publishing run of the PRODUCTION manifest requires the releaseTag parameter (the exact vMAJOR.MINOR.PATCH release tag). Run RV1-RV3 in the target preview environment, commit the receipt, and release the GitHub Action first (docs/runbooks/release.md)."
+                    exit 1
+                  fi
+                  # Exact SemVer only — never a path — so the parameter cannot reach
+                  # outside the tracked receipts directory or name another ref.
+                  if ! printf '%s' "${RELEASE_TAG}" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
+                    echo "##vso[task.logissue type=error]Invalid releaseTag '${RELEASE_TAG}'; use an exact vMAJOR.MINOR.PATCH tag with no leading zeros and no prerelease suffix."
+                    exit 1
+                  fi
+                  receipt="test/release-validation/receipts/${RELEASE_TAG}.json"
+                  if [ ! -f "$receipt" ]; then
+                    echo "##vso[task.logissue type=error]No release-validation receipt at '$receipt' (docs/runbooks/release-validation.md)."
+                    exit 1
+                  fi
+                  verified="$(node scripts/lib/rv-receipt.mjs verify "$receipt")"
+                  printf '%s\n' "$verified"
+                  VALIDATED_COMMIT="$(printf '%s\n' "$verified" | sed -n 's/^receipt-core-commit=//p')"
+                  case "$VALIDATED_COMMIT" in
+                    [0-9a-f]*) [ "${#VALIDATED_COMMIT}" -eq 40 ] || VALIDATED_COMMIT='' ;;
+                    *) VALIDATED_COMMIT='' ;;
+                  esac
+                  if [ -z "$VALIDATED_COMMIT" ]; then
+                    echo "##vso[task.logissue type=error]The receipt did not yield a 40-character validated core commit."
+                    exit 1
+                  fi
+                  # ADO checks out shallow by default; deepen so the ancestry/tree
+                  # comparisons below can see the validated commit. Failing to obtain it
+                  # fails the gate rather than skipping it.
+                  if [ -f "$(git rev-parse --git-dir)/shallow" ]; then
+                    git fetch --unshallow --quiet || git fetch --deepen=250 --quiet
+                  fi
+                  BUILD_COMMIT="$(git rev-parse HEAD)"
+                  # SHARED RELEASE COMMIT. The receipt gate below proves this build ships
+                  # what RV1-RV3 validated — but so would ANY other receipt-bearing
+                  # descendant of the validated commit, so the two marketplaces could pass
+                  # their own gates on DIFFERENT commits. The GitHub release records its
+                  # choice immutably as the exact version tag, so require this build to BE
+                  # that commit. Tags are fetched first, so a tagless clone cannot degrade
+                  # the binding into "the release record is simply absent" (the check fails
+                  # closed when the tag does not resolve).
+                  if ! git fetch --tags --force --quiet; then
+                    echo "##vso[task.logissue type=error]Could not fetch tags; the shared release commit cannot be resolved."
+                    exit 1
+                  fi
+                  node scripts/lib/release-commit.mjs assert-tag-commit "${RELEASE_TAG}" "$BUILD_COMMIT"
+                  # The validated commit must be history this build descends from...
+                  if ! git merge-base --is-ancestor "$VALIDATED_COMMIT" "$BUILD_COMMIT"; then
+                    echo "##vso[task.logissue type=error]Receipt commit $VALIDATED_COMMIT is not an ancestor of build commit $BUILD_COMMIT; RV1-RV3 validated different history."
+                    exit 1
+                  fi
+                  # ...and the SHIPPING trees must be byte-identical to what RV1-RV3 ran,
+                  # so a receipt cannot be reused across a behavior change. Docs/receipt
+                  # commits between the two are deliberately allowed.
+                  if ! git diff --quiet "$VALIDATED_COMMIT" "$BUILD_COMMIT" -- packages action.yml dist azure-pipelines-extension; then
+                    echo "##vso[task.logissue type=error]Build commit $BUILD_COMMIT changes shipped code relative to the validated commit $VALIDATED_COMMIT; re-run RV1-RV3 for this commit."
+                    git diff --name-only "$VALIDATED_COMMIT" "$BUILD_COMMIT" -- packages action.yml dist azure-pipelines-extension
+                    exit 1
+                  fi
+                  echo "RV1-RV3 receipt accepted; shipped trees equal validated commit $VALIDATED_COMMIT."
+                  # Publish the validated commit so the POST-BUILD runtime-equality gate
+                  # below can bind the REBUILT bytes to it. The committed-tree comparison
+                  # above cannot see a build INPUT (scripts/build.mjs, root dependency
+                  # metadata) that changes what the rebuild emits.
+                  echo "##vso[task.setvariable variable=ReleaseValidatedCommit]$VALIDATED_COMMIT"
+                displayName: Release-validation receipt gate (RV1-RV3 evidence + the shared release commit)
+                # Inescapable on a PUBLISHING run of the PRODUCTION manifest only. A
+                # non-publishing validation build, and every DEV-manifest build (private
+                # preview bootstrap — see the header comment above), still compile and
+                # package without this gate; the Dev manifest is never public and can never
+                # substitute for the production release (see docs/runbooks/release-validation.md).
+                condition: >-
+                  and(succeeded(),
+                      eq('${{ parameters.publishExtension }}', 'True'),
+                      eq('${{ parameters.extensionManifest }}', 'vss-extension.json'))
+                env:
+                  RELEASE_TAG: ${{ parameters.releaseTag }}
+                  # Environment evidence goes stale as the service deploys; re-run RV1-RV3
+                  # rather than releasing against an old observation.
+                  MAX_AGE_DAYS: '30'
+
+              - script: npm ci
+                displayName: Install workspace dependencies
+
+              - script: npm run typecheck
+                displayName: Type-check
+
+              - script: npm test
+                displayName: Test shared core
+
+              - script: npm run build
+                displayName: Build committed bundles
+
+              # POST-BUILD RUNTIME-EQUALITY GATE (E6-T2). The VSIX ships the runtime this
+              # pipeline just REBUILT, not the blobs the receipt gate compared. A build
+              # INPUT outside the four committed shipping paths — `scripts/build.mjs`, the
+              # root dependency metadata, a transitive bundler version — can therefore
+              # change the packaged bytes while that comparison still passes. Require the
+              # rebuilt runtime to equal the runtime COMMITTED at the validated commit,
+              # exactly: complete file set (added AND removed), git-normalized modes, and
+              # blob hashes. This runs BEFORE the runtime is staged into the task folders
+              # and long before anything is signed or published.
+              #
+              # On a PUBLISHING run OF THE PRODUCTION MANIFEST the baseline is the
+              # receipt's validated commit and a missing baseline FAILS (it is never
+              # downgraded to HEAD). On a non-publishing build, AND on every DEV-manifest
+              # build (private-preview bootstrap — the receipt gate above never runs for
+              # the Dev manifest, so there is no validated commit to bind to), the baseline
+              # is HEAD, which is the same build-drift gate the GitHub `test` and
+              # `release-action` workflows enforce.
+              - script: |
+                  set -euo pipefail
+                  # An unset pipeline variable arrives as the literal macro, so require a
+                  # 40-character hex commit rather than trusting the string.
+                  BASELINE="${RUNTIME_BASELINE_COMMIT:-}"
+                  case "$BASELINE" in
+                    [0-9a-f]*) [ "${#BASELINE}" -eq 40 ] || BASELINE='' ;;
+                    *) BASELINE='' ;;
+                  esac
+                  if [ "${PUBLISHING}" = "True" ] && [ "${IS_PRODUCTION_MANIFEST}" = "True" ]; then
+                    if [ -z "$BASELINE" ]; then
+                      echo "##vso[task.logissue type=error]A publishing run of the PRODUCTION manifest has no validated baseline commit; the release-validation receipt gate must run before the rebuilt runtime can be bound to it."
+                      exit 1
+                    fi
+                  else
+                    BASELINE="$(git rev-parse HEAD)"
+                  fi
+                  node scripts/lib/verify-built-runtime.mjs "$BASELINE"
+                displayName: Bind the rebuilt runtime to the validated commit (byte-identical shipping invariant)
+                env:
+                  RUNTIME_BASELINE_COMMIT: $(ReleaseValidatedCommit)
+                  PUBLISHING: ${{ parameters.publishExtension }}
+                  IS_PRODUCTION_MANIFEST: ${{ eq(parameters.extensionManifest, 'vss-extension.json') }}
+
+              - script: |
+                  set -euo pipefail
+                  # Stage the built task runtime into EVERY task folder so both
+                  # the production and dev extensions (which carry distinct task
+                  # GUIDs for side-by-side install) package a runnable bundle.
+                  for d in azure-pipelines-extension/tasks/*/ ; do
+                    cp -r dist/azure-pipelines-task/. "$d"
+                  done
+                displayName: Stage task runtime into every task folder
+
+              - script: |
+                  set -euo pipefail
+                  BUNDLE="azure-pipelines-extension/tasks/AzureChaosStudioScenarioV1/index.js"
+                  SENTINEL='__CHAOS_STUDIO_PLACEHOLDER_BUNDLE__'
+                  # Block publishing the fail-fast placeholder task bundle. The
+                  # placeholder carries a machine-detectable sentinel; a real built
+                  # bundle must not contain it. Static check + the DETERMINISTIC
+                  # smoke harness (isolated self-test mode, requires exit 0, kills
+                  # the whole process tree on timeout, and propagates crashes/
+                  # timeouts) — never suppressing failures with `|| true`.
+                  if [ ! -f "$BUNDLE" ]; then
+                    echo "##vso[task.logissue type=error]Task bundle '$BUNDLE' is missing; nothing to package."
+                    exit 1
+                  fi
+                  if grep -q "$SENTINEL" "$BUNDLE"; then
+                    echo "##vso[task.logissue type=error]Refusing to package the placeholder task bundle ('$BUNDLE'). Build the real bundle first."
+                    exit 1
+                  fi
+                  case "$(node --version)" in
+                    v24.*) : ;;
+                    *) echo "##vso[task.logissue type=error]Expected Node 24 for the preferred Node24 handler check, got $(node --version)."; exit 1 ;;
+                  esac
+                  for d in azure-pipelines-extension/tasks/*/ ; do
+                    node --check "${d}index.js"
+                  done
+                  node scripts/smoke-action-bundle.mjs "$BUNDLE"
+                  echo "Task bundle passed the placeholder guard and Node 24 deterministic smoke test."
+                displayName: Validate preferred Node24 task runtime
+
+              - task: NodeTool@0
+                displayName: Use Node 20 (Node20_1 Server fallback parity)
+                inputs:
+                  versionSpec: '20.x'
+
+              - script: |
+                  set -euo pipefail
+                  # Node24 is preferred, but Azure DevOps Server agents can select the
+                  # retained Node20_1 handler. Confirm the same bundle parses and runs
+                  # under that oldest supported runtime.
+                  node --version
+                  case "$(node --version)" in
+                    v20.*) : ;;
+                    *) echo "##vso[task.logissue type=error]Expected Node 20 for the Node20_1 fallback check, got $(node --version)."; exit 1 ;;
+                  esac
+                  for d in azure-pipelines-extension/tasks/*/ ; do
+                    node --check "${d}index.js"
+                  done
+                  node scripts/smoke-action-bundle.mjs "azure-pipelines-extension/tasks/AzureChaosStudioScenarioV1/index.js"
+                  echo "Task bundle parses and runs under Node 20 (Node20_1 Server fallback parity)."
+                displayName: Validate Node20_1 Server fallback runtime
+
+              - task: NodeTool@0
+                displayName: Restore Node 24 for packaging
+                inputs:
+                  versionSpec: '24.x'
+
+              - task: TfxInstaller@5
+                displayName: Install tfx-cli
+                inputs:
+                  version: builtin
+                  checkLatest: false
+
+              - task: PackageAzureDevOpsExtension@5
+                displayName: Package VSIX
+                inputs:
+                  rootFolder: '$(ExtensionRoot)'
+                  patternManifest: '${{ parameters.extensionManifest }}'
+                  extensionVersion: '$(Build.BuildNumber)'
+                  # Stamp each published release with a distinct, increasing task
+                  # version so agents never retain a cached older task
+                  # implementation under the same version. `minor` keeps the
+                  # permanent major from task.json (pinned by `Task@1`, VF15) and
+                  # advances minor+patch from the extension version.
+                  updateTasksVersion: true
+                  updateTasksVersionType: minor
+                  outputPath: '$(ob_outputDirectory)/ChaosStudioWorkspaces.vsix'
+
+              - script: |
+                  set -euo pipefail
+                  vsix='$(ob_outputDirectory)/ChaosStudioWorkspaces.vsix'
+                  test -f "$vsix"
+                  unzip -t "$vsix"
+                  size="$(stat -c%s "$vsix")"
+                  if [ "$size" -gt 52428800 ]; then
+                    echo "##vso[task.logissue type=error]VSIX is ${size} bytes; Marketplace packages must not exceed 50 MB."
+                    exit 1
+                  fi
+                  echo "Validated unsigned VSIX: ${size} bytes"
+                displayName: Validate VSIX structure and Marketplace size limit
+
+      # STAGE 2 — SIGN the VSIX inside a deployment job bound to the protected pipeline
+      # environment `ChaosStudio-ESRP-Signing-Prod`. Binding signing to a deployment job that
+      # TARGETS the environment is what makes the environment's Approvals-and-checks
+      # (Branch Control = refs/heads/main + pipeline-permissions; the human Approval gate is on
+      # the PUBLISH resource, not signing) an UNAVOIDABLE gate: Azure DevOps evaluates those
+      # checks BEFORE the deployment job runs, so a feature-branch run (or any non-official
+      # pipeline) can never reach the signing task.
+      # This closes the gap where the environment was named but never consumed. The stage
+      # also carries an in-YAML branch condition as defense in depth. The build stage
+      # produced an UNSIGNED VSIX (so feature-branch builds still validate); only this
+      # environment-gated stage grants the ADO extension signature. Verify the
+      # environment's live checks with scripts/verify-ado-signing-protections.sh (see
+      # CONTRIBUTING.md, "Azure Pipelines extension publish security").
+      - stage: sign
+        dependsOn: build
+        condition: and(succeeded(), eq(variables['Build.SourceBranch'], variables['PublishBranch']))
+        jobs:
+          - deployment: sign_vsix
+            # UNAVOIDABLE protected-resource binding: the deployment targets the signing
+            # environment, so ADO enforces that environment's Branch Control +
+            # pipeline-permission checks before any signing step runs (the human Approval gate
+            # is on the publish resource, not signing).
+            environment: ChaosStudio-ESRP-Signing-Prod
+            pool:
+              type: linux
+            variables:
+              ob_outputDirectory: '$(Build.SourcesDirectory)/out'
+            # Declare the build stage's packaged (unsigned) VSIX as a governed artifact input
+            # (checkout disabled — signing needs no repository source, only the artifact).
+            templateContext:
+              type: releaseJob
+              isProduction: true
+              inputs:
+                - input: pipelineArtifact
+                  artifactName: drop_build_package
+                  targetPath: $(ob_outputDirectory)
+            strategy:
+              runOnce:
+                deploy:
+                  steps:
+                    - script: |
+                        set -euo pipefail
+                        key_code='$(AdoExtensionSigningKeyCode)'
+                        if [[ ! "$key_code" =~ ^[A-Za-z0-9-]+$ ]]; then
+                          echo "##vso[task.logissue type=error]ADO-plugin-variable-group must define AdoExtensionSigningKeyCode with the onboarded ADO extension signing KeyCode."
+                          exit 1
+                        fi
+                      displayName: Require the onboarded ADO extension signing KeyCode
+
+                    - task: onebranch.pipeline.signing@1
+                      displayName: Sign the VSIX (ESRP via the governed OneBranch signing environment)
+                      # The `onebranch.pipeline.signing@1` task takes NO pipeline service
+                      # connection (ESRP is brokered by the governed OneBranch signing
+                      # environment). The authoritative external control is this deployment
+                      # job's binding to the `ChaosStudio-ESRP-Signing-Prod` protected environment
+                      # (ADO Approvals-and-checks: Branch Control = refs/heads/main
+                      # + pipeline permissions restricted to this pipeline; the human Approval
+                      # gate is on the publish resource, not signing), PLUS OneBranch
+                      # platform governance (Production/Official template + repo onboarding
+                      # gate the ADO-extension signing KeyCode to the official pipeline).
+                      inputs:
+                        command: sign
+                        # Supported ADO Marketplace operations. The KeyCode is
+                        # supplied by the protected variable group after
+                        # OneBranch/ESRP onboarding; it is not copied from another
+                        # product's authorization.
+                        inline_operation: |-
+                          [
+                            {
+                              "KeyCode": "$(AdoExtensionSigningKeyCode)",
+                              "OperationCode": "AdoExtensionSign",
+                              "ToolName": "sign",
+                              "ToolVersion": "1.0",
+                              "Parameters": {}
+                            },
+                            {
+                              "KeyCode": "$(AdoExtensionSigningKeyCode)",
+                              "OperationCode": "AdoExtensionVerify",
+                              "ToolName": "sign",
+                              "ToolVersion": "1.0",
+                              "Parameters": {}
+                            }
+                          ]
+                        files_to_sign: '**/*.vsix'
+                        search_root: '$(ob_outputDirectory)'
+
+                    - script: |
+                        set -euo pipefail
+                        mapfile -t vsixes < <(find "$(ob_outputDirectory)" -name '*.vsix' -type f)
+                        if [ "${#vsixes[@]}" -ne 1 ]; then
+                          echo "##vso[task.logissue type=error]Expected exactly one signed VSIX, found ${#vsixes[@]}."
+                          exit 1
+                        fi
+                        if ! unzip -l "${vsixes[0]}" | grep -q '\.psdsxs$'; then
+                          echo "##vso[task.logissue type=error]Signed VSIX contains no .psdsxs Marketplace signature."
+                          exit 1
+                        fi
+                        (cd "$(dirname "${vsixes[0]}")" && sha256sum "$(basename "${vsixes[0]}")" > "$(basename "${vsixes[0]}").sha256")
+                        echo "Signed VSIX contains a .psdsxs signature; handoff digest:"
+                        cat "${vsixes[0]}.sha256"
+                      displayName: Verify the ADO extension signature and record the signed digest
+
+      # STAGE 2 — publish the already-signed VSIX. This stage is ISOLATED from
+      # repository-code execution: it uses the OneBranch v2 `releaseJob` contract,
+      # which declares the SIGNED ARTIFACT as an explicit input, disables repository
+      # checkout, and runs no npm/build/test — it only consumes the signed drop and
+      # publishes it. It runs ONLY when publishExtension is set AND the run is from
+      # the trusted default branch. Defense in depth: the run also targets a
+      # PROTECTED ADO environment, AND — critically, because a feature-branch YAML
+      # could otherwise define its own job that consumes the Marketplace service
+      # connection and skips the environment — BRANCH CONTROL + APPROVALS MUST also
+      # be configured on the `ADO-Plugin Publishing` service connection itself
+      # (ADO → Service connections → Approvals and checks → Branch control limited to
+      # PublishBranch, plus required approvals). That binds the credential regardless
+      # of which pipeline/branch YAML references it. See CONTRIBUTING.md.
+      - stage: publish
+        dependsOn: sign
+        condition: >-
+          and(succeeded(),
+              eq('${{ parameters.publishExtension }}', true),
+              eq(variables['Build.SourceBranch'], variables['PublishBranch']))
+        jobs:
+          - job: publish_vsix
+            pool:
+              type: linux
+            variables:
+              ob_outputDirectory: '$(Build.SourcesDirectory)/out'
+            # OneBranch v2 release contract: declare the SIGNED VSIX produced by the sign
+            # stage's deployment job as a pipeline-artifact INPUT (governed download), mark
+            # the job as a production release, and let the template disable checkout.
+            templateContext:
+              type: releaseJob
+              isProduction: true
+              inputs:
+                - input: pipelineArtifact
+                  # OneBranch publishes each job's ob_outputDirectory as `drop_<stage>_<job>`;
+                  # the signed VSIX comes from the environment-gated sign/sign_vsix deployment.
+                  artifactName: drop_sign_sign_vsix
+                  targetPath: $(Pipeline.Workspace)/signed
+            steps:
+              # Explicitly disable repository checkout: no repo code on disk in the
+              # secret-bearing publish stage (belt-and-suspenders with releaseJob).
+              - checkout: none
+
+              - script: |
+                  set -euo pipefail
+                  # Bind exactly one signed VSIX to publish; fail closed on zero or
+                  # multiple matches so an ambiguous artifact set can never publish
+                  # the wrong file.
+                  mapfile -t vsixes < <(find "$(Pipeline.Workspace)/signed" -name '*.vsix' -type f)
+                  if [ "${#vsixes[@]}" -ne 1 ]; then
+                    echo "##vso[task.logissue type=error]Expected exactly one signed VSIX, found ${#vsixes[@]}."
+                    printf '%s\n' "${vsixes[@]}"
+                    exit 1
+                  fi
+                  echo "##vso[task.setvariable variable=SignedVsix]${vsixes[0]}"
+                  echo "Publishing signed VSIX: ${vsixes[0]}"
+                displayName: Resolve the single signed VSIX
+
+              - script: |
+                  set -euo pipefail
+                  test -f "$(SignedVsix).sha256"
+                  (cd "$(dirname "$(SignedVsix)")" && sha256sum -c "$(basename "$(SignedVsix)").sha256")
+                  if ! unzip -l "$(SignedVsix)" | grep -q '\.psdsxs$'; then
+                    echo "##vso[task.logissue type=error]Consumed VSIX contains no .psdsxs Marketplace signature."
+                    exit 1
+                  fi
+                displayName: Verify the signed VSIX handoff
+
+              - task: TfxInstaller@5
+                displayName: Install tfx-cli
+                inputs:
+                  version: builtin
+                  checkLatest: false
+
+              - script: |
+                  set -euo pipefail
+                  if [[ '${{ parameters.extensionManifest }}' == 'vss-extension.dev.json' ]]; then
+                    share_with='$(AdoExtensionShareWith)'
+                    if [[ ! "$share_with" =~ ^[A-Za-z0-9._-]+(,[A-Za-z0-9._-]+)*$ ]]; then
+                      echo "##vso[task.logissue type=error]Publishing the private Dev extension requires AdoExtensionShareWith in ADO-plugin-variable-group."
+                      exit 1
+                    fi
+                  fi
+                displayName: Require sanctioned private-preview sharing
+
+              - task: PublishAzureDevOpsExtension@5
+                name: publish_vsix
+                displayName: Publish VSIX to Visual Studio Marketplace
+                inputs:
+                  connectTo: 'AzureRM'
+                  # Hardcoded (NOT variable-bound) so Azure DevOps can statically
+                  # discover the service connection and enforce its Approvals and
+                  # checks (branch control + approvals) at queue time. A `$(var)`
+                  # reference is resolved too late for that discovery.
+                  connectedServiceNameAzureRM: 'ADO-Plugin Publishing'
+                  fileType: 'vsix'
+                  vsixFile: '$(SignedVsix)'
+                  updateTasksVersion: false
+                  ${{ if eq(parameters.extensionManifest, 'vss-extension.dev.json') }}:
+                    shareWith: '$(AdoExtensionShareWith)'
+                  noWaitValidation: true
+
+              - task: IsAzureDevOpsExtensionValid@5
+                displayName: Wait for Marketplace validation
+                inputs:
+                  connectTo: 'AzureRM'
+                  connectedServiceNameAzureRM: 'ADO-Plugin Publishing'
+                  method: 'vsix'
+                  vsixFile: '$(publish_vsix.Extension.OutputPath)'

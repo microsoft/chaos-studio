@@ -1,0 +1,420 @@
+# Azure Chaos Studio CI/CD integrations
+
+Validate and run an Azure Chaos Studio **v2 scenario configuration** from CI/CD —
+one step on either platform, with workload identity (no long-lived secret) — using
+a shared TypeScript core so both platforms behave identically (same inputs, same
+canonical outputs, same pass/fail rule).
+
+- **GitHub Action:** root [`action.yml`](../action.yml) (`microsoft/chaos-studio`),
+  `node24` runtime.
+- **Azure Pipelines task:** `AzureChaosStudioScenario@1`, shipped by the
+  **Azure Chaos Studio Workspaces** extension, preferred `Node24` runtime with
+  a `Node20_1` fallback for compatible Azure DevOps Server agents.
+
+> **Maintainers:** release, release-validation, rollback/deprecation, and
+> contract-drift procedures live in [`docs/runbooks/`](runbooks/README.md).
+
+## Select the integration by execution platform
+
+Select the adapter for the platform that **executes** the workflow, not the
+service that hosts the source repository:
+
+| Execution platform | Integration to author |
+|---|---|
+| Native GitHub Actions, including a `gh-aw` workflow that executes on GitHub | `uses: microsoft/chaos-studio@v1` |
+| Azure Pipelines, including governed CI over GitHub-hosted source, Proxima-backed CI, or an `ado-aw` workflow | `task: AzureChaosStudioScenario@1` |
+
+The Action tag and production Azure DevOps task are provided by this repository,
+but they are not publicly consumable until the corresponding release and
+Marketplace publication gates complete. Until then, use the bounded local
+inspection and preview validation procedures linked from the repository README
+and release-validation runbook.
+
+`ado-aw` ports agentic-workflow authoring to native Azure Pipelines. It does
+**not** execute arbitrary GitHub Actions or convert an Action into an Azure
+Pipelines task. A compiler may preserve a raw `uses:` mapping as YAML text, but
+that text is not runnable Azure Pipelines syntax. Select the native
+`AzureChaosStudioScenario@1` task instead.
+
+Source hosting is independent of this choice. A repository can remain on GitHub
+while Azure Pipelines or Proxima provides governed execution; moving source to
+Azure Repos is not a prerequisite for using the Azure task.
+
+### Migrate an existing GitHub Action step to Azure Pipelines
+
+Both adapters call the same TypeScript core, so the three modes, polling,
+cancellation, failure rules, and output values retain behavioral parity. Map
+the nine shared inputs as follows:
+
+| GitHub Action input | Azure Pipelines task input |
+|---|---|
+| `subscription-id` | `subscriptionId` |
+| `resource-group` | `resourceGroup` |
+| `workspace-name` | `workspaceName` |
+| `scenario-name` | `scenarioName` |
+| `scenario-configuration-name` | `scenarioConfigurationName` |
+| `mode` | `mode` |
+| `wait-for-completion` | `waitForCompletion` |
+| `completion-timeout-seconds` | `completionTimeoutSeconds` |
+| `cancel-on-timeout-or-cancellation` | `cancelOnTimeoutOrCancellation` |
+
+Authentication changes at the host boundary: replace the GitHub
+`azure/login` OIDC step with an Azure Resource Manager service connection
+configured for workload identity federation, and pass its name as the task's
+additional `azureSubscription` input. The target `subscriptionId` remains a
+shared product input; it is not the service-connection name.
+
+Give the GitHub step `id: chaos` or the Azure task `name: chaos`. For example,
+map a same-job output from
+`${{ steps.chaos.outputs['validation-state'] }}` to
+`$(chaos.validation-state)` in Azure Pipelines. Guard optional Azure output
+variables as described in the output presence matrix below, and use
+`dependencies` or `stageDependencies` when consuming them across jobs or
+stages.
+
+## Modes
+
+Both platforms share one `mode` input:
+
+| Mode | What it does | Waits? |
+|---|---|---|
+| `validate-and-execute` (default) | Validate the configuration, then run it only if validation succeeds. | yes (unless `wait-for-completion:false`) |
+| `validate-only` | Pre-flight / PR gate. Passes iff validation reaches `Succeeded`; never starts a run. | — |
+| `execute-only` | Run a configuration a prior stage already validated. | yes (unless no-wait) |
+
+## Input omission, empty values, and timeout validation
+
+Platform metadata supplies the documented defaults when optional inputs are
+genuinely omitted. Values provided by expressions can resolve empty, which is
+not always equivalent:
+
+| Input | Omitted | Explicitly empty | Other invalid values |
+|---|---|---|---|
+| `mode` | Platform metadata supplies `validate-and-execute`. | Fails closed before any ARM call; an empty expression must never start chaos by silently selecting the default. | Anything outside the three documented modes fails before ARM calls. |
+| `wait-for-completion` / `cancel-on-timeout-or-cancellation` | Uses the documented boolean default. | Treated as absent and uses the default. | Only case-insensitive `true` or `false` is accepted; other text fails before ARM calls. |
+| `completion-timeout-seconds` | Uses `2700`. | Treated as absent and uses `2700`. | After surrounding whitespace is trimmed, the value must be a positive, base-10, JavaScript-safe whole number (`1` through `9007199254740991`). Zero, negatives, fractions, partial numbers such as `5m`, and larger values fail before ARM calls. |
+
+## Output presence matrix
+
+Outputs are emitted only when a non-empty value was actually observed. An
+absent GitHub Action output normally evaluates to an empty string; an absent
+Azure Pipelines output variable is not set. Azure Pipelines macro syntax does
+**not** coalesce a missing variable to empty: an unresolved
+`$(chaos.run-state)` remains the literal text `$(chaos.run-state)`. Do not use
+macro expansion to test presence and do not use emptiness alone to infer
+success—always rely on the step/task result.
+
+| Execution point | `validation-state` | `run-id` / `run-resource-id` | `run-state` / `started-at` | `completed-at` | correlation/request IDs |
+|---|---|---|---|---|---|
+| Input/auth failure before an ARM response | absent | absent | absent | absent | absent |
+| `validate-only` after a terminal validation response | present | absent | absent | absent | present when returned by ARM |
+| Validation failure in `validate-and-execute` | present | absent | absent | absent | present when returned by ARM |
+| Execute accepted, waiting enabled | absent for `execute-only`; present for `validate-and-execute` | present | present after a run status is observed | present only when a terminal run response with `endTime` is normally observed | present when returned by ARM |
+| Execute accepted, waiting disabled | absent for `execute-only`; present for `validate-and-execute` | present | best effort from one non-fatal status GET; may be absent | absent | present when returned by the last relevant ARM response |
+| Timeout/cancellation after execute acceptance | mode-dependent as above | present | last observed or cleanup state when available | absent unless the forward wait had already observed a terminal response | IDs from the original forward failure when available; cleanup never replaces them |
+
+For an optional Azure Pipelines output, guard the consumer with a runtime
+condition before using the convenient macro form:
+
+```yaml
+- script: |
+    echo "Last observed state: $RUN_STATE"
+  displayName: Show the optional run state
+  condition: and(succeeded(), ne(variables['chaos.run-state'], ''))
+  env:
+    RUN_STATE: $(chaos.run-state)
+```
+
+Within the same job, `variables['chaos.run-state']` evaluates missing as null/empty
+for the condition, while the macro is expanded only for the step that is allowed
+to run. Across jobs or stages, first map the named task output with a `$[...]`
+runtime expression from `dependencies`/`stageDependencies`, then test the mapped
+variable the same way.
+
+## Examples
+
+Minimal, per-mode examples live next to this doc:
+
+- **GitHub Action:** [`examples/github/`](../examples/github/) — one workflow per
+  mode, plus a no-wait example. SHA-pinned `azure/login`.
+- **Azure Pipelines:** [`examples/azure-pipelines/`](../examples/azure-pipelines/)
+  — one pipeline per mode, plus a **deployment-gate** example that runs the
+  scenario inside a `deployment` job bound to an environment (environment
+  approvals gate the run; a failed run blocks promotion).
+
+## ⚠️ No-wait warning
+
+With `wait-for-completion: false` (`waitForCompletion: false` on Azure Pipelines)
+the step/task **succeeds as soon as the run is started** — it does not judge the
+run outcome and emits only the run identity plus the last-observed state. After the
+step exits, the integration **cannot cancel the run**
+(`cancel-on-timeout-or-cancellation` applies only while waiting), so a cancelled
+job leaves the chaos run going. Cancel it manually by run id:
+
+```bash
+az rest --method post \
+  --url "https://management.azure.com<run-resource-id>/cancel?api-version=2026-05-01-preview"
+```
+
+Prefer waiting unless you deliberately want fire-and-forget.
+
+## Job timeout budget: reserve time for cleanup beyond `completion-timeout-seconds`
+
+`completion-timeout-seconds` (default `2700`) is an **end-to-end deadline shared
+across configuration validation, execute-request acceptance, and run-completion
+polling** — it is not scoped only to waiting for the run to finish. On a
+completion timeout, best-effort cleanup runs `cancel` and polls for the run to
+reach `Canceled` — and that cleanup has its **own fixed budget of 300 seconds**,
+separate from and **in addition to** `completion-timeout-seconds`.
+
+**These two mechanisms are different, and increasing the job timeout affects only
+one of them:**
+
+- **Completion-timeout cleanup** (the 300-second budget above) is an INTERNAL
+  behavior of this integration's own process: it only matters when the run does
+  not finish within `completion-timeout-seconds` *while the step/task is still
+  running normally* (not cancelled). Raising the job/step timeout gives this
+  internal cleanup the wall-clock room it needs to run to completion, because the
+  platform is not otherwise trying to end the job.
+- **Platform cancellation** (an operator or workflow cancels the running job/step)
+  is a SEPARATE, platform-enforced grace period that the job's configured
+  `timeout-minutes`/`timeoutInMinutes` **does not extend or grant**. Once a job is
+  cancelled, GitHub Actions sends `SIGINT` to the step's process, then `SIGTERM`
+  after **7.5 seconds** if the process has not exited, then force-terminates the
+  process tree after a further **2.5 seconds** (10 seconds total) — see
+  [GitHub Actions: Canceling a workflow](https://docs.github.com/actions/how-tos/manage-workflow-runs/cancel-a-workflow-run).
+  Azure Pipelines has a separate
+  [`cancelTimeoutInMinutes`](https://learn.microsoft.com/azure/devops/pipelines/process/phases#timeouts)
+  setting whose default is 5 minutes, but that budget governs tasks explicitly
+  configured to keep running after cancellation (for example, always-run cleanup).
+  It does **not** promise that the already-running Node task receives a fresh,
+  uninterrupted 300 seconds after its cancellation signal, and it is distinct
+  from both `timeoutInMinutes` and this client's internal cleanup deadline.
+  Therefore a manually cancelled job cannot treat the numerical 5-minute default
+  as proof that this integration's 300-second cancel-and-poll sequence completed.
+
+Treat platform cancellation of the CI job as **best-effort** for the chaos run's
+own cleanup, not a guarantee:
+
+- The integration's `SIGINT`/`SIGTERM` handler (see `jobCancellationSignal` in each
+  adapter's `index.ts`) starts best-effort cancellation immediately on the first
+  signal. On GitHub, it must finish before the documented ~10-second process-tree
+  termination. On Azure Pipelines, the active task's remaining lifetime depends on
+  the agent's cancellation lifecycle and task/job configuration; the separate
+  5-minute always-run cleanup default is not a guarantee for this process. On either
+  platform, service response time is not bounded by this integration.
+- **Confirm whether a genuinely in-flight run survived a cancelled CI job** by
+  checking the run's status directly, rather than assuming the platform's grace
+  period was sufficient:
+
+  ```bash
+  az rest --method get \
+    --url "https://management.azure.com<run-resource-id>?api-version=2026-05-01-preview"
+  ```
+
+- If the run is still not in a terminal state, **cancel it manually**:
+
+  ```bash
+  az rest --method post \
+    --url "https://management.azure.com<run-resource-id>/cancel?api-version=2026-05-01-preview"
+  ```
+
+The job timeout budget described below (`completion-timeout-seconds + 300`)
+protects the case where the run legitimately takes longer than expected and the
+integration's OWN completion-timeout cleanup needs to run — it does **not** change
+what happens when an operator cancels the CI job directly.
+
+The job/step timeout you configure on the platform must therefore be at least
+`completion-timeout-seconds + 300` seconds (plus normal job overhead: checkout,
+setup, etc.) — otherwise the platform kills the job mid-cleanup on a completion
+timeout, before the run is actually cancelled, and the chaos run is left going
+exactly as in the no-wait case above.
+
+Platforms can only cancel a running job/step, not extend its own timeout, so
+this reservation must be set explicitly:
+
+- **GitHub Actions:** set the JOB's `timeout-minutes` to comfortably exceed
+  `completion-timeout-seconds + 300` (converted to minutes), e.g. for the
+  default 2700s completion timeout, a job timeout of at least 55 minutes:
+
+  ```yaml
+  jobs:
+    run-scenario:
+      timeout-minutes: 55 # completion-timeout-seconds (2700s=45m) + 300s cleanup + overhead
+  ```
+
+- **Azure Pipelines:** set the JOB's `timeoutInMinutes` the same way:
+
+  ```yaml
+  jobs:
+    - job: RunScenario
+      timeoutInMinutes: 55 # completionTimeoutSeconds (2700s=45m) + 300s cleanup + overhead
+  ```
+
+If you lower `completion-timeout-seconds`/`completionTimeoutSeconds`, lower the
+job timeout proportionally but always keep the 300-second cleanup margin. A job
+timeout set at or below `completion-timeout-seconds` will routinely kill the job
+before cleanup can run — but, per above, this margin only helps the completion-timeout
+path; a manually cancelled job is bounded by the platform's cancellation lifecycle
+regardless of this setting. On GitHub that lifecycle is
+the documented ~10-second process-termination sequence. On Azure Pipelines it is
+the agent/task cancellation behavior described above; the separate 5-minute
+`cancelTimeoutInMinutes` default is not a guaranteed grace period for this
+already-running Node task.
+
+## Least privilege — the runner role
+
+The integration invokes exactly **five** `Microsoft.Chaos` control-plane
+operations and nothing else:
+
+| Operation | Used for |
+|---|---|
+| `.../scenarios/configurations/validate/action` | start validation |
+| `.../scenarios/configurations/validations/read` | poll validation state |
+| `.../scenarios/configurations/execute/action` | start a run |
+| `.../scenarios/runs/read` | poll run state |
+| `.../scenarios/runs/cancel/action` | cancel on timeout/cancellation |
+
+A **least-privilege custom role template requiring customization** that grants precisely these
+operations — no workspace/scenario/configuration write or delete, no data
+actions — is committed at
+[`security/chaos-studio-runner.role-template.json`](../security/chaos-studio-runner.role-template.json).
+Its `actions` are drawn only from the generated provider-operation snapshot; the
+release-validation suite (`test/release-validation/`) fails closed if the role ever
+grants an operation outside that set or omits a required one.
+
+Before creating the role, customize a local copy. The committed template's
+`AssignableScopes` contains the all-zero subscription placeholder
+`00000000-0000-0000-0000-000000000000`; Azure cannot use it for your subscription.
+
+1. Copy the linked template to a local file named `chaos-studio-runner.role.json`
+   in your current directory, leaving the committed template unchanged.
+2. Replace its `AssignableScopes` array with your actual subscription scope
+   (`/subscriptions/<sub>`) or, preferably, the workspace's resource-group scope
+   shown below. Replace `<sub>` with your subscription ID and `<rg>` with your
+   resource-group name; keep the role's permission fields unchanged.
+
+```json
+{
+  "AssignableScopes": [
+    "/subscriptions/<sub>/resourceGroups/<rg>"
+  ]
+}
+```
+
+The snippet shows only the field to replace, not the complete role definition.
+The assignment scope must be within `AssignableScopes`; the assignment scope does not override
+the role definition's `AssignableScopes`.
+
+Create the role from the customized local file, then assign it at the **target
+workspace resource scope**, not the subscription or resource group. Substitute
+the runner identity's object ID, the same subscription/resource-group values, and
+the target workspace name below. The parent `AssignableScopes` makes the role
+available for assignment; it does not require granting access to other workspaces:
+
+```bash
+az role definition create --role-definition chaos-studio-runner.role.json
+az role assignment create \
+  --assignee-object-id "<runner-identity-object-id>" \
+  --assignee-principal-type ServicePrincipal \
+  --role "Chaos Studio Scenario Runner" \
+  --scope "/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Chaos/workspaces/<workspace>"
+```
+
+## Two-identity guidance
+
+Chaos Studio uses two distinct principals: the CI sign-in identity triggers runs
+on the workspace; the workspace managed identity performs actions on target
+resources. Keep both separate from the identity that **deploys** your application:
+
+- **Sign-in identity (CI):** a workload-identity-federated app/managed identity —
+  `azure/login` on GitHub, or an ARM service connection on Azure Pipelines. No
+  client secret is stored on either platform (OIDC federation only).
+- **Runner role:** grant that identity **only** the `Chaos Studio Scenario Runner`
+  role above, on **only** the target workspace resource using the assignment scope
+  shown above. The CI identity should not hold Contributor or your deployment
+  identity's permissions.
+- **Workspace managed identity:** grant only the action-specific permissions it
+  needs on the **target resources**, based on validation's missing-permission
+  diagnostics. These permissions are separate from the runner role; chaos actions
+  deliberately affect those resources. Review and grant them outside CI/CD; the
+  integration never auto-grants permissions.
+
+The `subscription-id`, `resource-group`, `workspace-name`, `scenario-name`, and
+`scenario-configuration-name` inputs are **identifiers, not secrets**.
+
+## Trusted trigger requirements
+
+Workload identity federation and least privilege (above) establish **what**
+the CI sign-in identity can do once authorized; they say nothing about
+**who** is allowed to trigger the pipeline/workflow that requests it. A
+chaos-capable identity handed to an untrusted or unreviewed trigger is a
+privilege-escalation path regardless of how narrowly its role is scoped.
+Before wiring either platform's example into a real pipeline:
+
+- Restrict the trigger to **trusted branches/environments** — e.g.
+  `push`/`workflow_dispatch` on protected branches, or `trigger`/`pr` scoped to
+  `main`/`release/*` on Azure Pipelines. Do not trigger a chaos-capable job from
+  a fork pull request, and do not use `pull_request_target`/`workflow_run` (or
+  an Azure Pipelines fork-secrets opt-in) to hand a fork's unreviewed code the
+  federated credential exchange.
+- Require **human approval** before the chaos-capable step runs when the
+  trigger could carry unreviewed code — a GitHub `environment` with required
+  reviewers, or an Azure Pipelines `environment`/check with approvals — so a
+  person, not just a role assignment, gates execution.
+- Never grant the chaos-capable identity (or the `id-token: write` permission /
+  service-connection access that obtains it) to a job that also executes
+  unreviewed, externally-contributed code paths — workflow files, composite
+  actions, scripts, or templates from a fork or an unprotected shared source.
+  Least privilege on the target workspace does not protect against unreviewed
+  code running *as* the trusted identity in the first place.
+
+See [`examples/github/README.md`](../examples/github/README.md#trusted-trigger-requirements)
+and [`examples/azure-pipelines/README.md`](../examples/azure-pipelines/README.md#trusted-trigger-requirements)
+for platform-specific mechanics.
+
+## Concurrency guidance
+
+A scenario configuration has one active run at a time, and it also has exactly
+one `validations/latest` resource. ARM does not version or lock that resource:
+each `validate` call **overwrites** `validations/latest`, including its
+`executionPlanJson`, with no eTag/If-Match/idempotency key to detect the
+overwrite. This is a hazard in **both** `execute-only` mode (running a plan a
+prior stage validated) and `validate-and-execute` mode: another pipeline, a
+manual `az rest` call, or a retry that calls `validate` on the same
+configuration **while your own validate-and-execute call is polling for the
+run to finish** can silently replace `validations/latest` before your call's
+own execute request reads it — running back-to-back in the same step does
+**not** make the pair atomic, because polling is a separate, unlocked request
+against a resource any other caller can overwrite in between. Concurrency
+guidance below therefore isn't only about avoiding two overlapping *runs* of
+the same configuration; it's about avoiding an intervening *validate* call
+that supersedes the plan an in-flight or already-completed validation stage is
+relying on — for every mode, including combined `validate-and-execute` jobs.
+The integration does not implement client-side locking around
+`validations/latest`; every caller that targets the same configuration must
+adopt the coordinated concurrency controls below.
+
+To avoid overlapping runs of the same configuration, and to prevent a stray
+`validate` call from replacing the plan between validate and execute stages
+(or during a `validate-and-execute` call's own polling window):
+
+- **GitHub Actions:** put the job in a
+  [`concurrency`](https://docs.github.com/actions/using-jobs/using-concurrency)
+  group keyed by the configuration, and do **not** cancel in progress (let the
+  running experiment finish):
+
+  ```yaml
+  concurrency:
+    group: chaos-${{ inputs.workspace-name }}-${{ inputs.scenario-configuration-name }}
+    cancel-in-progress: false
+  ```
+
+- **Azure Pipelines:** gate the stage/job with a
+  [`lockBehavior`](https://learn.microsoft.com/azure/devops/pipelines/process/runtime-parameters)
+  exclusive-lock environment, or a single-agent demand, so only one run of a given
+  configuration is in flight.
+
+Cancelling the job cancels the run only while the step is **waiting**
+(`cancel-on-timeout-or-cancellation: true`); a no-wait run keeps going (see the
+no-wait warning above).

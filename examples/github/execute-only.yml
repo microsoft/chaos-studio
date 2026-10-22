@@ -1,0 +1,51 @@
+# Example: execute a Chaos Studio scenario configuration WITHOUT starting a new
+# validation (execute-only). Use this when a prior stage already validated the
+# configuration. The step waits for a terminal run state and reports the outcome.
+#
+# Authenticates with workload identity federation (WIF) via azure/login — NO
+# long-lived secret (NFR3). Third-party actions are pinned to a full commit SHA.
+#
+# TEMPLATE — not yet copy-paste runnable: the all-zero microsoft/chaos-studio
+# SHA below is a non-resolving sentinel. Replace it with a published preview
+# release's full commit SHA before running. See ./README.md.
+name: Chaos Studio — execute only
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  execute:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Azure login (workload identity)
+        uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Execute the scenario
+        id: chaos
+        uses: microsoft/chaos-studio@0000000000000000000000000000000000000000 # v1 — non-resolving template sentinel; replace after preview publication
+        with:
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          resource-group: rg-chaos
+          workspace-name: ws-demo
+          scenario-name: scn-demo
+          scenario-configuration-name: cfg-demo
+          mode: execute-only
+          wait-for-completion: 'true'
+
+      - name: Show the run outputs
+        env:
+          RUN_ID: ${{ steps.chaos.outputs.run-id }}
+          RUN_STATE: ${{ steps.chaos.outputs.run-state }}
+          RUN_RESOURCE_ID: ${{ steps.chaos.outputs.run-resource-id }}
+        run: |
+          echo "run id:       $RUN_ID"
+          echo "run state:    $RUN_STATE"
+          echo "run resource: $RUN_RESOURCE_ID"

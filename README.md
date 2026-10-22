@@ -12,9 +12,48 @@ your system responds.
 
 | Component | Path | What it is |
 |---|---|---|
+| **GitHub Action + Azure Pipelines task** | [`action.yml`](action.yml) · [`packages/`](packages/) · [`azure-pipelines-extension/`](azure-pipelines-extension/) | Validate and run a Chaos Studio v2 scenario configuration from CI/CD with workload identity — one step instead of a page of raw ARM calls. A shared TypeScript core drives both platforms. _(In active development — preview.)_ |
 | **Copilot CLI plugin + MCP server** | [`copilot-cli-plugin/`](copilot-cli-plugin/) | Create workspaces, configure scenarios, run experiments, and analyze impact — from a conversation or an autonomous agent. Includes the **chaos-study** skills, which make chaos accessible to your SRE, your engineers, and your agent: guided, conversational help for planning and running targeted experiments without hand-authoring them. Recommended host: Azure SRE Agent; other skill-capable agents (GitHub Copilot CLI, Claude Code, Codex, …) can also load them. |
 | **Scenarios** | [`scenarios/`](scenarios/) | Shareable custom Scenario definitions (Bicep/JSON) beyond the built-in templates. |
 | **Samples** | [`samples/`](samples/) | Sample apps and infrastructure you can deploy and break to practice. |
+
+## GitHub Action preview status
+
+> The runnable Action bundle is committed in this repository, but the public
+> `microsoft/chaos-studio@v1` ref does **not exist yet**. The workflow below is
+> the planned quickstart after the first preview release; it will return
+> "reference not found" if copied before that release. Until a release appears
+> on the repository's Releases page, use the
+> [local build and package inspection](CONTRIBUTING.md#local-build-and-package-inspection)
+> procedure rather than guessing a branch SHA. Local inspection does not replace
+> a hosted GitHub Actions or Azure Pipelines run.
+
+```yaml
+# Planned usage after the first public preview publishes v1.
+permissions:
+  id-token: write   # required for OIDC sign-in
+  contents: read
+steps:
+  - uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
+    with:
+      client-id: ${{ secrets.AZURE_CLIENT_ID }}
+      tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+      subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  - uses: microsoft/chaos-studio@v1
+    with:
+      subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      resource-group: my-rg
+      workspace-name: my-workspace
+      scenario-name: my-scenario
+      scenario-configuration-name: my-config
+      mode: validate-and-execute
+```
+
+**Learn more:** [CI/CD integrations guide](docs/ci-cd-integrations.md) — modes,
+per-platform examples ([GitHub](examples/github/) · [Azure Pipelines](examples/azure-pipelines/)),
+the deployment-gate and no-wait patterns, the least-privilege
+[runner role](security/chaos-studio-runner.role-template.json), two-identity and
+concurrency guidance.
 
 ## New to Chaos Studio?
 
