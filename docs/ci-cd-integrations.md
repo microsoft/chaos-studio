@@ -14,6 +14,64 @@ canonical outputs, same pass/fail rule).
 > **Maintainers:** release, release-validation, rollback/deprecation, and
 > contract-drift procedures live in [`docs/runbooks/`](runbooks/README.md).
 
+## Select the integration by execution platform
+
+Select the adapter for the platform that **executes** the workflow, not the
+service that hosts the source repository:
+
+| Execution platform | Integration to author |
+|---|---|
+| Native GitHub Actions, including a `gh-aw` workflow that executes on GitHub | `uses: microsoft/chaos-studio@v1` |
+| Azure Pipelines, including governed CI over GitHub-hosted source, Proxima-backed CI, or an `ado-aw` workflow | `task: AzureChaosStudioScenario@1` |
+
+The Action tag and production Azure DevOps task are provided by this repository,
+but they are not publicly consumable until the corresponding release and
+Marketplace publication gates complete. Until then, use the bounded local
+inspection and preview validation procedures linked from the repository README
+and release-validation runbook.
+
+`ado-aw` ports agentic-workflow authoring to native Azure Pipelines. It does
+**not** execute arbitrary GitHub Actions or convert an Action into an Azure
+Pipelines task. A compiler may preserve a raw `uses:` mapping as YAML text, but
+that text is not runnable Azure Pipelines syntax. Select the native
+`AzureChaosStudioScenario@1` task instead.
+
+Source hosting is independent of this choice. A repository can remain on GitHub
+while Azure Pipelines or Proxima provides governed execution; moving source to
+Azure Repos is not a prerequisite for using the Azure task.
+
+### Migrate an existing GitHub Action step to Azure Pipelines
+
+Both adapters call the same TypeScript core, so the three modes, polling,
+cancellation, failure rules, and output values retain behavioral parity. Map
+the nine shared inputs as follows:
+
+| GitHub Action input | Azure Pipelines task input |
+|---|---|
+| `subscription-id` | `subscriptionId` |
+| `resource-group` | `resourceGroup` |
+| `workspace-name` | `workspaceName` |
+| `scenario-name` | `scenarioName` |
+| `scenario-configuration-name` | `scenarioConfigurationName` |
+| `mode` | `mode` |
+| `wait-for-completion` | `waitForCompletion` |
+| `completion-timeout-seconds` | `completionTimeoutSeconds` |
+| `cancel-on-timeout-or-cancellation` | `cancelOnTimeoutOrCancellation` |
+
+Authentication changes at the host boundary: replace the GitHub
+`azure/login` OIDC step with an Azure Resource Manager service connection
+configured for workload identity federation, and pass its name as the task's
+additional `azureSubscription` input. The target `subscriptionId` remains a
+shared product input; it is not the service-connection name.
+
+Give the GitHub step `id: chaos` or the Azure task `name: chaos`. For example,
+map a same-job output from
+`${{ steps.chaos.outputs['validation-state'] }}` to
+`$(chaos.validation-state)` in Azure Pipelines. Guard optional Azure output
+variables as described in the output presence matrix below, and use
+`dependencies` or `stageDependencies` when consuming them across jobs or
+stages.
+
 ## Modes
 
 Both platforms share one `mode` input:

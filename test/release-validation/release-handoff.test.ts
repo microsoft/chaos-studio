@@ -966,6 +966,40 @@ test('the public integration guide documents output presence, strict inputs, and
   );
 });
 
+test('the public integration guide selects native adapters for GitHub and Azure agentic workflows', () => {
+  const guide = readText('docs/ci-cd-integrations.md');
+  const selection = guide.slice(
+    guide.indexOf('## Select the integration by execution platform'),
+    guide.indexOf('## Modes'),
+  );
+  assert.match(selection, /Native GitHub Actions[\s\S]*`gh-aw`[\s\S]*microsoft\/chaos-studio@v1/);
+  assert.match(selection, /Azure Pipelines[\s\S]*Proxima-backed CI[\s\S]*`ado-aw`[\s\S]*AzureChaosStudioScenario@1/);
+  assert.match(selection, /does\s+\*\*not\*\* execute arbitrary GitHub Actions or convert an Action/i);
+  assert.match(selection, /preserve a raw `uses:` mapping[\s\S]*not runnable Azure Pipelines syntax/i);
+  assert.match(selection, /repository can remain on GitHub[\s\S]*moving source\s+to\s+Azure Repos is not a prerequisite/i);
+  assert.match(selection, /not publicly consumable until[\s\S]*release[\s\S]*Marketplace publication gates/i);
+
+  for (const [github, azure] of [
+    ['subscription-id', 'subscriptionId'],
+    ['resource-group', 'resourceGroup'],
+    ['workspace-name', 'workspaceName'],
+    ['scenario-name', 'scenarioName'],
+    ['scenario-configuration-name', 'scenarioConfigurationName'],
+    ['mode', 'mode'],
+    ['wait-for-completion', 'waitForCompletion'],
+    ['completion-timeout-seconds', 'completionTimeoutSeconds'],
+    ['cancel-on-timeout-or-cancellation', 'cancelOnTimeoutOrCancellation'],
+  ]) {
+    assert.ok(
+      selection.includes(`| \`${github}\` | \`${azure}\` |`),
+      `the migration table maps ${github} to ${azure}`,
+    );
+  }
+  assert.match(selection, /replace the GitHub[\s\S]*`azure\/login` OIDC step[\s\S]*Azure Resource Manager service connection[\s\S]*workload identity federation/i);
+  assert.match(selection, /\$\{\{ steps\.chaos\.outputs\['validation-state'\] \}\}[\s\S]*\$\(chaos\.validation-state\)/);
+  assert.doesNotMatch(selection, /msft\.ghe\.com|microsoft\.ghe\.com|StartRight|access package/i);
+});
+
 test('the root preview fallback links a bounded local build and package inspection procedure', () => {
   const root = readText('README.md');
   assert.match(root, /CONTRIBUTING\.md#local-build-and-package-inspection/);
