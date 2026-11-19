@@ -78,6 +78,7 @@ session for auth.
 |---|---|
 | `start-chaos` | Orchestrator — auth → workspace → scenario → run |
 | `create-workspace` | Provision workspace + identity + RBAC |
+| [`install-litmus-extension`](skills/install-litmus-extension/SKILL.md) | Install the LitmusChaos-based Chaos Studio AKS extension with explicit approval; verify provisioning, readiness, RBAC and Workspace connection without running faults |
 | `setup-scenario` | Discover, configure, validate scenarios |
 | `run-scenario` | Execute and stream experiment results |
 | `chaos-impact` | Analyze run impact — correlate Azure Monitor signals to targeted resources |
@@ -227,7 +228,11 @@ See [`docs/impact-synthesis-skill.md`](docs/impact-synthesis-skill.md) for a ful
 
 ## API Version
 
-All ARM calls target **`2026-05-01-preview`** (`Microsoft.Chaos` namespace).
+Workspace/scenario scripts target **`2026-05-01-preview`** (`Microsoft.Chaos`
+namespace). The standalone `install-litmus-extension` skill uses the documented
+`az k8s-extension` workflow and its API selection instead. It requires the
+`k8s-extension` CLI extension **1.9.5+**, `kubectl` and `kubelogin`, and checks
+cluster-specific availability before proposing customer-side changes.
 
 ## License
 

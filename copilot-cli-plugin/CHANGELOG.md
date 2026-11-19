@@ -9,6 +9,11 @@ the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ### Added
 
+- `install-litmus-extension` skill for the documented Chaos Studio AKS extension:
+  delegated access, prerequisite and availability checks, explicit installation
+  and identity/RBAC/connection approval, existing-install preservation, and
+  provisioning/readiness verification without fault injection.
+
 - `chaos_list_scenario_runs` MCP tool for rediscovering durable ScenarioRun
   records after the agent session that created them has ended. The tool follows
   every service-provided pagination link, returns runs newest-first, and can
