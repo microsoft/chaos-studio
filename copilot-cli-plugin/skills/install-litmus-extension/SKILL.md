@@ -18,7 +18,8 @@ Never print tokens, credentials or kubeconfig contents.
 
 ## Supported contract
 
-Read the current public guidance before proceeding:
+Use the embedded contract below as the baseline. These public references are
+available for drift checks and troubleshooting; fetching them is not a prerequisite:
 
 - [Installation, prerequisites and permissions](https://learn.microsoft.com/azure/chaos-studio/chaos-studio-aks-extension-install)
 - [Overview and supported configurations](https://learn.microsoft.com/azure/chaos-studio/chaos-studio-aks-extension-overview)
@@ -29,8 +30,9 @@ The published path uses `az k8s-extension create`, cluster type `managedClusters
 name `chaos-studio`, type `Microsoft.ChaosStudio`, train `dev`, and the
 `k8s-extension` CLI extension **1.9.5+**. The train name is not a claim of general
 availability. Confirm live availability for the customer's cluster.
-If guidance is unavailable or conflicts with the installed CLI, report the
-unverified contract and stop. Never substitute `az aks extension`, guessed types,
+Stop if the installed CLI or live discovery disagrees with this contract, or
+accessible current guidance contradicts it. Unavailable web documentation alone
+is not a blocker. Never substitute `az aks extension`, guessed types,
 preview flags, Helm, POC deployments, private endpoints or manual onboarding.
 
 ## 1. Gather and authenticate
@@ -110,8 +112,8 @@ when necessary. Verify the Workspace scope covers the cluster and the identity
 has Reader on that scope, including inherited assignments. Unresolved scope
 membership is a blocker, not proof of coverage.
 
-Review the public installation permission table against the caller's effective
-permissions at both scopes. Required permissions include cluster/Workspace
+Review the caller's effective permissions at both scopes against the following
+installation requirements (also detailed in the linked guide): cluster/Workspace
 reads, Deployment Safeguards read, cluster-user credential access, Kubernetes
 namespace read, extension write on the cluster, role-assignment write on the
 cluster, and connection write on the Workspace. Contributor on the cluster
@@ -133,7 +135,11 @@ az aks get-credentials --subscription $aksSubscriptionId `
 ```
 
 Inspect the new kubeconfig locally without displaying credentials. Verify its
-server matches the AKS read result before any Kubernetes reads. Then run:
+server matches the AKS read result before any Kubernetes reads. Save the prior
+`AAD_LOGIN_METHOD` environment value, then set `$env:AAD_LOGIN_METHOD = 'azurecli'`
+**before the first kubectl call** so kubelogin reuses delegated Azure CLI sign-in
+instead of prompting for device-code authentication. Keep this value through
+installation and verification, and restore it on every exit. Then run:
 
 ```powershell
 kubectl --kubeconfig $kubeconfigPath config current-context
@@ -141,15 +147,24 @@ kubectl --kubeconfig $kubeconfigPath get nodes --output json
 kubectl --kubeconfig $kubeconfigPath get namespaces --output json
 ```
 
-Use the explicit file for every kubectl call. Temporarily set `KUBECONFIG` to
-that file and `AAD_LOGIN_METHOD=azurecli` for installation; restore both on exit.
+Use the explicit file for every kubectl call; do not change `KUBECONFIG`.
+The installation CLI obtains its own cluster-user credentials and does not
+depend on the current kubeconfig context.
 Verify Linux amd64 capacity and that all requested namespaces exist. Arm64-only
 clusters are unsupported; Windows pods are not supported fault targets.
 
-Read Deployment Safeguards configuration using its current documented read-only
-AKS interface. Enforcement without a `chaos-infrastructure` exclusion causes
-installation to skip the network daemon. If network faults are required, stop
-for an administrator; otherwise disclose reduced capability in the plan.
+Read Deployment Safeguards configuration:
+
+```powershell
+az aks safeguards show --subscription $aksSubscriptionId `
+    --managed-cluster $aksId --output json
+```
+
+Only level `Enforce` without a `chaos-infrastructure` entry in either
+`excludedNamespaces` or `systemExcludedNamespaces` causes installation to skip
+the network daemon. Level `Warn` keeps the daemon. If network faults are required
+and enforcement would skip the daemon, stop for an administrator; otherwise
+disclose reduced capability in the plan.
 Never weaken policy. Report Pod Security Admission `restricted` labels, which
 block pod delete faults; do not relabel namespaces.
 Confirm documented outbound access to Chaos Studio, Microsoft Entra ID and
@@ -242,10 +257,30 @@ unavailable; absent daemon pods are acceptable only if that limitation was
 approved. Ambiguous daemon configuration requires investigation.
 
 Read back Workspace ID and namespace settings. Verify the Workspace identity's
-documented role at cluster scope and the corresponding Workspace connection
-using the current public read/list interface. Do not invent a connection name,
-API version or endpoint if that read surface is unavailable; report verification
-as blocked. Missing roles or connection mean incomplete onboarding.
+documented role at cluster scope. List Workspace connections without guessing
+the generated connection name. Use the active cloud's ARM endpoint:
+
+```powershell
+$armEndpoint = az cloud show --query endpoints.resourceManager --output tsv
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($armEndpoint)) {
+    throw 'Could not determine the active cloud ARM endpoint.'
+}
+$connectionsUrl = "$($armEndpoint.TrimEnd('/'))$workspaceId/connections?api-version=2026-08-01-preview"
+az rest --method get --url $connectionsUrl --output json
+```
+
+Follow any `nextLink` with read-only GETs, accepting only HTTPS links on the
+verified ARM endpoint host. Inspect all returned `value` entries. Require exactly
+one connection whose `properties.kind` is `AksExtension` and whose
+`properties.targetResourceId` matches `$aksId` case-insensitively; also verify
+`properties.principalId` and `properties.tenantId` against the installed
+extension's subscriber identity and tenant, not the Workspace identity used for
+the role assignment. Missing, duplicate or mismatched connections mean
+incomplete onboarding. An authorization failure blocks independent verification;
+report that explicitly rather than treating it as proof of a missing connection.
+This read contract uses the same `2026-08-01-preview` API as the public
+[installation CLI implementation](https://github.com/Azure/azure-cli-extensions/blob/main/src/k8s-extension/azext_k8s_extension/partner_extensions/ChaosStudio.py).
+Do not invent an alternative API or connection name.
 
 Report provisioning, Kubernetes readiness, identity/RBAC verification and
 connection existence/status separately. Connection `Pending` is a documented
